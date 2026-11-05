@@ -1,0 +1,37 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-1.5, 0.055, -1.66],
+        "rotation": [-0.70710678, 0, 0, 0.70710678],
+        "scale": [1.18, 3.5, 1]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-1.5, 0.055, -1.66]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Mipmapped runway"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "modelName": "models/texture-card.gltf",
+        "clip": 0,
+        "loop": true,
+        "playing": false,
+        "speed": 1
+      },
+      "type": "ModelPlayer"
+    }
+  ],
+  "id": 33,
+  "parent": 11,
+  "siblingIndex": 8
+}

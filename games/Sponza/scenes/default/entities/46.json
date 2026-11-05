@@ -1,0 +1,35 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-0.55, 0.65, -2.94],
+        "rotation": [0, 0, 0, 1],
+        "scale": [0.42, 1.2, 0.38]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-0.55, 0.65, -2.94]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Depth of field foreground"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cylinder",
+        "tint": [0.16, 0.58, 0.61, 1]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 46,
+  "parent": 43,
+  "siblingIndex": 2
+}

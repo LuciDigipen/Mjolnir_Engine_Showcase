@@ -1,0 +1,27 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [0, 0, 0],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [0, 0, 0]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Primitive Showcase"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 10,
+  "parent": 0,
+  "siblingIndex": 9
+}

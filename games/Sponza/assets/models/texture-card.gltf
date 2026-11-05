@@ -1,0 +1,139 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Tile swatch",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Mipmapped ceramic",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 0,
+        "roughnessFactor": 0.6
+      }
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    }
+  ],
+  "images": [
+    {
+      "bufferView": 4,
+      "mimeType": "image/png"
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 856,
+      "uri": "data:application/octet-stream;base64,AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAPwAAAD8AAAAAAAAAvwAAAD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAQEAAAEBAAABAQAAAQEAAAAAAAAAAAAAAAAAAAAEAAgAAAAIAAwCJUE5HDQoaCgAAAA1JSERSAAAAgAAAAIAIAgAAAExc9pwAAAKTSURBVHic7dyxbSMxGERh1+E+DGcuwMAV4NiJG3DmRq4Al+BGrqILTpDWsjKSGs3eBzD6A+ERA2LnCcu9+/P7lxVcd3GC/3wdAnh4fT+uj8+vj8+v7WRk/u/37x+fj+vp5e3p5W07GZm3858HMJf+4fX9bANz6e8fn9v5vwUwnf5sA9PpzwJo5D8FsIJ+u4EV9NsASvkPASyiP25gEf0xgF7+UwAr6LcbWEG/DaCU/0ILmkj/8yE2l/7nQ7iO/3IAE0/0xQ1MPNHt/DyAB4zN2/l5AA/gAdU9up2fB4T5eUCYnweE+XkADxibt/PzAB7AA6p7dDs/Dwjz84AwPw8I8/MAHjA2b+fnATyAB1T36HZ+HhDm93p6eAngNgKYfrJ209NX858HoKdfmf9bAHr69flPAejpEf5DAHp6iv8UwAr6HfT01fwXWtBE+h38X7+a/3IA/q+/Gj8P4AFj83Z+HsADeEB1j27n5wFhfh4Q5ucBYX4ewAPG5u38PIAH8IDqHt3OzwPC/DwgzM8Dwvw8gAeMzdv5eQAP4AHVPbqdnweE+b2eHl4CuI0App+s3fT01fzuCYf53RMO87snHOZ3TzjM755wmN/3gsL8vhcU5ucBPGBs3s7PA3gAD6ju0e38PCDMzwPC/DwgzM8DeMDYvJ2fB/AAHlDdo9v5eUCYnweE+XlAmJ8H8ICxeTs/D+ABPKC6R7fz84Awv9fTw0sAtxHA9JO1m56+mt894TC/e8JhfveEw/zuCYf53RMO8/teUJjf94LC/DyAB4zN2/l5AA/gAdU9up2fB4T5eUCYnweE+XkADxibt/PzAB7AA6p7dDs/Dwjz84AwPw8I8/MAHjA2b+fnATyAB1T36HZ+HhDm/wv1BEI1HLKxkwAAAABJRU5ErkJggg=="
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 48,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 48,
+      "byteLength": 48,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 128,
+      "byteLength": 12,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 140,
+      "byteLength": 716
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3",
+      "min": [
+        -0.5,
+        -0.5,
+        0
+      ],
+      "max": [
+        0.5,
+        0.5,
+        0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 6,
+      "type": "SCALAR"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-0.96, 0.73, 0.59],
+        "rotation": [0.43837115, 0, 0, 0.89879405],
+        "scale": [0.65, 1, 0.66]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-0.96, 0.73, 0.59]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Single-color tilted plane"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:plane",
+        "tint": [0.16, 0.58, 0.61, 1]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 31,
+  "parent": 11,
+  "siblingIndex": 6
+}

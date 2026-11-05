@@ -3,15 +3,15 @@
     {
       "fields": {
         "position": [
-          -11.0,
-          1.8,
-          0.0
+          0.3753320726536913,
+          1.79999975506216,
+          8.943608450703323
         ],
         "rotation": [
           0.0,
-          -0.7071068,
           0.0,
-          0.7071068
+          0.0,
+          1.0
         ],
         "scale": [
           1.0,
@@ -24,46 +24,37 @@
     {
       "fields": {
         "position": [
-          -11.0,
-          1.8,
-          0.0
+          0.3753320726536913,
+          1.79999975506216,
+          8.943608450703323
         ]
       },
       "type": "WorldTransform"
     },
     {
       "fields": {
-        "name": "Camera"
+        "name": "Camera | Automatic Showcase"
       },
       "type": "Name"
     },
     {
       "fields": {
+        "active": true,
+        "aperture": 1.2,
+        "exposure": 1.0,
         "farZ": 100.0,
+        "focusDistance": 10.0,
         "fovYDegrees": 60.0,
-        "nearZ": 0.1
+        "nearZ": 0.1,
+        "shutterStrength": 0.5
       },
       "type": "Camera"
     },
     {
       "fields": {
-        "fastMultiplier": 4.0,
-        "lookAtTarget": false,
-        "lookSensitivity": 0.15,
-        "mode": 1,
-        "moveSpeed": 5.0,
-        "offset": [
-          0.0,
-          3.0,
-          7.0
-        ],
-        "offsetInTargetSpace": false,
-        "snapDistance": 50.0,
-        "stickLookRate": 120.0,
-        "stiffness": 4.0,
-        "target": 0
+        "scriptName": "showcase"
       },
-      "type": "CameraController"
+      "type": "ScriptRef"
     }
   ],
   "id": 2,

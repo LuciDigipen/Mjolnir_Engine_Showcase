@@ -36,8 +36,7 @@ namespace mir
         uint32_t materialRecord;
         float alphaCutoff;
         float pad0;
-        float pad1;
-        float pad2;
+        VkDeviceAddress previousVertexAddress;
         glm::mat4 prevModel;
         // Model linear transform for tangent conversion; the normal matrix is
         // inverse-transpose and cannot recover non-uniform scale.
@@ -51,5 +50,6 @@ namespace mir
     static_assert(offsetof(RtInstanceInfo, alphaCutoff) == 96);
     static_assert(offsetof(RtInstanceInfo, materialRecord) == 92);
     static_assert(offsetof(RtInstanceInfo, prevModel) == 112);
+    static_assert(offsetof(RtInstanceInfo, previousVertexAddress) == 104);
 
 }

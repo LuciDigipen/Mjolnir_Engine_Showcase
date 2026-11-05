@@ -1,4 +1,18 @@
 {
+  "input": {
+    "actions": [
+      {
+        "name": "showcase_next",
+        "type": "Button",
+        "bindings": [{"device": "Mouse", "mouseButton": "Left"}]
+      },
+      {
+        "name": "showcase_previous",
+        "type": "Button",
+        "bindings": [{"device": "Mouse", "mouseButton": "Right"}]
+      }
+    ]
+  },
   "physicsLayers": {
     "ignore": [],
     "names": [
@@ -16,11 +30,17 @@
       },
       "Bloom": {
         "enabled": true,
-        "params": {}
+        "params": {
+          "intensity": 0.5,
+          "radius": 1.0,
+          "threshold": 1.0
+        }
       },
       "DepthOfField": {
         "enabled": false,
-        "params": {}
+        "params": {
+          "maxBlur": 16.0
+        }
       },
       "Film": {
         "enabled": false,
@@ -62,13 +82,15 @@
       "raysPerProbe": 256
     },
     "rayTracing": true,
+    "residencyMiB": 512.0,
     "ssgi": {
-      "enabled": false,
+      "enabled": true,
       "halfResolution": true,
       "intensity": 1.0,
       "maxTraceDistance": 10.0,
       "quality": "medium",
       "thickness": 0.10000000149011612
-    }
+    },
+    "uploadMiBPerFrame": 4.0
   }
 }

@@ -1,0 +1,27 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [0, 0, 0],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [0, 0, 0]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "01 | Lighting and Surface Roughness"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 11,
+  "parent": 10,
+  "siblingIndex": 0
+}

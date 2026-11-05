@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "shader": {
+    "file": "materials/default.slang",
+    "type": "DefaultMaterial"
+  },
+  "frontends": [
+    "mesh"
+  ],
+  "parameters": {
+    "albedoRoughness": [0.17, 0.42, 0.65, 0.16],
+    "surfaceParams": [0.16, 1, 0, 0]
+  }
+}

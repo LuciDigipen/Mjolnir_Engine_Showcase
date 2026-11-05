@@ -1,0 +1,45 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [0.66, 0.873, 1.98],
+        "rotation": [0, 0, 0, 1],
+        "scale": [0.53, 0.42, 0.53]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [0.66, 0.873, 1.98]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Tower Block 2"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [0.28, 0.78, 0.66, 1]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "motion": 1,
+        "shape": 0,
+        "halfExtent": [0.5, 0.5, 0.5],
+        "friction": 0.58,
+        "interpolate": true
+      },
+      "type": "RigidBody"
+    }
+  ],
+  "id": 25,
+  "parent": 12,
+  "siblingIndex": 8
+}

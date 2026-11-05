@@ -19,8 +19,7 @@ struct RtInstanceInfo
     uint materialRecord;   // byte offset into gMaterialRecords
     float alphaCutoff;     // read only with kInstanceAlphaTest
     float pad0;
-    float pad1;
-    float pad2;
+    float *previousVertexAddress;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
     float4 modelCol0;   // model linear transform, for tangents under non-uniform scale
     float4 modelCol1;
@@ -37,6 +36,7 @@ static const uint kInstanceError = 4u;
 static const uint kInstanceAlphaTest = 8u;
 static const uint kInstanceDoubleSided = 16u;
 static const uint kInstanceRasterFacingCorrection = 32u;
+static const uint kInstanceAlphaBlend = 64u;
 static const uint kMaxMaterialImages = 1024;
 static const uint kMaxMaterialSamplers = 256;
 
@@ -105,13 +105,20 @@ float4 ModelBaseColor(RtInstanceInfo info, uint3 indices, float3 barycentrics)
     return texel * float4(vertexColor, uvAlpha.z) * info.tint;
 }
 
-// model.slang discards below the cutoff. Blend materials are cut the same way, since a trace has no blending.
+// The model shader discards masked fragments below the authored cutoff.
 bool AlphaTestPasses(BuiltInTriangleIntersectionAttributes attribs)
 {
     const RtInstanceInfo info = gInstances[InstanceID()];
     if ((info.flags & kInstanceAlphaTest) == 0)
         return true;
     return ModelBaseColor(info, TriangleIndices(info), Barycentrics(attribs)).a >= info.alphaCutoff;
+}
+
+// The raster shadow pass also skips blended draws. DDGI probes use the same
+// opaque/masked geometry for their visibility and distance samples.
+bool OpaqueOrMaskedHit(BuiltInTriangleIntersectionAttributes attribs)
+{
+    return (gInstances[InstanceID()].flags & kInstanceAlphaBlend) == 0 && AlphaTestPasses(attribs);
 }
 
 struct ShadowPayload { float visibility; };

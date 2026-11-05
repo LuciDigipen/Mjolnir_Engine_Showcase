@@ -1,0 +1,44 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-0.54, 0.55, -0.33],
+        "rotation": [-0.190809, 0, 0, 0.98162718],
+        "scale": [0.86, 0.16, 2.14]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-0.54, 0.55, -0.33]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Low friction ramp"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [0.23, 0.3, 0.36, 1]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "motion": 0,
+        "shape": 0,
+        "halfExtent": [0.5, 0.5, 0.5],
+        "friction": 0.75
+      },
+      "type": "RigidBody"
+    }
+  ],
+  "id": 35,
+  "parent": 34,
+  "siblingIndex": 0
+}

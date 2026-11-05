@@ -1,0 +1,35 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-1.38, 0.25, 0.53],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1.5, 0.46, 1.12]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-1.38, 0.25, 0.53]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Textured exhibit base"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [0.23, 0.3, 0.36, 1]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 29,
+  "parent": 11,
+  "siblingIndex": 4
+}

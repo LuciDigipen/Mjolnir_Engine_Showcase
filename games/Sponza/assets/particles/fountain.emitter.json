@@ -1,0 +1,56 @@
+{
+  "version": 3,
+  "target": "gpu",
+  "texture": "models/Sponza/white.png",
+  "lifetime": 1.35,
+  "spawnRate": 1380,
+  "capacity": 2304,
+  "seed": 501,
+  "renderer": {
+    "size": 0.014,
+    "color": [3.7, 1.45, 0.34, 0.8],
+    "velocity": [0, 3.75, 0],
+    "alignment": "velocity",
+    "stretch": 0.038,
+    "blend": "additive",
+    "sort": "none",
+    "softDistance": 0,
+    "fog": false
+  },
+  "spawnBehaviors": [
+    {
+      "name": "Initialize",
+      "parameters": []
+    },
+    {
+      "name": "VelocityVariation",
+      "parameters": [1.2, 0.82, 1.2]
+    },
+    {
+      "name": "Shape",
+      "parameters": [0, 0.12, 0, 0, 42, 0]
+    }
+  ],
+  "updateBehaviors": [
+    {
+      "name": "Age",
+      "parameters": []
+    },
+    {
+      "name": "Acceleration",
+      "parameters": [0, -6.1, 0]
+    },
+    {
+      "name": "Drag",
+      "parameters": [0.29]
+    },
+    {
+      "name": "Integrate",
+      "parameters": []
+    },
+    {
+      "name": "FadeOverLife",
+      "parameters": [0.12]
+    }
+  ]
+}

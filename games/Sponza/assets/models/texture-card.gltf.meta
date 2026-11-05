@@ -1,0 +1,13 @@
+{
+  "guid": "86f90fe850f234ac",
+  "importer": {
+    "next": 5,
+    "objects": {
+      "image:hash/17096995127081096525": "1",
+      "material:name/Mipmapped ceramic": "2",
+      "mesh:name/Tile swatch": "3",
+      "node:hash/11825216134594410966": "4"
+    }
+  },
+  "version": 1
+}

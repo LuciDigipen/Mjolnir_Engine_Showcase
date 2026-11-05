@@ -46,12 +46,12 @@
         "mode": 0,
         "planetRadiusKm": 6371.0,
         "rayleighCoeff": [
-          5.5,
+          5.9,
           13.0,
           22.4
         ],
         "rayleighScaleHeightKm": 8.0,
-        "sunIntensity": 22.0
+        "sunIntensity": 2.9
       },
       "type": "Sky"
     }

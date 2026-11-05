@@ -1,0 +1,36 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-1.42, 1.8, 4.36],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-1.42, 1.8, 4.36]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Warm Key | Point Light"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "type": 1,
+        "color": [1, 0.82, 0.63],
+        "intensity": 2.2,
+        "range": 2.65
+      },
+      "type": "Light"
+    }
+  ],
+  "id": 16,
+  "parent": 11,
+  "siblingIndex": 3
+}

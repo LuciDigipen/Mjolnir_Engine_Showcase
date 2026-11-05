@@ -39,7 +39,7 @@ namespace
         std::size_t mSize;
     };
 
-    constexpr std::array<Field, 18> kFields{ {
+    constexpr std::array<Field, 17> kFields{ {
         { "vertexAddress", offsetof(mir::RtInstanceInfo, vertexAddress), sizeof(VkDeviceAddress) },
         { "indexAddress", offsetof(mir::RtInstanceInfo, indexAddress), sizeof(VkDeviceAddress) },
         { "tint", offsetof(mir::RtInstanceInfo, tint), sizeof(glm::vec4) },
@@ -52,8 +52,7 @@ namespace
         { "materialRecord", offsetof(mir::RtInstanceInfo, materialRecord), sizeof(uint32_t) },
         { "alphaCutoff", offsetof(mir::RtInstanceInfo, alphaCutoff), sizeof(float) },
         { "pad0", offsetof(mir::RtInstanceInfo, pad0), sizeof(float) },
-        { "pad1", offsetof(mir::RtInstanceInfo, pad1), sizeof(float) },
-        { "pad2", offsetof(mir::RtInstanceInfo, pad2), sizeof(float) },
+        { "previousVertexAddress", offsetof(mir::RtInstanceInfo, previousVertexAddress), sizeof(VkDeviceAddress) },
         { "prevModel", offsetof(mir::RtInstanceInfo, prevModel), sizeof(glm::mat4) },
         { "modelCol0", offsetof(mir::RtInstanceInfo, modelCol0), sizeof(glm::vec4) },
         { "modelCol1", offsetof(mir::RtInstanceInfo, modelCol1), sizeof(glm::vec4) },

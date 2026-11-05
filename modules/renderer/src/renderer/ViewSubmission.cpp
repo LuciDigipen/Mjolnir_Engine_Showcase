@@ -106,7 +106,8 @@ namespace mir
                 : previousPose.TryMatrixRelativeTo(viewportCamera);
 
             out.push_back(DrawItem{ item.mesh, *model, item.normalMatrix, item.tint, item.material,
-                                    item.deformation, item.transparent, previousModel.value_or(*model) });
+                item.deformation, item.transparent, previousModel.value_or(*model),
+                cut || item.previousDeformation.empty() ? item.deformation : item.previousDeformation });
         }
 
         std::stable_sort(out.begin(), out.end(),

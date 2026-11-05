@@ -1,0 +1,37 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [0.08, 0.45, -9.2],
+        "rotation": [0, -0.53729961, 0, 0.84339145],
+        "scale": [0.012, 0.012, 0.012]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [0.08, 0.45, -9.2]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Fox | Authored glTF animation"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "modelName": "models/Fox.glb",
+        "clip": 0,
+        "loop": true,
+        "playing": false,
+        "speed": 1
+      },
+      "type": "ModelPlayer"
+    }
+  ],
+  "id": 52,
+  "parent": 49,
+  "siblingIndex": 2
+}
