@@ -148,14 +148,14 @@ int main(int argc, char **argv)
         draw(8);
         const auto lit = capture("-lit");
         Require(lit > zero + .1, "No measurable indirect lighting from material GI");
-        renderer.mShowGiVolume = true;
+        renderer.SetShowGiVolume(true);
         draw(8);
         const auto probeStates = renderer.GiProbeStates();
         Require(probeStates.size() == gi.ProbeCount(), "GPU probe-state readback did not complete");
         for (const auto &probe : probeStates)
             for (float offset : probe.offset)
                 Require(std::isfinite(offset), "Probe relocation contains a nonfinite offset");
-        renderer.mShowGiVolume = false;
+        renderer.SetShowGiVolume(false);
 
         // Prepare/commit matching base and DDGI shader generations atomically.
         std::string error;

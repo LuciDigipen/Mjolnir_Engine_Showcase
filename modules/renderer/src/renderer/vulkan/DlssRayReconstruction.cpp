@@ -103,6 +103,9 @@ namespace mir::vk
     void DlssRayReconstruction::SetOptions(bool rayReconstruction, DlssRrPreset preset)
     {
         preset = preset == DlssRrPreset::D ? DlssRrPreset::D : DlssRrPreset::E;
+        // DLAA needs the separate Super Sampling feature; without it RR stays on.
+        if (!rayReconstruction && mDevice != nullptr && !mDevice->NgxDlaaSupported())
+            rayReconstruction = true;
         const bool recreate = rayReconstruction != mRayReconstruction ||
             (rayReconstruction && preset != mPreset);
         mPreset = preset;

@@ -368,7 +368,8 @@ namespace mir
             // asset, with their morph/skin data attached).
             if (const ModelDrawItems *models = source.TryResource<ModelDrawItems>())
                 mDrawItems.insert(mDrawItems.end(), models->items.begin(), models->items.end());
-            mRenderer.UpdateGiSceneBounds(mDrawItems);
+            if (mRenderer.GiSceneBoundsRequested())
+                mRenderer.UpdateGiSceneBounds(mDrawItems);
 
             // A traced frame shadows by ray, so it records no shadow maps.
             const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
@@ -456,6 +457,14 @@ namespace mir
 
             mDrawItemsPerViewport.resize(mViewCameras.size());
             mDebugLinesPerViewport.resize(mViewCameras.size());
+            const bool showGiVolume = mRenderer.ShowGiVolume();
+            if (showGiVolume && (mGiVolumeLinesSettings != renderSettings.ddgi ||
+                mGiVolumeLinesGeneration != mRenderer.GiProbeStatesGeneration()))
+            {
+                BuildGiVolumeLines(renderSettings.ddgi, mGiVolumeLines, mRenderer.GiProbeStates());
+                mGiVolumeLinesSettings = renderSettings.ddgi;
+                mGiVolumeLinesGeneration = mRenderer.GiProbeStatesGeneration();
+            }
             mRenderViews.clear();
             const DebugLines *debugLines = source.TryResource<DebugLines>();
             bool collidersWanted = false;
@@ -497,9 +506,9 @@ namespace mir
                     if (debugLines != nullptr)
                         BuildViewDebugLines(debugLines->mColliders, view.pose.position, mDebugLinesPerViewport[v]);
                 }
-                if (mRenderer.mShowGiVolume)
-                    AppendGiVolumeLines(renderSettings.ddgi, view.pose.position, mDebugLinesPerViewport[v],
-                        mRenderer.GiProbeStates());
+                if (showGiVolume)
+                    AppendGiVolumeLines(renderSettings.ddgi, view.pose.position, mGiVolumeLines,
+                        mDebugLinesPerViewport[v]);
                 mRenderViews.back().debugLines = mDebugLinesPerViewport[v];
             }
             // after every view, since two viewports can show the same camera
@@ -617,6 +626,10 @@ namespace mir
         // Parallel to mViewCameras.
         std::vector<std::vector<DrawItem>> mDrawItemsPerViewport;
         std::vector<std::vector<DebugLinePoint>> mDebugLinesPerViewport;
+        // GI overlay relative to the volume centre, keyed by settings and probe-state generation.
+        std::vector<DebugLinePoint> mGiVolumeLines;
+        std::optional<DdgiSettings> mGiVolumeLinesSettings;
+        uint64_t mGiVolumeLinesGeneration = 0;
         std::vector<RenderView> mRenderViews;
         std::vector<WorldDrawItem> mRayTracingWorldItems;
         std::vector<DrawItem> mRayTracingItems;

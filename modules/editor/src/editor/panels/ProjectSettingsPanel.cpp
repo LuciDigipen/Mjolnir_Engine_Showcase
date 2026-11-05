@@ -66,6 +66,8 @@ namespace mir
             ImGui::InputFloat("Bounds padding (meters)", &mGiPadding);
             if (mRenderer)
             {
+                // Keeps resident scene bounds fresh only while this section is drawn.
+                mGiSceneBoundsRequested = true;
                 const auto bounds = mRenderer->GetGiSceneBounds();
                 ImGui::BeginDisabled(!bounds);
                 if (ImGui::Button("Fit to resident scene bounds"))
@@ -87,7 +89,7 @@ namespace mir
                     }
                 }
                 ImGui::EndDisabled();
-                ImGui::Checkbox("Show saved GI volume and probe grid", &mRenderer->mShowGiVolume);
+                ImGui::Checkbox("Show saved GI volume and probe grid", &mShowGiVolume);
                 ImGui::TextWrapped("GPU probe state: green active, gray inactive, yellow awaiting readback. Relocation and state arrive a few frames later.");
                 ImGui::TextWrapped("Fits loaded mesh bounds, including model transforms. Allow padding for animation and streamed geometry.");
             }

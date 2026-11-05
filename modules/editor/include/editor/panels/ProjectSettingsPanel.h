@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace mir
 {
@@ -25,6 +26,10 @@ namespace mir
 
         void Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath, bool &showInputSettings,
             PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing, const VulkanRenderer *renderer = nullptr);
+
+        // The editor forwards these to the renderer; the panel only reads it.
+        bool ShowGiVolume() const { return mShowGiVolume; }
+        bool TakeGiSceneBoundsRequest() { return std::exchange(mGiSceneBoundsRequested, false); }
 
         void OnHidden()
         {
@@ -50,6 +55,8 @@ namespace mir
         const VulkanRenderer *mRenderer = nullptr;
         float mGiPadding = 4.0f;
         std::string mGiFitStatus;
+        bool mShowGiVolume = false;
+        bool mGiSceneBoundsRequested = false;
         RenderSettings mMessageSnapshot;
 
         bool mDraftLoaded = false;

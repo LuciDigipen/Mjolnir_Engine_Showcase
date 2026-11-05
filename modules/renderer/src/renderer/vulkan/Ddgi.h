@@ -59,6 +59,7 @@ namespace mir::vk
         void ResetHistory();
         std::string Status() const;
         std::span<const GiProbeDebug> ProbeDebug() const;
+        uint64_t ProbeDebugGeneration() const;
         void CameraTimestamp(VkCommandBuffer cmd, uint32_t frame, bool begin);
         bool CanUpdate(WorldPosition camera) const;
         std::optional<RayTracer::GiShading> Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
@@ -69,6 +70,5 @@ namespace mir::vk
     private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
-        std::unique_ptr<Ddgi> mReload;
     };
 }

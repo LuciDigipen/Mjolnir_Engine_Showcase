@@ -13,7 +13,6 @@
 #include <renderer/Texture.h>
 #include <renderer/TextureTable.h>
 #include <renderer/components/MeshBounds.h>
-#include <glm/common.hpp>
 
 #include <volk.h>
 

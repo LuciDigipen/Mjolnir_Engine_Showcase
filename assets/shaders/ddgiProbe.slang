@@ -6,6 +6,9 @@
 [[vk::binding(7, 2)]] StructuredBuffer<uint4> gBudget;
 
 #include "ProbePayload.slang"
+#if MIR_DDGI_NUM_FIXED_RAYS != RTXGI_DDGI_NUM_FIXED_RAYS
+#error "ProbePayload.slang fixed ray count must match RTXGI_DDGI_NUM_FIXED_RAYS"
+#endif
 
 [shader("raygeneration")]
 void probeRayGen()

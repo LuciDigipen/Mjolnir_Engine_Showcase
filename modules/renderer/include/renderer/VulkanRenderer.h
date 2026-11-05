@@ -372,11 +372,17 @@ namespace mir
         void SetPostProcessing(const PostProcessingState &state);
         void SetGlobalIllumination(const DdgiSettings &settings);
         struct GiBounds { std::array<double, 3> minimum{}, maximum{}; };
+        // Scene bounds are gathered only on the frame after a request, not every frame.
+        void RequestGiSceneBounds() { mGiSceneBoundsRequested = true; }
+        bool GiSceneBoundsRequested() const { return mGiSceneBoundsRequested; }
         void UpdateGiSceneBounds(std::span<const WorldDrawItem> items);
         std::optional<GiBounds> GetGiSceneBounds() const { return mGiSceneBounds; }
         std::string GiStatus() const;
         std::span<const GiProbeDebug> GiProbeStates() const;
-        mutable bool mShowGiVolume = false;
+        // Changes whenever GiProbeStates() content changes.
+        uint64_t GiProbeStatesGeneration() const;
+        void SetShowGiVolume(bool show) { mShowGiVolume = show; }
+        bool ShowGiVolume() const { return mShowGiVolume; }
         void SetScreenSpaceGlobalIllumination(const SsgiSettings &settings) { mSsgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
@@ -462,6 +468,10 @@ namespace mir
 #endif
         DdgiSettings mDdgiSettings;
         std::optional<GiBounds> mGiSceneBounds;
+        bool mGiSceneBoundsRequested = false;
+        // Log receiver bounds once they arrive after GI starts shading.
+        bool mLogGiSceneBounds = false;
+        bool mShowGiVolume = false;
         bool mGiWasShading = false;
         // views[0]'s camera on the last TraceFrame.
         uint64_t mTracedHistoryId = 0;

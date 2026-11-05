@@ -173,13 +173,17 @@ typedef RayPayload SurfacePayload;
 [shader("closesthit")]
 void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
+    const RtInstanceInfo info = gInstances[InstanceID()];
+    bool frontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
+        frontFace = !frontFace;
 #ifdef MIR_DDGI_PROBE
+    // Relocation/classification need the same facing the raster path sees.
     payload.distance = RayTCurrent();
-    payload.kind = HitKind();
-    if (payload.kind == HIT_KIND_TRIANGLE_BACK_FACE || DispatchRaysIndex().x < kFixedProbeRays)
+    payload.kind = frontFace ? HIT_KIND_TRIANGLE_FRONT_FACE : HIT_KIND_TRIANGLE_BACK_FACE;
+    if (!frontFace || DispatchRaysIndex().x < kFixedProbeRays)
         return;
 #endif
-    const RtInstanceInfo info = gInstances[InstanceID()];
     const float3 barycentrics = Barycentrics(attribs);
     const uint3 indices = TriangleIndices(info);
 
@@ -194,9 +198,6 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
         info.normalCol0.xyz * objNormal.x + info.normalCol1.xyz * objNormal.y + info.normalCol2.xyz * objNormal.z,
         float3(0.0, 1.0, 0.0));
     const float3 geometricNormal = FaceNormal(info, op0, op1, op2);
-    bool frontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
-    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
-        frontFace = !frontFace;
 
     const float4 vertexColor = float4(InterpolateFloat3(info, indices, barycentrics, kColorOffset),
         InterpolateFloat(info, indices, barycentrics, kAlphaOffset));

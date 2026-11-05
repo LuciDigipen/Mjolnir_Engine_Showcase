@@ -882,6 +882,16 @@ namespace mir
                 }
             }
         }
+        mGiSceneBoundsRequested = false;
+        if (mLogGiSceneBounds && mGiSceneBounds)
+        {
+            const auto &bounds = *mGiSceneBounds;
+            const auto extent = mDdgiSettings.Extent();
+            MIR_LOG_INFO("DDGI receiver bounds: min ({:.3f}, {:.3f}, {:.3f}), max ({:.3f}, {:.3f}, {:.3f}); grid {:.1f} x {:.1f} x {:.1f} m",
+                bounds.minimum[0], bounds.minimum[1], bounds.minimum[2],
+                bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], extent[0], extent[1], extent[2]);
+        }
+        mLogGiSceneBounds = false;
     }
 
     std::string VulkanRenderer::GiStatus() const
@@ -902,6 +912,15 @@ namespace mir
         return mDdgi->ProbeDebug();
 #else
         return {};
+#endif
+    }
+
+    uint64_t VulkanRenderer::GiProbeStatesGeneration() const
+    {
+#if MIR_WITH_RTXGI
+        return mDdgi->ProbeDebugGeneration();
+#else
+        return 0;
 #endif
     }
 

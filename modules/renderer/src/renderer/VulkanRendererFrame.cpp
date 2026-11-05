@@ -491,13 +491,11 @@ namespace mir
         {
             mPostProcessing->ResetHistory();
             mGiWasShading = gi.has_value();
-            if (gi && mGiSceneBounds)
+            if (gi)
             {
-                const auto &bounds = *mGiSceneBounds;
-                const auto extent = mDdgiSettings.Extent();
-                MIR_LOG_INFO("DDGI receiver bounds: min ({:.3f}, {:.3f}, {:.3f}), max ({:.3f}, {:.3f}, {:.3f}); grid {:.1f} x {:.1f} x {:.1f} m",
-                    bounds.minimum[0], bounds.minimum[1], bounds.minimum[2],
-                    bounds.maximum[0], bounds.maximum[1], bounds.maximum[2], extent[0], extent[1], extent[2]);
+                // The next scene update gathers bounds and logs them.
+                mLogGiSceneBounds = true;
+                RequestGiSceneBounds();
             }
         }
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });

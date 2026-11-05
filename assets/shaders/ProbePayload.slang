@@ -9,5 +9,7 @@ struct ProbePayload
     float3 geometricNormal;
     uint materialHit;
 };
-static const uint kFixedProbeRays = 32;
+// Material hit shaders build without the SDK; ddgiProbe.slang checks this matches it.
+#define MIR_DDGI_NUM_FIXED_RAYS 32
+static const uint kFixedProbeRays = MIR_DDGI_NUM_FIXED_RAYS;
 #endif

@@ -59,6 +59,8 @@ namespace mir::vk
         float MaxSamplerAnisotropy() const { return mCapabilities.maxSamplerAnisotropy; }
 
         bool NgxSupported() const { return mNgxSupported; }
+        // DLSS Super Sampling at native resolution, used when Ray Reconstruction is off.
+        bool NgxDlaaSupported() const { return mNgxDlaaSupported; }
 
         // line polygon mode, for the editor's wireframe view
         bool FillModeNonSolidSupported() const { return mFillModeNonSolidSupported; }
@@ -123,6 +125,8 @@ namespace mir::vk
 
         bool mNgxSupported = false;
         bool mNgxInstanceExtensionsSupported = false;
+        bool mNgxDlaaSupported = false;
+        bool mNgxDlaaInstanceExtensionsSupported = false;
         std::vector<std::string> mNgxDeviceExtensions;
 
         bool mMemoryBudgetSupported = false;

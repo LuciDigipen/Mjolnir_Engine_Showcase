@@ -64,20 +64,18 @@ namespace mir
             source->AppendRayTracingDraws(view, out);
     }
 
-    void AppendGiVolumeLines(const DdgiSettings &settings, WorldPosition camera,
-        std::vector<DebugLinePoint> &out, std::span<const GiProbeDebug> probes)
+    void BuildGiVolumeLines(const DdgiSettings &settings, std::vector<DebugLinePoint> &out,
+        std::span<const GiProbeDebug> probes)
     {
+        out.clear();
         if (settings.ValidationError()) return;
-        const auto volume = MakeGiTraceVolume(settings);
-        const auto centre = volume ? TryCameraRelativeFloat(volume->origin, camera) : std::nullopt;
-        if (!centre) return;
         const auto extent = settings.Extent();
         const glm::vec3 half = glm::vec3(extent[0], extent[1], extent[2]) * 0.5f;
         const auto line = [&](glm::vec3 a, glm::vec3 b, uint32_t color)
         { out.push_back({ a, color }); out.push_back({ b, color }); };
         for (int corner = 0; corner < 8; ++corner)
         {
-            glm::vec3 a = *centre;
+            glm::vec3 a(0.0f);
             for (int axis = 0; axis < 3; ++axis) a[axis] += (corner & (1 << axis)) ? half[axis] : -half[axis];
             for (int axis = 0; axis < 3; ++axis)
                 if (!(corner & (1 << axis)))
@@ -91,7 +89,7 @@ namespace mir
             for (int z = 0; z < settings.probeCounts[2]; ++z)
                 for (int x = 0; x < settings.probeCounts[0]; ++x)
                 {
-                    auto p = *centre - half + glm::vec3(x, y, z) * settings.probeSpacing;
+                    auto p = -half + glm::vec3(x, y, z) * settings.probeSpacing;
                     uint32_t color = 0xFF40FFFFu;
                     if (probes.size() == settings.ProbeCount())
                     {
@@ -104,6 +102,18 @@ namespace mir
                     line(p - glm::vec3(r, 0, 0), p + glm::vec3(r, 0, 0), color);
                     line(p - glm::vec3(0, r, 0), p + glm::vec3(0, r, 0), color);
                 }
+    }
+
+    void AppendGiVolumeLines(const DdgiSettings &settings, WorldPosition camera,
+        std::span<const DebugLinePoint> volumeLines, std::vector<DebugLinePoint> &out)
+    {
+        if (volumeLines.empty()) return;
+        const auto volume = MakeGiTraceVolume(settings);
+        const auto centre = volume ? TryCameraRelativeFloat(volume->origin, camera) : std::nullopt;
+        if (!centre) return;
+        out.reserve(out.size() + volumeLines.size());
+        for (const DebugLinePoint &point : volumeLines)
+            out.push_back({ point.position + *centre, point.color });
     }
 
     void BuildViewDebugLines(std::span<const DebugLineVertex> lines, WorldPosition viewportCamera,

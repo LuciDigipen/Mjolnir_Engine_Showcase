@@ -633,6 +633,8 @@ parameters and defaults to true for existing scenes. Switching it waits for GPU
 users, releases the old feature, and resets temporal history. Both `nvngx_dlss.dll`
 and `nvngx_dlssd.dll` are copied and packaged with DLSS-enabled builds.
 Ray-traced lighting may be noisier with RR disabled; DLAA remains temporal AA.
+DLSS is offered whenever Ray Reconstruction is supported; if the device or
+driver lacks Super Resolution, the checkbox has no effect and RR stays on.
 The panel's
 Anti-Aliasing controls expose `Ray Reconstruction preset` with E and D for
 manual comparison. The value persists as `params.dlssRrPreset` (`"e"` or

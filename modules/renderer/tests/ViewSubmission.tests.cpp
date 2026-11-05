@@ -33,8 +33,9 @@ TEST_CASE("GI overlay maps asymmetric GPU probe order and relocation into camera
     states[3].inactive = true;
     const auto camera = mir::WorldPosition::FromDoubleMeters({10, 2, -9});
     REQUIRE(camera.has_value());
-    std::vector<mir::DebugLinePoint> lines;
-    mir::AppendGiVolumeLines(gi, *camera, lines, states);
+    std::vector<mir::DebugLinePoint> volumeLines, lines;
+    mir::BuildGiVolumeLines(gi, volumeLines, states);
+    mir::AppendGiVolumeLines(gi, *camera, volumeLines, lines);
     CHECK(std::count_if(lines.begin(), lines.end(), [](const auto &point)
         { return point.color == 0xFF808080u; }) == 4);
     // Centre is (.25,.5,.75) after camera subtraction and relocation.

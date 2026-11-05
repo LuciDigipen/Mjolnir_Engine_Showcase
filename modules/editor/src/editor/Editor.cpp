@@ -1281,6 +1281,9 @@ namespace mir
         bool materialDraftsUnsaved, const BuildJobView &build, float dt)
     {
         EditorActions actions;
+        // Last frame's panel state, so a hidden layout keeps the overlay as set.
+        actions.mShowGiVolume = mProjectSettingsPanel.ShowGiVolume();
+        actions.mRequestGiSceneBounds = mProjectSettingsPanel.TakeGiSceneBoundsRequest();
 
         const bool documentTab = documents.mActive != kSceneDocument;
         GroundQuery *ground = activeWorld.TryResource<GroundQuery>();

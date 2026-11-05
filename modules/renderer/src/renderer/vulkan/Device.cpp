@@ -19,6 +19,7 @@
 
 #include <vk_mem_alloc.h>
 
+#include <algorithm>
 #include <cstring>
 #include <type_traits>
 #include <vector>
@@ -385,29 +386,36 @@ namespace mir::vk
         extensions.push_back(platformExt);
 
     #if MIR_WITH_DLSS
-        mNgxInstanceExtensionsSupported = true;
-        for (auto feature : { NVSDK_NGX_Feature_RayReconstruction, NVSDK_NGX_Feature_SuperSampling })
+        // Ray Reconstruction gates DLSS; Super Sampling only adds the RR-off DLAA path.
+        const auto addNgxInstanceExtensions = [&](NVSDK_NGX_Feature feature, const char *label)
         {
             const auto discoveryInfo = NgxDiscoveryInfo(feature);
             uint32_t ngxExtensionCount = 0;
             VkExtensionProperties *ngxExtensions = nullptr;
             const auto ngxResult = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(
                 &discoveryInfo, &ngxExtensionCount, &ngxExtensions);
-            mNgxInstanceExtensionsSupported &= NVSDK_NGX_SUCCEED(ngxResult);
-            if (!mNgxInstanceExtensionsSupported)
-                MIR_LOG_WARN("NGX: instance extension query failed: {:#x}", static_cast<unsigned>(ngxResult));
-            for (uint32_t i = 0; mNgxInstanceExtensionsSupported && i < ngxExtensionCount; ++i)
+            if (!NVSDK_NGX_SUCCEED(ngxResult))
+            {
+                MIR_LOG_WARN("NGX: {} instance extension query failed: {:#x}", label, static_cast<unsigned>(ngxResult));
+                return false;
+            }
+            bool supported = true;
+            for (uint32_t i = 0; i < ngxExtensionCount; ++i)
             {
                 if (!HasExtension(availableExts, ngxExtensions[i].extensionName))
                 {
-                    MIR_LOG_WARN("NGX: required instance extension unavailable: {}", ngxExtensions[i].extensionName);
-                    mNgxInstanceExtensionsSupported = false;
+                    MIR_LOG_WARN("NGX: {} instance extension unavailable: {}", label, ngxExtensions[i].extensionName);
+                    supported = false;
                 }
             }
-            if (mNgxInstanceExtensionsSupported)
+            if (supported)
                 for (uint32_t i = 0; i < ngxExtensionCount; ++i)
                     AddExtension(extensions, ngxExtensions[i].extensionName);
-        }
+            return supported;
+        };
+        mNgxInstanceExtensionsSupported = addNgxInstanceExtensions(NVSDK_NGX_Feature_RayReconstruction, "Ray Reconstruction");
+        mNgxDlaaInstanceExtensionsSupported = mNgxInstanceExtensionsSupported &&
+            addNgxInstanceExtensions(NVSDK_NGX_Feature_SuperSampling, "Super Sampling");
     #endif
 
         for (const char *name : extensions)
@@ -665,43 +673,55 @@ namespace mir::vk
 
     #if MIR_WITH_DLSS
         mNgxDeviceExtensions.clear();
-        mNgxSupported = mCapabilities.rayTracing && mNgxInstanceExtensionsSupported &&
-            HasNgxSupport(mInstance, mPhysical, NVSDK_NGX_Feature_RayReconstruction) &&
-            HasNgxSupport(mInstance, mPhysical, NVSDK_NGX_Feature_SuperSampling) && HasPushDescriptorSupport(mPhysical);
-        if (mNgxSupported)
+        const auto collectNgxDeviceExtensions = [&](NVSDK_NGX_Feature feature, const char *label,
+            std::vector<std::string> &names)
         {
-            for (auto feature : { NVSDK_NGX_Feature_RayReconstruction, NVSDK_NGX_Feature_SuperSampling })
+            const auto discoveryInfo = NgxDiscoveryInfo(feature);
+            uint32_t ngxExtensionCount = 0;
+            VkExtensionProperties *ngxExtensions = nullptr;
+            const auto result = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
+                mInstance, mPhysical, &discoveryInfo, &ngxExtensionCount, &ngxExtensions);
+            if (!NVSDK_NGX_SUCCEED(result))
             {
-                const auto discoveryInfo = NgxDiscoveryInfo(feature);
-                uint32_t ngxExtensionCount = 0;
-                VkExtensionProperties *ngxExtensions = nullptr;
-                const auto result = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
-                    mInstance, mPhysical, &discoveryInfo, &ngxExtensionCount, &ngxExtensions);
-                mNgxSupported &= NVSDK_NGX_SUCCEED(result);
-                if (!mNgxSupported)
-                    MIR_LOG_WARN("NGX: device extension query failed: {:#x}", static_cast<unsigned>(result));
-                for (uint32_t i = 0; mNgxSupported && i < ngxExtensionCount; ++i)
-                {
-                    const char *name = ngxExtensions[i].extensionName;
-                    if (!HasDeviceExtension(mPhysical, name))
-                    {
-                        MIR_LOG_WARN("NGX: required device extension unavailable: {}", name);
-                        mNgxSupported = false;
-                    }
-                    else
-                        mNgxDeviceExtensions.emplace_back(name);
-                }
+                MIR_LOG_WARN("NGX: {} device extension query failed: {:#x}", label, static_cast<unsigned>(result));
+                return false;
             }
-            if (!mNgxSupported)
-                mNgxDeviceExtensions.clear();
-        }
+            bool supported = true;
+            for (uint32_t i = 0; i < ngxExtensionCount; ++i)
+            {
+                const char *name = ngxExtensions[i].extensionName;
+                if (!HasDeviceExtension(mPhysical, name))
+                {
+                    MIR_LOG_WARN("NGX: {} device extension unavailable: {}", label, name);
+                    supported = false;
+                }
+                else
+                    names.emplace_back(name);
+            }
+            return supported;
+        };
+        mNgxSupported = mCapabilities.rayTracing && mNgxInstanceExtensionsSupported &&
+            HasNgxSupport(mInstance, mPhysical, NVSDK_NGX_Feature_RayReconstruction) && HasPushDescriptorSupport(mPhysical) &&
+            collectNgxDeviceExtensions(NVSDK_NGX_Feature_RayReconstruction, "Ray Reconstruction", mNgxDeviceExtensions);
+        if (!mNgxSupported)
+            mNgxDeviceExtensions.clear();
+        std::vector<std::string> dlaaExtensions;
+        mNgxDlaaSupported = mNgxSupported && mNgxDlaaInstanceExtensionsSupported &&
+            HasNgxSupport(mInstance, mPhysical, NVSDK_NGX_Feature_SuperSampling) &&
+            collectNgxDeviceExtensions(NVSDK_NGX_Feature_SuperSampling, "Super Sampling", dlaaExtensions);
+        if (mNgxDlaaSupported)
+            for (auto &name : dlaaExtensions)
+                if (std::find(mNgxDeviceExtensions.begin(), mNgxDeviceExtensions.end(), name) == mNgxDeviceExtensions.end())
+                    mNgxDeviceExtensions.push_back(std::move(name));
         if (mNgxSupported)
-            MIR_LOG_INFO("NGX: {} supports DLSS Ray Reconstruction", props.deviceName);
+            MIR_LOG_INFO("NGX: {} supports DLSS Ray Reconstruction{}", props.deviceName,
+                mNgxDlaaSupported ? " and DLAA" : " (DLAA unavailable; Ray Reconstruction stays on)");
         else
             MIR_LOG_INFO("FindPhysicalDevice: NGX/DLSS Ray Reconstruction unavailable on {} - "
                 "Anti-Aliasing's Dlss option stays hidden", props.deviceName);
     #else
         mNgxSupported = false;
+        mNgxDlaaSupported = false;
     #endif
 
         return true;

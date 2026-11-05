@@ -181,13 +181,20 @@ typedef RayPayload SurfacePayload;
 [shader("closesthit")]
 void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
+    const RtInstanceInfo info = gInstances[InstanceID()];
+    // HitKind carries the instance's facing flip; the per-instance correction
+    // makes it match the raster frontFace/mirror convention. Materials orient
+    // their normal from frontFace if they need a back-face response.
+    bool frontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
+        frontFace = !frontFace;
 #ifdef MIR_DDGI_PROBE
+    // Relocation/classification need the same facing the raster path sees.
     payload.distance = RayTCurrent();
-    payload.kind = HitKind();
-    if (payload.kind == HIT_KIND_TRIANGLE_BACK_FACE || DispatchRaysIndex().x < kFixedProbeRays)
+    payload.kind = frontFace ? HIT_KIND_TRIANGLE_FRONT_FACE : HIT_KIND_TRIANGLE_BACK_FACE;
+    if (!frontFace || DispatchRaysIndex().x < kFixedProbeRays)
         return;
 #endif
-    const RtInstanceInfo info = gInstances[InstanceID()];
     const float3 barycentrics = Barycentrics(attribs);
     const uint3 indices = TriangleIndices(info);
 
@@ -201,12 +208,6 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
     float3 N = normalize(info.normalCol0.xyz * objNormal.x + info.normalCol1.xyz * objNormal.y +
                          info.normalCol2.xyz * objNormal.z);
 
-    // HitKind carries the instance's facing flip; the per-instance correction
-    // makes it match the raster frontFace/mirror convention. Materials orient
-    // their normal from frontFace if they need a back-face response.
-    bool frontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
-    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
-        frontFace = !frontFace;
 
     const float4 sourceTangent = InterpolateTangent(info, indices, barycentrics);
     const float4 tangentFrame = TransformTangentFrame(info.modelCol0.xyz, info.modelCol1.xyz,
