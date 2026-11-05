@@ -28,12 +28,16 @@ namespace mir
         Dlss = 3,
     };
 
+    enum class DlssRrPreset { D, E };
+
     struct AntiAliasingParams
     {
         AntiAliasingMode mode = AntiAliasingMode::Off;
 
         // Ray-traced MSAA fallback's per-pixel ray sample count; unused by Fxaa/Dlss.
         int rtSampleCount = 4;
+        DlssRrPreset dlssRrPreset = DlssRrPreset::E;
+        bool dlssRayReconstruction = true;
 
         bool operator==(const AntiAliasingParams &) const = default;
     };
@@ -41,6 +45,9 @@ namespace mir
     std::string_view ToString(AntiAliasingMode mode);
     // Falls back to Off on anything unrecognized - the AA entry's safe default.
     AntiAliasingMode ParseMode(std::string_view name);
+    std::string_view ToString(DlssRrPreset preset);
+    // Unknown presets use the tested E model, rather than the SDK's changing default.
+    DlssRrPreset ParseDlssRrPreset(std::string_view name);
 
     AntiAliasingParams ReadAntiAliasingParams(const nlohmann::json &params);
     void WriteAntiAliasingParams(nlohmann::json &params, const AntiAliasingParams &aa);

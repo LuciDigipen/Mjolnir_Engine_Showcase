@@ -89,6 +89,10 @@ namespace mir::vk
         mMotionBlur.SetParams(state.shutterStrength, static_cast<uint32_t>(state.motionBlur.sampleCount));
 
         mAntiAliasingRtSampleCount = static_cast<uint32_t>(state.antiAliasing.rtSampleCount);
+    #if MIR_WITH_DLSS
+        // Preset edits must take effect even when the AA mode remains Dlss.
+        mDlss.SetOptions(state.antiAliasing.dlssRayReconstruction, state.antiAliasing.dlssRrPreset);
+    #endif
         const AntiAliasingMode mode = state.antiAliasing.mode;
         if (mode == mAntiAliasingMode)
             return;

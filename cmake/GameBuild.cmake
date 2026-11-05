@@ -58,7 +58,7 @@ function(engine_install_game_build target)
 
     # NGX loads it at runtime, so it is not an import
     if(MIR_WITH_DLSS)
-        install(FILES "${NGX_DLSSD_DLL}" DESTINATION .)
+        install(FILES "${NGX_DLSSD_DLL}" "${NGX_DLSS_DLL}" DESTINATION .)
     endif()
 
     install(DIRECTORY "$<TARGET_FILE_DIR:${target}>/fonts" "$<TARGET_FILE_DIR:${target}>/branding"

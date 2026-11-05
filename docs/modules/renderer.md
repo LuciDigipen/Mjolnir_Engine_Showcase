@@ -625,13 +625,35 @@ though those frames are rendered raster. `ClampRtSampleCount` rounds Msaa's
 D3D sample patterns for (packed back to back - the pattern for n samples starts
 at index n - 1).
 
+DLSS uses Ray Reconstruction preset E by default. The Post-Processing panel's
+Anti-Aliasing controls include a `Ray Reconstruction` checkbox. Turning it off
+uses the separate DLSS Super Resolution feature at native resolution (DLAA),
+without RR denoising. The `dlssRayReconstruction` setting is saved with the AA
+parameters and defaults to true for existing scenes. Switching it waits for GPU
+users, releases the old feature, and resets temporal history. Both `nvngx_dlss.dll`
+and `nvngx_dlssd.dll` are copied and packaged with DLSS-enabled builds.
+Ray-traced lighting may be noisier with RR disabled; DLAA remains temporal AA.
+The panel's
+Anti-Aliasing controls expose `Ray Reconstruction preset` with E and D for
+manual comparison. The value persists as `params.dlssRrPreset` (`"e"` or
+`"d"`); older settings without the field and unsupported values select E.
+Changing it while DLSS remains selected waits for the old feature's GPU users,
+releases that feature and recreates it with fresh history on the next trace.
+Feature-creation logs report the selected preset. D remains an explicit choice;
+the SDK's changing default and preset F are not exposed by this control.
+
+The NGX evaluation now receives the elapsed interval between successful rendered
+evaluations in milliseconds. Feature recreation and history resets use a neutral
+16.67 ms first interval; a bounded positive interval prevents zero or excessive
+timing values after a pause. This is render cadence, not GPU execution time.
+
 **Each mode's GPU resources exist only while it is the active mode.**
 `PostProcessingStack::Apply` is the one place they come and go: on a mode change it idles
 the device (mode switches are rare; in-flight frames may still read the old
 images), then creates or frees `Fxaa`'s LDR intermediate, `RayTracer`'s four
 guide buffers and `DlssRayReconstruction`'s output images. Ray Reconstruction's
 NGX feature is built later still, by `DlssRayReconstruction::Record` at the
-viewport rect's size, and rebuilt only when that size changes - a swapchain
+viewport rect's size, and rebuilt when that size or the RR preset changes - a swapchain
 resize only recreates the output images. `RayTracer`'s guide bindings (5-8,
 the `kRtImages` rows marked `guide`) are `PARTIALLY_BOUND`, so the descriptor
 set stays valid with them unwritten;

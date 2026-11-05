@@ -41,6 +41,22 @@ TEST_CASE("PostProcessingState: an empty settings resource resolves every effect
     CHECK(state.film.vignetteStrength == 0.0f);
 }
 
+TEST_CASE("PostProcessingState: RR preset changes propagate while DLSS mode stays selected", "[renderer]")
+{
+    mir::PostProcessingSettings settings;
+    for (const auto preset : { "d", "e" })
+    {
+        SetEffect(settings, mir::kAntiAliasingEffectName, true,
+            { {"mode", "dlss"}, {"dlssRrPreset", preset} });
+        const auto state = mir::ResolvePostProcessing(settings, {}, true, true);
+        CHECK(state.antiAliasing.mode == mir::AntiAliasingMode::Dlss);
+        CHECK(state.antiAliasing.dlssRrPreset == mir::ParseDlssRrPreset(preset));
+        const auto unsupported = mir::ResolvePostProcessing(settings, {}, true, false);
+        CHECK(unsupported.antiAliasing.mode == mir::AntiAliasingMode::Off);
+        CHECK(unsupported.antiAliasing.dlssRrPreset == mir::ParseDlssRrPreset(preset));
+    }
+}
+
 TEST_CASE("PostProcessingState: enabled effects pass their params through unchanged", "[renderer]")
 {
     mir::PostProcessingSettings settings;
@@ -177,6 +193,12 @@ TEST_CASE("PostProcessingState: Anti-Aliasing mode and sample count are clamped"
     const mir::PostProcessingState withDlss = mir::ResolvePostProcessing(settings, {}, true, true);
     CHECK(withDlss.antiAliasing.mode == mir::AntiAliasingMode::Dlss);
     CHECK(withDlss.antiAliasing.rtSampleCount == 4);
+
+    params["dlssRayReconstruction"] = false;
+    SetEffect(settings, mir::kAntiAliasingEffectName, true, params);
+    const auto dlaa = mir::ResolvePostProcessing(settings, {}, true, true).antiAliasing;
+    CHECK(dlaa.mode == mir::AntiAliasingMode::Dlss);
+    CHECK_FALSE(dlaa.dlssRayReconstruction);
 
     CHECK(mir::ResolvePostProcessing(settings, {}, true, false).antiAliasing.mode ==
         mir::ClampAntiAliasingMode(mir::AntiAliasingMode::Dlss, true, false));

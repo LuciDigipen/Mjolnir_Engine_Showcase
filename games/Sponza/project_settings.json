@@ -34,6 +34,8 @@
       "Anti-Aliasing": {
         "enabled": true,
         "params": {
+          "dlssRayReconstruction": false,
+          "dlssRrPreset": "e",
           "mode": "dlss",
           "rtSampleCount": 4
         }

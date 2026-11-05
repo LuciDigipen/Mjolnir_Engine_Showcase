@@ -436,7 +436,9 @@ if(MIR_WITH_DLSS)
     add_custom_target(MjolnirEngine_copy_ngx
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${NGX_DLSSD_DLL}" "$<TARGET_FILE_DIR:MjolnirEngine>/nvngx_dlssd.dll"
-        COMMENT "Copying NGX Ray Reconstruction runtime next to MjolnirEngine"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${NGX_DLSS_DLL}" "$<TARGET_FILE_DIR:MjolnirEngine>/nvngx_dlss.dll"
+        COMMENT "Copying NGX DLSS and Ray Reconstruction runtimes next to MjolnirEngine"
         VERBATIM)
     add_dependencies(MjolnirEngine MjolnirEngine_copy_ngx)
 endif()
