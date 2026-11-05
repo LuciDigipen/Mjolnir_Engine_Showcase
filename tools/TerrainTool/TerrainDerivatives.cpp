@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <numeric>
 #include <thread>
 #include <tuple>
 #include <format>
@@ -45,21 +46,6 @@ namespace mir::terrainbake
             lod.origin = *TerrainLocalPosition::FromMeters({ref.SamplePosition(firstX), 0, ref.SamplePosition(firstZ)});
             const int ratio = ref.IntervalsPerTile() / layout.IntervalsPerTile();
             const int total = ref.IntervalsPerTile(), n = layout.IntervalsPerTile();
-            std::vector<uint32_t> ids(size_t(total + 1) * (total + 1), kUnassignedVertex);
-            auto vertex = [&](int ix, int iz)
-            {
-                const size_t id = size_t(iz) * (total + 1) + ix;
-                if (ids[id] == kUnassignedVertex)
-                {
-                    ids[id] = static_cast<uint32_t>(lod.positions.size());
-                    const double x = ref.SamplePosition(firstX + ix), z = ref.SamplePosition(firstZ + iz);
-                    const bool edge = ix == 0 || iz == 0 || ix == total || iz == total;
-                    const double h = ring && edge ? final.SharedHeight(x, z, source) : final.Height(source, x, z);
-                    lod.positions.emplace_back(float(x - lod.origin.Meters().x), float(h),
-                                               float(z - lod.origin.Meters().z));
-                }
-                return ids[id];
-            };
             std::array<int, 4> edgeRatios{ratio, ratio, ratio, ratio};
             if (ring)
             {
@@ -74,6 +60,36 @@ namespace mir::terrainbake
                         edgeRatios[e] = std::min(edgeRatios[e], ref.IntervalsPerTile() / other->IntervalsPerTile());
                 }
             }
+            // Off-lattice vertices lie only on the tile edges, at multiples of that edge's step.
+            std::vector<uint32_t> latticeIds(size_t(n + 1) * (n + 1), kUnassignedVertex);
+            std::array<int, 4> edgeSteps{};
+            std::array<std::vector<uint32_t>, 4> edgeIds;
+            for (int e = 0; e < 4; ++e)
+            {
+                edgeSteps[e] = std::gcd(ratio, edgeRatios[e]);
+                edgeIds[e].assign(size_t(total / edgeSteps[e]) + 1, kUnassignedVertex);
+            }
+            auto slot = [&](int ix, int iz) -> uint32_t &
+            {
+                if (ix % ratio == 0 && iz % ratio == 0)
+                    return latticeIds[size_t(iz / ratio) * (n + 1) + ix / ratio];
+                const int e = ix == 0 ? 0 : ix == total ? 1 : iz == 0 ? 2 : 3;
+                return edgeIds[e][size_t((e < 2 ? iz : ix) / edgeSteps[e])];
+            };
+            auto vertex = [&](int ix, int iz)
+            {
+                uint32_t &id = slot(ix, iz);
+                if (id == kUnassignedVertex)
+                {
+                    id = static_cast<uint32_t>(lod.positions.size());
+                    const double x = ref.SamplePosition(firstX + ix), z = ref.SamplePosition(firstZ + iz);
+                    const bool edge = ix == 0 || iz == 0 || ix == total || iz == total;
+                    const double h = ring && edge ? final.SharedHeight(x, z, source) : final.Height(source, x, z);
+                    lod.positions.emplace_back(float(x - lod.origin.Meters().x), float(h),
+                                               float(z - lod.origin.Meters().z));
+                }
+                return id;
+            };
             const auto extent = *ref.ValidExtent(lod.tile);
             std::vector<std::array<uint32_t, 3>> triangles;
             for (int iz = 0; iz < n; ++iz)
