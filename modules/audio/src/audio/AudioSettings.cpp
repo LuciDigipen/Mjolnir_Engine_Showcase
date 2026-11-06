@@ -77,6 +77,31 @@ namespace mir
             }
         }
 
+        // False when the file has no "audio" section, which leaves out unchanged.
+        bool ReadAudioSection(const json &root, AudioSettings &out, std::vector<std::string> &problems)
+        {
+            const auto audio = root.find(kSection);
+            if (audio == root.end())
+                return false;
+
+            if (audio->is_object())
+            {
+                ReadChannel(*audio, "music", out.mMusic, problems);
+                ReadChannel(*audio, "sfx", out.mSfx, problems);
+            }
+            else
+                problems.push_back("audio is not an object");
+            return true;
+        }
+
+        std::string Join(const std::vector<std::string> &problems)
+        {
+            std::string list;
+            for (const std::string &problem : problems)
+                list += (list.empty() ? "" : "; ") + problem;
+            return list;
+        }
+
         std::string Describe(const ChannelSettings &channel)
         {
             const int percent = static_cast<int>(std::lround(channel.mVolume * 100.0f));
@@ -109,29 +134,43 @@ namespace mir
             return settings;
         }
 
-        const auto audio = root->find(kSection);
-        if (audio == root->end())
+        std::vector<std::string> problems;
+        if (!ReadAudioSection(*root, settings, problems))
             return settings;
 
-        std::vector<std::string> problems;
-        if (audio->is_object())
-        {
-            ReadChannel(*audio, "music", settings.mMusic, problems);
-            ReadChannel(*audio, "sfx", settings.mSfx, problems);
-        }
-        else
-            problems.push_back("audio is not an object");
-
         if (!problems.empty())
-        {
-            std::string list;
-            for (const std::string &problem : problems)
-                list += (list.empty() ? "" : "; ") + problem;
-            MIR_LOG_WARN("audio settings at '{}': {}; the default is used instead", path.string(), list);
-        }
+            MIR_LOG_WARN("audio settings at '{}': {}; the default is used instead", path.string(), Join(problems));
 
         MIR_LOG_INFO("audio settings from '{}': music {}, SFX {}", path.string(), Describe(settings.mMusic),
             Describe(settings.mSfx));
+        return settings;
+    }
+
+    std::optional<AudioSettings> ReadAudioDefaults(const std::filesystem::path &path, std::string &problem)
+    {
+        problem.clear();
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec))
+        {
+            problem = "'" + path.string() + "' does not exist";
+            return std::nullopt;
+        }
+
+        const std::optional<json> root = ReadObject(path);
+        if (!root)
+        {
+            problem = "'" + path.string() + "' is not a readable JSON object";
+            return std::nullopt;
+        }
+
+        AudioSettings settings;
+        std::vector<std::string> problems;
+        ReadAudioSection(*root, settings, problems);
+        if (!problems.empty())
+        {
+            problem = Join(problems);
+            return std::nullopt;
+        }
         return settings;
     }
 

@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 
 namespace mir
 {
@@ -36,6 +37,11 @@ namespace mir
 
         // Writes the "audio" section of project_settings.json and keeps it as Defaults(); false when it cannot
         bool SaveDefaults(const AudioSettings &defaults);
+
+        // Changes Defaults() in memory and writes nothing.
+        void SetDefaults(const AudioSettings &defaults) { mDefaults = defaults; }
+        // Reads the saved section back into Defaults(); on failure problem says why and Defaults() is unchanged.
+        bool ReloadDefaults(std::string &problem);
 
         class WorldBinding;
         std::unique_ptr<WorldBinding> BindWorld(ModuleContext context);

@@ -19,12 +19,6 @@ namespace mir
     void PostProcessingPanel::Draw(PostProcessingSettings &settings, const std::filesystem::path &savePath,
         const PostEffectContext &context)
     {
-        if (!mDraftLoaded)
-        {
-            mDraftSettings = settings;
-            mDraftLoaded = true;
-        }
-
         const std::span<const PostEffectDesc> effects = PostEffectRegistry::Instance().All();
         if (effects.empty())
         {
@@ -37,7 +31,7 @@ namespace mir
                 const std::string name(desc.mName);
                 ImGui::PushID(name.c_str());
 
-                PostEffectState &state = mDraftSettings.effects[name];
+                PostEffectState &state = settings.effects[name];
                 ImGui::Checkbox(name.c_str(), &state.enabled);
 
                 if (state.enabled && desc.mDrawParams != nullptr)
@@ -51,21 +45,13 @@ namespace mir
             }
         }
 
-        if (!mStatusMessage.empty() && mDraftSettings != mMessageSnapshot)
+        if (!mStatusMessage.empty() && settings != mSavedCopy)
             mStatusMessage.clear();
 
         if (ImGui::Button("Save"))
         {
-            if (mDraftSettings.SaveFile(savePath))
-            {
-                settings = mDraftSettings;
-                mStatusMessage = "Saved.";
-            }
-            else
-            {
-                mStatusMessage = "Save failed - see log.";
-            }
-            mMessageSnapshot = mDraftSettings;
+            mStatusMessage = settings.SaveFile(savePath) ? "Saved." : "Save failed - see log.";
+            mSavedCopy = settings;
         }
 
         if (!mStatusMessage.empty())

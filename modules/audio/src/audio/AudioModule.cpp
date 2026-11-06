@@ -120,6 +120,16 @@ namespace mir
         return true;
     }
 
+    bool AudioModule::ReloadDefaults(std::string &problem)
+    {
+        const std::optional<AudioSettings> saved = ReadAudioDefaults(mProjectSettingsPath, problem);
+        if (!saved)
+            return false;
+
+        mDefaults = *saved;
+        return true;
+    }
+
     std::unique_ptr<AudioModule::WorldBinding> AudioModule::BindWorld(ModuleContext context)
     {
         return std::make_unique<WorldBinding>(context);

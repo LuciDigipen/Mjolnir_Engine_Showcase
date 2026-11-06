@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -170,6 +171,53 @@ TEST_CASE("audio settings applied are the audio settings read back, without a so
 
     mir::ApplyAudioSettings(AudioSettings{});
     CHECK_FALSE(mir::audio::IsIdle());
+}
+
+TEST_CASE("reading the defaults returns the file's values", "[audio][defaults]")
+{
+    const TempDir dir("read_defaults");
+    const std::filesystem::path path = dir.path / "project_settings.json";
+    REQUIRE(mir::SaveAudioSettings(path, Sample()));
+
+    std::string problem;
+    const std::optional<AudioSettings> read = mir::ReadAudioDefaults(path, problem);
+    REQUIRE(read);
+    CHECK(*read == Sample());
+    CHECK(problem.empty());
+}
+
+TEST_CASE("reading the defaults reports a missing file, a non-object file and a bad value", "[audio][defaults]")
+{
+    const TempDir dir("read_defaults_bad");
+    std::string problem;
+
+    CHECK_FALSE(mir::ReadAudioDefaults(dir.path / "missing.json", problem));
+    CHECK_FALSE(problem.empty());
+
+    const std::filesystem::path list = dir.path / "list.json";
+    WriteFile(list, "[1, 2]");
+    problem.clear();
+    CHECK_FALSE(mir::ReadAudioDefaults(list, problem));
+    CHECK_FALSE(problem.empty());
+
+    const std::filesystem::path loud = dir.path / "loud.json";
+    WriteFile(loud, R"({ "audio": { "music": { "volume": 2.0 } } })");
+    problem.clear();
+    CHECK_FALSE(mir::ReadAudioDefaults(loud, problem));
+    CHECK(problem.find("music.volume") != std::string::npos);
+}
+
+TEST_CASE("reading the defaults of a file with no audio section gives the built-in defaults", "[audio][defaults]")
+{
+    const TempDir dir("read_defaults_none");
+    const std::filesystem::path path = dir.path / "project_settings.json";
+    WriteFile(path, R"({ "other": 1 })");
+
+    std::string problem;
+    const std::optional<AudioSettings> read = mir::ReadAudioDefaults(path, problem);
+    REQUIRE(read);
+    CHECK(*read == AudioSettings{});
+    CHECK(problem.empty());
 }
 
 TEST_CASE("changed defaults apply when there is no player file and never create one", "[audio][defaults]")

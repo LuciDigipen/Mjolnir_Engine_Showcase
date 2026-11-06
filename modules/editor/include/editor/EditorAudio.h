@@ -51,6 +51,10 @@ namespace mir
         virtual EditorAudioLevels Defaults() const = 0;
         // Also what the pause menu's Restore defaults goes back to; false when the write fails
         virtual bool SaveDefaults(const EditorAudioLevels &defaults) = 0;
+        // Changes the defaults in memory only, so a player without a settings file hears them
+        virtual void SetDefaults(const EditorAudioLevels &defaults) = 0;
+        // Takes the saved section back; false with the reason in problem, and nothing changes
+        virtual bool ReloadDefaults(std::string &problem) = 0;
 
         // Read from the SoundBank folder on each call
         virtual std::vector<EditorSoundBank> SoundBanks() const = 0;

@@ -27,7 +27,6 @@ namespace mir
         void OnHidden()
         {
             CancelListening();
-            mDraftLoaded = false;
             mStatusMessage.clear();
         }
 
@@ -47,11 +46,7 @@ namespace mir
         RawInputSnapshot mPreviousRaw;
 
         std::string mStatusMessage;
-        // mDraftInputMap as of the last time mStatusMessage was set; a further
-        // edit invalidates the message before it goes stale.
-        InputMap mMessageSnapshot;
-
-        bool mDraftLoaded = false;
-        InputMap mDraftInputMap;
+        // The map as of the last Save; a further edit clears the message before it goes stale.
+        InputMap mSavedCopy;
     };
 }
