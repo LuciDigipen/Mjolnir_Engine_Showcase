@@ -17,9 +17,14 @@
 #include <renderer/ViewSubmission.h>
 #include <rtxgi/ddgi/DDGIVolume.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <format>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace mir::vk
@@ -57,7 +62,16 @@ namespace mir::vk
         VkDescriptorPool mPool{};
         VkDescriptorSet mSets[kFramesInFlight]{};
         VkSampler mSampler{};
-        struct Atlas { VkImage image{}; VmaAllocation allocation{}; VkImageView view{}; uint32_t layers = 0; };
+        struct Atlas
+        {
+            VkImage image{};
+            VmaAllocation allocation{};
+            VkImageView view{};
+            uint32_t layers = 0, width = 0, height = 0;
+            VkBuffer readback{};
+            VmaAllocation readbackAllocation{};
+            void *mapped = nullptr;
+        };
         std::array<Atlas, 5> mImages{}; // rays, irradiance, distance, state, variability
         struct Constants { VkBuffer buffer{}; VmaAllocation allocation{}; void *mapped = nullptr; };
         std::array<Constants, kFramesInFlight> mConstants{};
@@ -72,11 +86,37 @@ namespace mir::vk
         TraceState mProbe, mCamera;
         std::array<VkPipeline, 6> mCompute{};
         std::unique_ptr<ProbeVolume> mVolume;
+        std::vector<SurfaceMaterialRegistration> mMaterials;
+        // Shader reload swaps only the material-dependent trace pipelines.
+        std::optional<std::vector<SurfaceMaterialRegistration>> mPendingMaterials;
+        TraceState mPendingProbe, mPendingCamera;
         DdgiSettings mSettings;
         std::optional<DdgiSettings> mFailed;
         ProbeUpdateSchedule mSchedule;
         bool mReset = true, mInitializedImages = false, mIncompatible = false;
         uint64_t mImageBytes = 0;
+        uint32_t mDiagnosticFrame = 0;
+        const bool mReadbackDiagnostics = std::getenv("MIR_DDGI_READBACK") != nullptr;
+        struct DebugSlot
+        {
+            VkBuffer buffer{};
+            VmaAllocation allocation{};
+            void *mapped = nullptr;
+            bool pending = false;
+        };
+        std::array<DebugSlot, kFramesInFlight> mDebugSlots{};
+        std::vector<GiProbeDebug> mProbeDebug;
+        uint64_t mProbeDebugGeneration = 0;
+        VkQueryPool mTimestampPool{};
+        bool mProbeTimed[kFramesInFlight]{}, mCameraTimed[kFramesInFlight]{};
+        double mProbeMilliseconds = -1, mCameraMilliseconds = -1;
+        std::string mStatus = "Inactive: requires a single ray-traced view";
+        void SetStatus(const char *status)
+        {
+            if (mStatus == status) return;
+            mStatus = status;
+            MIR_LOG_INFO("DDGI runtime: {}", mStatus);
+        }
 
         std::optional<RayTracer::GiShading> Shading(uint32_t frame) const
         {
@@ -86,18 +126,41 @@ namespace mir::vk
                 mCamera.raygen, mCamera.miss, mCamera.hit, mCamera.callable, mSettings.intensity, weight };
         }
 
+        void DestroyTrace(TraceState &trace)
+        {
+            if (trace.pipeline) vkDestroyPipeline(mDevice->Handle(), trace.pipeline, nullptr);
+            if (trace.buffer) vmaDestroyBuffer(mDevice->Allocator(), trace.buffer, trace.allocation);
+            trace = {};
+        }
+
+        void DiscardPendingTraces()
+        {
+            if (!mDevice) return;
+            DestroyTrace(mPendingProbe);
+            DestroyTrace(mPendingCamera);
+            mPendingMaterials.reset();
+        }
+
         void Destroy()
         {
             if (!mDevice) return;
             const VkDevice handle = mDevice->Handle();
+            if (mTimestampPool) vkDestroyQueryPool(handle, mTimestampPool, nullptr);
+            mTimestampPool = {};
+            for (auto &slot : mDebugSlots)
+            {
+                if (slot.buffer) vmaDestroyBuffer(mDevice->Allocator(), slot.buffer, slot.allocation);
+                slot = {};
+            }
+            if (!mProbeDebug.empty()) ++mProbeDebugGeneration;
+            mProbeDebug.clear();
+            std::fill(std::begin(mProbeTimed), std::end(mProbeTimed), false);
+            std::fill(std::begin(mCameraTimed), std::end(mCameraTimed), false);
+            mProbeMilliseconds = mCameraMilliseconds = -1;
             mVolume.reset();
             for (auto &pipeline : mCompute) { if (pipeline) vkDestroyPipeline(handle, pipeline, nullptr); pipeline = {}; }
-            for (auto *trace : { &mProbe, &mCamera })
-            {
-                if (trace->pipeline) vkDestroyPipeline(handle, trace->pipeline, nullptr);
-                if (trace->buffer) vmaDestroyBuffer(mDevice->Allocator(), trace->buffer, trace->allocation);
-                *trace = {};
-            }
+            // Pending traces were built against this layout; a commit rebuilds them.
+            for (auto *trace : { &mProbe, &mCamera, &mPendingProbe, &mPendingCamera }) DestroyTrace(*trace);
             if (mPool) vkDestroyDescriptorPool(handle, mPool, nullptr);
             if (mTraceLayout) vkDestroyPipelineLayout(handle, mTraceLayout, nullptr);
             if (mComputeLayout) vkDestroyPipelineLayout(handle, mComputeLayout, nullptr);
@@ -105,6 +168,7 @@ namespace mir::vk
             if (mSampler) vkDestroySampler(handle, mSampler, nullptr);
             for (auto &atlas : mImages)
             {
+                if (atlas.readback) vmaDestroyBuffer(mDevice->Allocator(), atlas.readback, atlas.readbackAllocation);
                 if (atlas.view) vkDestroyImageView(handle, atlas.view, nullptr);
                 if (atlas.image) vmaDestroyImage(mDevice->Allocator(), atlas.image, atlas.allocation);
                 atlas = {};
@@ -117,12 +181,14 @@ namespace mir::vk
             mPool = {}; mTraceLayout = {}; mComputeLayout = {};
             mSetLayout = {}; mSampler = {}; mSchedule.Reset(); mImageBytes = 0;
             mReset = true; mInitializedImages = false;
+            mDiagnosticFrame = 0;
         }
 
         bool CreateAtlas(const rtxgi::DDGIVolumeDesc &desc, rtxgi::EDDGIVolumeTextureType type, Atlas &atlas)
         {
             uint32_t width, height;
             rtxgi::GetDDGIVolumeTextureDimensions(desc, type, width, height, atlas.layers);
+            atlas.width = width; atlas.height = height;
             const auto &limits = mDevice->Properties().limits;
             if (width > limits.maxImageDimension2D || height > limits.maxImageDimension2D || atlas.layers > limits.maxImageArrayLayers)
                 return false;
@@ -131,13 +197,13 @@ namespace mir::vk
             vkGetPhysicalDeviceFormatProperties(mDevice->Physical(), format, &properties);
             constexpr VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
                 VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
-                VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+                VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
             if ((properties.optimalTilingFeatures & needed) != needed) return false;
             const VkImageCreateInfo info{ .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                 .imageType = VK_IMAGE_TYPE_2D, .format = format, .extent{ width, height, 1 },
                 .mipLevels = 1, .arrayLayers = atlas.layers, .samples = VK_SAMPLE_COUNT_1_BIT,
                 .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
             const VmaAllocationCreateInfo allocationInfo{ .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE };
             VmaAllocationInfo allocated{};
@@ -248,28 +314,38 @@ namespace mir::vk
             return true;
         }
 
-        bool CreateTrace(const char *shader, const std::array<const char *, 6> &names, TraceState &output)
+        bool CreateTrace(const char *shader, const std::array<const char *, 6> &names,
+            std::span<const SurfaceMaterialRegistration> materials, TraceState &output)
         {
             constexpr VkShaderStageFlagBits types[]{ VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR,
                 VK_SHADER_STAGE_MISS_BIT_KHR, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
                 VK_SHADER_STAGE_ANY_HIT_BIT_KHR };
-            std::array<VkShaderModule, 6> modules{};
-            std::array<VkPipelineShaderStageCreateInfo, 6> stages{};
-            for (const char *name : names)
+            const bool probe = std::string_view(shader) == "ddgiProbe";
+            std::vector<std::string> files;
+            for (const char *name : names) files.push_back(std::string(shader) + "." + name + ".spv");
+            for (const auto &material : materials)
+                files.push_back(material.stem + (probe ? ".probe." : ".gi.") + "closestHitSurface.spv");
+            std::vector<VkShaderModule> modules(files.size());
+            std::vector<VkPipelineShaderStageCreateInfo> stages(files.size());
+            for (const auto &file : files)
             {
                 std::error_code error;
-                if (!std::filesystem::is_regular_file(ShaderPath(std::string(shader) + "." + name + ".spv"), error))
+                if (!std::filesystem::is_regular_file(ShaderPath(file), error))
+                {
+                    MIR_LOG_WARN("DDGI missing shader variant: {}", file);
                     return false;
+                }
             }
             bool loaded = true;
             for (size_t i = 0; i < modules.size(); ++i)
             {
-                modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(std::string(shader) + "." + names[i] + ".spv"));
+                modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(files[i]));
                 loaded &= modules[i] != VK_NULL_HANDLE;
                 stages[i] = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    .stage = types[i], .module = modules[i], .pName = names[i] };
+                    .stage = i < 6 ? types[i] : VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+                    .module = modules[i], .pName = i < 6 ? names[i] : "closestHitSurface" };
             }
-            std::array<VkRayTracingShaderGroupCreateInfoKHR, 5> groups{};
+            std::vector<VkRayTracingShaderGroupCreateInfoKHR> groups(5);
             for (uint32_t i = 0; i < 5; ++i)
                 groups[i] = { .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
                     .type = i < 3 ? VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR : VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR,
@@ -277,6 +353,15 @@ namespace mir::vk
                     .closestHitShader = i == 3 ? 3u : VK_SHADER_UNUSED_KHR,
                     .anyHitShader = i >= 3 ? i + 1 : VK_SHADER_UNUSED_KHR,
                     .intersectionShader = VK_SHADER_UNUSED_KHR };
+            // Match the base camera TLAS: legacy primary/shadow pair, then a
+            // primary/shadow pair at HitGroupRecordOffset for every registration.
+            for (uint32_t i = 0; i < uint32_t(materials.size()); ++i)
+            {
+                auto primary = groups[3];
+                primary.closestHitShader = 6 + i;
+                groups.push_back(primary);
+                groups.push_back(groups[4]);
+            }
             const VkRayTracingPipelineCreateInfoKHR info{ .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
                 .stageCount = uint32_t(stages.size()), .pStages = stages.data(),
                 .groupCount = uint32_t(groups.size()), .pGroups = groups.data(), .maxPipelineRayRecursionDepth = 2, .layout = mTraceLayout };
@@ -303,8 +388,18 @@ namespace mir::vk
             const VkBufferDeviceAddressInfo addressInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = output.buffer };
             const VkDeviceAddress address = vkGetBufferDeviceAddress(mDevice->Handle(), &addressInfo);
             output.raygen = { address, stride, stride }; output.miss = { address + stride, stride, 2 * stride };
-            output.hit = { address + 3 * stride, stride, 2 * stride };
+            output.hit = { address + 3 * stride, stride, (groups.size() - 3) * stride };
             return true;
+        }
+
+        bool CreateTraces(std::span<const SurfaceMaterialRegistration> materials, TraceState &probe, TraceState &camera)
+        {
+            constexpr std::array<const char *, 6> probeEntries{
+                "probeRayGen", "probeMiss", "shadowMissMain", "probeClosestHit", "probeAnyHit", "shadowAnyHitMain" };
+            constexpr std::array<const char *, 6> cameraEntries{
+                "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain" };
+            return CreateTrace("ddgiProbe", probeEntries, materials, probe) &&
+                CreateTrace("raytraceGi", cameraEntries, materials, camera);
         }
 
         bool Create()
@@ -332,27 +427,135 @@ namespace mir::vk
                 rtxgi::EDDGIVolumeTextureType::Data, rtxgi::EDDGIVolumeTextureType::Variability };
             for (size_t i = 0; i < mImages.size(); ++i)
                 if (!CreateAtlas(desc, types[i], mImages[i])) return false;
-            constexpr std::array<const char *, 6> probeEntries{
-                "probeRayGen", "probeMiss", "shadowMissMain", "probeClosestHit", "probeAnyHit", "shadowAnyHitMain" };
-            constexpr std::array<const char *, 6> cameraEntries{
-                "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain" };
-            if (!CreateDescriptors() || !CreateCompute() ||
-                !CreateTrace("ddgiProbe", probeEntries, mProbe) || !CreateTrace("raytraceGi", cameraEntries, mCamera)) return false;
+            if (!CreateDescriptors() || !CreateCompute() || !CreateTraces(mMaterials, mProbe, mCamera)) return false;
             mVolume = std::make_unique<ProbeVolume>(desc);
+            if (mDevice->TimestampBits() > 0)
+            {
+                const VkQueryPoolCreateInfo queries{ .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+                    .queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = 4 * kFramesInFlight };
+                if (vkCreateQueryPool(mDevice->Handle(), &queries, nullptr, &mTimestampPool) != VK_SUCCESS)
+                    MIR_LOG_WARN("DDGI GPU timestamps unavailable");
+            }
             MIR_LOG_INFO("DDGI: {} probes, {} rays/probe, {:.2f} MiB probe images", mSettings.ProbeCount(), mSettings.raysPerProbe,
                 double(mImageBytes) / (1024.0 * 1024.0));
             return true;
+        }
+
+        void BeginDiagnostics(VkCommandBuffer cmd, uint32_t frame)
+        {
+            // BeginFrame has waited for this slot: both queries and readback are complete.
+            auto &slot = mDebugSlots[frame];
+            if (slot.pending)
+            {
+                vmaInvalidateAllocation(mDevice->Allocator(), slot.allocation, 0, VK_WHOLE_SIZE);
+                const auto *values = static_cast<const float *>(slot.mapped);
+                bool changed = mProbeDebug.size() != size_t(mSettings.ProbeCount());
+                mProbeDebug.resize(size_t(mSettings.ProbeCount()));
+                for (size_t probe = 0; probe < mProbeDebug.size(); ++probe)
+                {
+                    GiProbeDebug state;
+                    for (int axis = 0; axis < 3; ++axis)
+                        state.offset[axis] = values[probe * 4 + axis] * mSettings.probeSpacing;
+                    state.inactive = values[probe * 4 + 3] != 0;
+                    changed |= state.offset != mProbeDebug[probe].offset || state.inactive != mProbeDebug[probe].inactive;
+                    mProbeDebug[probe] = state;
+                }
+                // Lets the overlay skip rebuilding lines while probes are stable.
+                if (changed) ++mProbeDebugGeneration;
+                slot.pending = false;
+            }
+            if (!mTimestampPool) return;
+            const auto elapsed = [&](uint32_t first, double &milliseconds)
+            {
+                uint64_t ticks[2]{};
+                if (vkGetQueryPoolResults(mDevice->Handle(), mTimestampPool, first, 2, sizeof(ticks), ticks,
+                    sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
+                const uint32_t bits = mDevice->TimestampBits();
+                const uint64_t mask = bits >= 64 ? ~uint64_t(0) : (uint64_t(1) << bits) - 1;
+                milliseconds = double((ticks[1] - ticks[0]) & mask) * mDevice->Properties().limits.timestampPeriod / 1e6;
+            };
+            if (mProbeTimed[frame]) elapsed(frame * 4, mProbeMilliseconds);
+            if (mCameraTimed[frame]) elapsed(frame * 4 + 2, mCameraMilliseconds);
+            vkCmdResetQueryPool(cmd, mTimestampPool, frame * 4, 4);
+            mProbeTimed[frame] = mCameraTimed[frame] = false;
+        }
+
+        void CopyProbeDebug(VkCommandBuffer cmd, uint32_t frame)
+        {
+            auto &slot = mDebugSlots[frame];
+            if (!slot.buffer)
+            {
+                VmaAllocationInfo mapped{};
+                if (!CreateBuffer(mDevice->Allocator(), VkDeviceSize(mSettings.ProbeCount()) * 16,
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+                    VMA_ALLOCATION_CREATE_MAPPED_BIT, slot.buffer, slot.allocation, &mapped)) return;
+                slot.mapped = mapped.pMappedData;
+            }
+            const auto &atlas = mImages[3];
+            const VkBufferImageCopy copy{ .imageSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, atlas.layers},
+                .imageExtent{atlas.width, atlas.height, 1} };
+            vkCmdCopyImageToBuffer(cmd, atlas.image, VK_IMAGE_LAYOUT_GENERAL, slot.buffer, 1, &copy);
+            const VkMemoryBarrier2 barrier{ .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT, .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT, .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT };
+            const VkDependencyInfo dependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .memoryBarrierCount = 1, .pMemoryBarriers = &barrier };
+            vkCmdPipelineBarrier2(cmd, &dependency);
+            slot.pending = true;
         }
     };
 
     Ddgi::Ddgi() : mImpl(std::make_unique<Impl>()) {}
     Ddgi::~Ddgi() = default;
 
-    void Ddgi::Initialize(Device &device, VkDescriptorSetLayout sceneLayout, VkDescriptorSetLayout cameraLayout)
+    void Ddgi::Initialize(Device &device, VkDescriptorSetLayout sceneLayout, VkDescriptorSetLayout cameraLayout,
+        std::span<const SurfaceMaterialRegistration> materials)
     {
         mImpl->mDevice = &device; mImpl->mSceneLayout = sceneLayout; mImpl->mCameraLayout = cameraLayout;
+        mImpl->mMaterials.assign(materials.begin(), materials.end());
         mImpl->mIncompatible = false;
     }
+
+    bool Ddgi::PrepareShaderReload(std::span<const SurfaceMaterialRegistration> materials, std::string *error)
+    {
+        auto &state = *mImpl;
+        if (!state.mDevice) return true;
+        state.DiscardPendingTraces();
+        state.mPendingMaterials.emplace(materials.begin(), materials.end());
+        // Probe atlases and history do not depend on shaders; keep them live.
+        if (state.mVolume && !state.CreateTraces(materials, state.mPendingProbe, state.mPendingCamera))
+        {
+            if (error) *error = "DDGI material pipeline preparation failed";
+            state.DiscardPendingTraces();
+            return false;
+        }
+        return true;
+    }
+
+    void Ddgi::CommitShaderReload()
+    {
+        // The renderer idles the device before preparing a reload.
+        auto &state = *mImpl;
+        if (!state.mPendingMaterials) return;
+        state.mMaterials = std::move(*state.mPendingMaterials);
+        state.mPendingMaterials.reset();
+        if (state.mVolume && state.mPendingProbe.pipeline)
+        {
+            state.DestroyTrace(state.mProbe);
+            state.DestroyTrace(state.mCamera);
+            state.mProbe = std::exchange(state.mPendingProbe, {});
+            state.mCamera = std::exchange(state.mPendingCamera, {});
+        }
+        else if (state.mVolume)
+        {
+            // Configure recreated the volume after prepare; rebuild with the new materials.
+            state.Destroy();
+        }
+        // New variants may fix a previously failed pipeline build.
+        state.mFailed.reset();
+    }
+
+    void Ddgi::DiscardShaderReload() { mImpl->DiscardPendingTraces(); }
 
     void Ddgi::Configure(const DdgiSettings &settings, bool active)
     {
@@ -363,19 +566,38 @@ namespace mir::vk
             settings.probeSpacing != state.mSettings.probeSpacing || settings.raysPerProbe != state.mSettings.raysPerProbe;
         if (state.mVolume && (!wanted || changed)) { state.mDevice->WaitIdle(); state.Destroy(); }
         state.mSettings = settings;
-        if (!wanted) { state.mFailed.reset(); return; }
+        if (!wanted) { state.SetStatus("Inactive: requires enabled GI and a single ray-traced view"); state.mFailed.reset(); return; }
         if (!state.mVolume && (!state.mFailed || *state.mFailed != settings))
         {
             if (!state.Create())
             {
                 MIR_LOG_WARN("DDGI resources unavailable; preserving existing RT lighting");
                 state.Destroy(); state.mFailed = settings;
+                state.SetStatus("Unavailable: probe resources or shader pipelines failed");
             }
             else state.mFailed.reset();
         }
     }
 
     void Ddgi::ResetHistory() { mImpl->mReset = true; }
+    std::string Ddgi::Status() const
+    {
+        return mImpl->mStatus + " | sampling " + std::to_string(int(mImpl->mSchedule.SamplingWeight() * 100)) +
+            "% | first sweep " + std::to_string(mImpl->mSchedule.Visited()) + "/" +
+            std::to_string(mImpl->mSettings.ProbeCount()) + " probes | " +
+            std::to_string(mImpl->mImageBytes / 1024) + " KiB probe images" +
+            (mImpl->mProbeMilliseconds < 0 ? "" : std::format(" | probe {:.3f} ms", mImpl->mProbeMilliseconds)) +
+            (mImpl->mCameraMilliseconds < 0 ? "" : std::format(" | camera RT {:.3f} ms", mImpl->mCameraMilliseconds));
+    }
+    std::span<const GiProbeDebug> Ddgi::ProbeDebug() const { return mImpl->mProbeDebug; }
+    uint64_t Ddgi::ProbeDebugGeneration() const { return mImpl->mProbeDebugGeneration; }
+    void Ddgi::CameraTimestamp(VkCommandBuffer cmd, uint32_t frame, bool begin)
+    {
+        if (!mImpl->mTimestampPool) return;
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mImpl->mTimestampPool,
+            frame * 4 + (begin ? 2 : 3));
+        if (!begin) mImpl->mCameraTimed[frame] = true;
+    }
     bool Ddgi::CanUpdate(WorldPosition camera) const
     {
         const auto &state = *mImpl;
@@ -385,23 +607,24 @@ namespace mir::vk
             uint64_t(state.mSettings.probesPerFrame) * state.mSettings.raysPerProbe <=
                 state.mDevice->RtProperties().maxRayDispatchInvocationCount;
     }
-    void Ddgi::Shutdown() { mImpl->Destroy(); mImpl->mFailed.reset(); }
+    void Ddgi::Shutdown() { mImpl->DiscardPendingTraces(); mImpl->Destroy(); mImpl->mFailed.reset(); }
 
     std::optional<RayTracer::GiShading> Ddgi::Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
-        VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete)
+        VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete, bool visualize)
     {
         auto &state = *mImpl;
         if (!CanUpdate(camera)) { state.mReset = true; return std::nullopt; }
-        // The probe and camera GI pipelines fix one legacy hit pair; a scene
-        // with per-material offsets must stay on the base camera trace.
+        state.BeginDiagnostics(cmd, frame);
+        // Scene preparation validates offsets against the ordered material catalog.
         if (!scene.giCompatible)
         {
             if (!state.mIncompatible)
             {
-                MIR_LOG_WARN("DDGI disabled for scenes with per-material RT hit groups; "
+                MIR_LOG_WARN("DDGI disabled for an invalid material RT hit group offset; "
                     "falling back to the base camera trace");
             }
             state.mIncompatible = true;
+            state.SetStatus("Unavailable: material shader table is incompatible");
             state.mReset = true;
             return std::nullopt;
         }
@@ -409,11 +632,12 @@ namespace mir::vk
         {
             state.mIncompatible = false;
             state.mReset = true;
-            MIR_LOG_INFO("DDGI re-enabled for a fixed-SBT scene");
+            MIR_LOG_INFO("DDGI re-enabled for a compatible material scene");
         }
         const bool update = complete && !scene.truncated;
         if (!update)
         {
+            state.SetStatus("Waiting for complete scene; holding/fading probe history");
             if (state.mReset) return std::nullopt;
             state.mSchedule.SkipUpdate();
             if (state.mSchedule.Expired()) { state.mReset = true; return std::nullopt; }
@@ -428,6 +652,11 @@ namespace mir::vk
         if (update)
         {
             state.mVolume->SetProbeHysteresis(budget[3] == 0 ? 0.0f : 0.97f);
+            // The SDK clamps a large brightening delta in encoded irradiance space.
+            // Applying that to a cleared atlas seeds it at 1/4 of the encoded
+            // value (roughly 1/1024 of linear energy at gamma 5). Initialize the
+            // first sweep directly, then restore impulse rejection for history.
+            state.mVolume->SetProbeBrightnessThreshold(budget[3] == 0 ? 1e27f : 0.1f);
             state.mVolume->Update();
         }
         const auto packed = state.mVolume->GetDescGPUPacked();
@@ -464,6 +693,8 @@ namespace mir::vk
                 ProbeBarrier(cmd);
             };
         state.mDevice->BeginLabel(cmd, "DDGI Probe Update", { 0.3f, 0.9f, 0.3f, 1.0f });
+        if (state.mTimestampPool)
+            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, state.mTimestampPool, frame * 4);
         if (state.mReset) { dispatch(4, (total + 31) / 32, 1, 1); dispatch(5, (total + 31) / 32, 1, 1); }
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, state.mProbe.pipeline);
         const std::array<VkDescriptorSet, 3> sets{ scene.descriptors, cameraSet, state.mSets[frame] };
@@ -478,8 +709,72 @@ namespace mir::vk
         dispatch(2, (total + 31) / 32, 1, 1);
         dispatch(3, (total + 31) / 32, 1, 1);
         state.mDevice->EndLabel(cmd);
+        if (state.mTimestampPool)
+        {
+            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, state.mTimestampPool, frame * 4 + 1);
+            state.mProbeTimed[frame] = true;
+        }
+        if (visualize) state.CopyProbeDebug(cmd, frame);
         state.mReset = false;
         state.mSchedule.Advance(total, count);
+        if (state.mReadbackDiagnostics)
+        {
+            ++state.mDiagnosticFrame;
+            if (state.mDiagnosticFrame == 64)
+            {
+                for (auto &atlas : state.mImages)
+                {
+                    VmaAllocationInfo mapped{};
+                    const VkDeviceSize bytes = VkDeviceSize(atlas.width) * atlas.height * atlas.layers * 16;
+                    if (!CreateBuffer(state.mDevice->Allocator(), bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                        VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                        atlas.readback, atlas.readbackAllocation, &mapped)) continue;
+                    atlas.mapped = mapped.pMappedData;
+                    const VkBufferImageCopy copy{ .imageSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, atlas.layers},
+                        .imageExtent{atlas.width, atlas.height, 1} };
+                    vkCmdCopyImageToBuffer(cmd, atlas.image, VK_IMAGE_LAYOUT_GENERAL, atlas.readback, 1, &copy);
+                }
+                const VkMemoryBarrier2 hostBarrier{ .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                    .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT, .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT, .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT };
+                const VkDependencyInfo hostDependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                    .memoryBarrierCount = 1, .pMemoryBarriers = &hostBarrier };
+                vkCmdPipelineBarrier2(cmd, &hostDependency);
+                ProbeBarrier(cmd);
+            }
+            if (state.mDiagnosticFrame == 68)
+            {
+                // Explicit diagnostic mode only: finish the previous frame's copies.
+                state.mDevice->WaitIdle();
+                for (size_t image = 0; image < state.mImages.size(); ++image)
+                {
+                    auto &atlas = state.mImages[image];
+                    if (!atlas.mapped) continue;
+                    vmaInvalidateAllocation(state.mDevice->Allocator(), atlas.readbackAllocation, 0, VK_WHOLE_SIZE);
+                    const auto *values = static_cast<const float *>(atlas.mapped);
+                    double sum = 0; float peak = 0; uint64_t nonzero = 0, nonfinite = 0;
+                    const uint64_t texels = uint64_t(atlas.width) * atlas.height * atlas.layers;
+                    for (uint64_t texel = 0; texel < texels; ++texel)
+                        for (uint32_t channel = 0; channel < 3; ++channel)
+                        {
+                            const float value = values[texel * 4 + channel];
+                            if (!std::isfinite(value)) { ++nonfinite; continue; }
+                            sum += value; peak = (std::max)(peak, value); nonzero += value != 0;
+                        }
+                    uint64_t inactive = 0;
+                    if (image == 3) for (uint64_t texel = 0; texel < texels; ++texel) inactive += values[texel * 4 + 3] != 0;
+                    MIR_LOG_INFO("DDGI readback image {}: mean {}, peak {}, nonzero {}, nonfinite {}, inactive {} / {}",
+                        image, sum / double(texels * 3), peak, nonzero, nonfinite, inactive, texels);
+                    vmaDestroyBuffer(state.mDevice->Allocator(), atlas.readback, atlas.readbackAllocation);
+                    atlas.readback = {}; atlas.readbackAllocation = {}; atlas.mapped = nullptr;
+                }
+            }
+        }
+        const bool active = state.mSchedule.SamplingWeight() >= 1.0f;
+        if (active && state.mStatus != "Active" && state.mProbeMilliseconds >= 0 && state.mCameraMilliseconds >= 0)
+            MIR_LOG_INFO("DDGI GPU time (completed frame slot): probe {:.3f} ms, camera RT {:.3f} ms",
+                state.mProbeMilliseconds, state.mCameraMilliseconds);
+        state.SetStatus(active ? "Active" : "Warming up");
         return state.Shading(frame);
     }
 }

@@ -28,7 +28,7 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
-| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline and SBT, and every image the trace writes, one row each in `RayTracer.cpp`'s `kRtImages` table (format, binding, clear value, stage), addressed by `RtImage`: color, linear distance and per-pixel velocity always, plus Ray Reconstruction's guide buffers (albedo, normal/roughness, specular albedo, projected depth) while Dlss is active |
+| `RayTracer` | a BLAS per mesh slot, built the first time a trace draws a `CreateMesh` mesh, so a raster project spends no memory on them. A scene whose BLASes would leave under 1 GiB of device memory free draws raster instead, with a warning, until it is released; a TLAS per frame, the RT pipeline and SBT, and every image the trace writes, one row each in `RayTracer.cpp`'s `kRtImages` table (format, binding, clear value, stage), addressed by `RtImage`: color, linear distance and per-pixel velocity always, plus Ray Reconstruction's guide buffers (albedo, normal/roughness, specular albedo, projected depth) while Dlss is active |
 | `FxCompositionPass` | one HDR composition image and copy pipeline per frame slot, followed by registered FX draws inside renderer-owned dynamic rendering |
 | `PostProcessingStack` | screen-space effects and final composite behind one `Initialize`/`Resize`/`Shutdown`; it owns effect subsystems and their settings. FX simulation and particle lifetime are outside this stack |
 | ↳ `DlssRayReconstruction` | `MIR_WITH_DLSS` builds only: NGX, the Ray Reconstruction feature and its output images - denoises and anti-aliases `RayTracer`'s output at native resolution, ahead of `DepthOfField` |
@@ -644,13 +644,37 @@ though those frames are rendered raster. `ClampRtSampleCount` rounds Msaa's
 D3D sample patterns for (packed back to back - the pattern for n samples starts
 at index n - 1).
 
+DLSS uses Ray Reconstruction preset E by default. The Post-Processing panel's
+Anti-Aliasing controls include a `Ray Reconstruction` checkbox. Turning it off
+uses the separate DLSS Super Resolution feature at native resolution (DLAA),
+without RR denoising. The `dlssRayReconstruction` setting is saved with the AA
+parameters and defaults to true for existing scenes. Switching it waits for GPU
+users, releases the old feature, and resets temporal history. Both `nvngx_dlss.dll`
+and `nvngx_dlssd.dll` are copied and packaged with DLSS-enabled builds.
+Ray-traced lighting may be noisier with RR disabled; DLAA remains temporal AA.
+DLSS is offered whenever Ray Reconstruction is supported; if the device or
+driver lacks Super Resolution, the checkbox has no effect and RR stays on.
+The panel's
+Anti-Aliasing controls expose `Ray Reconstruction preset` with E and D for
+manual comparison. The value persists as `params.dlssRrPreset` (`"e"` or
+`"d"`); older settings without the field and unsupported values select E.
+Changing it while DLSS remains selected waits for the old feature's GPU users,
+releases that feature and recreates it with fresh history on the next trace.
+Feature-creation logs report the selected preset. D remains an explicit choice;
+the SDK's changing default and preset F are not exposed by this control.
+
+The NGX evaluation now receives the elapsed interval between successful rendered
+evaluations in milliseconds. Feature recreation and history resets use a neutral
+16.67 ms first interval; a bounded positive interval prevents zero or excessive
+timing values after a pause. This is render cadence, not GPU execution time.
+
 **Each mode's GPU resources exist only while it is the active mode.**
 `PostProcessingStack::Apply` is the one place they come and go: on a mode change it idles
 the device (mode switches are rare; in-flight frames may still read the old
 images), then creates or frees `Fxaa`'s LDR intermediate, `RayTracer`'s four
 guide buffers and `DlssRayReconstruction`'s output images. Ray Reconstruction's
 NGX feature is built later still, by `DlssRayReconstruction::Record` at the
-viewport rect's size, and rebuilt only when that size changes - a swapchain
+viewport rect's size, and rebuilt when that size or the RR preset changes - a swapchain
 resize only recreates the output images. `RayTracer`'s guide bindings (5-8,
 the `kRtImages` rows marked `guide`) are `PARTIALLY_BOUND`, so the descriptor
 set stays valid with them unwritten;
@@ -879,6 +903,25 @@ checks device limits. The editor shows estimated memory and ray work and
 rejects invalid drafts. Malformed or over-budget GI blocks load as disabled
 defaults without discarding other rendering settings.
 
+The editor distinguishes compiled support from runtime state (inactive,
+warming up, active, missing resources, or incomplete scene history). It shows
+sampling weight, first-sweep progress and allocated probe-image memory.
+`Fit to resident scene bounds` measures loaded meshes, including imported model
+transforms, and fits a padded static grid at the chosen spacing. A rejected fit
+leaves the draft unchanged and suggests coarser spacing when possible. Account
+for future animation and streaming in the padding. The overlay shows saved
+volume bounds and relocated GPU probe positions. Green probes are active, gray
+probes inactive, and yellow probes await state readback. The small state copies
+use frame-slot fences without a device wait; their display trails the GPU by a
+few frames. The status also shows completed probe-update and camera-RT GPU
+times when the graphics queue supports timestamps. Those timings exclude
+post-processing, allocation and optional full-atlas diagnostic readback.
+
+Coverage is `(probeCounts - 1) * probeSpacing` on each axis. Sponza uses a
+15 x 12 x 20 grid at 2 m spacing (28 x 22 x 38 m), centred on its measured
+building bounds with at least 4 m padding. Its 512-probe update budget takes
+eight frames per sweep; density and update cost are separate controls.
+
 **Scene submission and pass order.**
 
 For a single RT viewport, `RenderSystem` supplies a camera-relative extended
@@ -912,6 +955,19 @@ It evaluates diffuse direct light and prior-frame irradiance. Circular batches
 honor `probesPerFrame`; only traced probes are blended. Inactive probes still
 trace fixed rays so classification can reactivate them.
 
+Camera, probe and ordinary RT pipelines share the same material SBT ordering:
+legacy primary/shadow records 0/1, then a pair at `2 + 2 * registrationIndex`.
+The build generates `.gi.closestHitSurface.spv` and
+`.probe.closestHitSurface.spv` variants for both mesh and terrain frontends.
+Material evaluation supplies diffuse reflectance, AO, normal and emissive
+radiance. Surface camera variants return receiver data through the shared
+payload; raygen samples irradiance and replaces the ambient contribution before
+fog. Keeping SDK sampling outside generic material specialization also avoids a
+Slang compiler crash seen with the SDK headers inside specialized hit shaders.
+Shader publication/reload includes both variants and prepares matching base
+and GI pipeline generations transactionally. Missing variants reject reload
+without discarding working pipelines.
+
 **Resources, history and shading.**
 
 `vk::Ddgi` owns the SDK volume, five RGBA32F array images (rays, irradiance,
@@ -935,11 +991,27 @@ intensity setting. GI replaces ambient within coverage. Outside coverage or
 while unavailable, ambient remains. Direct lighting, shadows, unlit materials,
 fog, DLSS guides and raster lighting retain their existing behavior.
 
+The first sweep also bypasses the SDK brightness-delta clamp. Applying that
+clamp to cleared probes can seed encoded irradiance at one quarter of its
+intended value, which is roughly 1/1024 of the linear energy at gamma 5.
+Subsequent updates restore the normal clamp and hysteresis.
+
 `Ddgi::Record` lends the camera pipeline, descriptors and SBT for the final
 trace only when data is ready. Transitions into/out of GI and settings changes
 reset post-processing history. The implementation supports one axis-aligned
 volume and one RT viewport; coarse spacing and thin walls can cause light
 leakage, and partial updates/hysteresis delay lighting changes.
+
+`smoke.ddgi-gpu` exercises two material registrations, nonzero indirect light,
+shader reload and rejection of a missing GI variant, incomplete-scene recovery,
+volume edits, resize and re-enable with Vulkan validation. It disables NGX
+initialization through `RendererDesc::enableDlss` to isolate ordinary RT/DDGI
+checks from DLSS lifetime. Applications keep the default `true`.
+
+For an explicit diagnostic run, set `MIR_DDGI_READBACK=1`. After 64 successful
+updates it copies probe atlases to host buffers and logs finite/nonzero data and
+classification counts. This mode intentionally waits for the GPU and allocates
+readback buffers; leave it unset for performance measurements.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and

@@ -10,6 +10,9 @@
 *.tpack
 *.tindex
 
+# Caldera demo: local measurement harnesses with machine paths; the game itself is tracked
+/games/CalderaDemo/tools/
+
 # Machine-local terrain streaming budgets, written per install next to the executable
 terrain_streaming.local.json
 

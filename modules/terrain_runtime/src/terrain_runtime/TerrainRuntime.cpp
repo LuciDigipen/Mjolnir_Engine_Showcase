@@ -1049,7 +1049,7 @@ namespace mir
 
         // A BLAS only when the project traces; meshes made the other way are made again.
         const RenderSettings *render = mWorld->TryResource<RenderSettings>();
-        const bool rayTracing = render && render->rayTracing && mRenderer->RayTracingSupported();
+        const bool rayTracing = render && mRenderer->RayTracingActive(render->rayTracing);
         if (rayTracing != mUploader->RayTracing())
         {
             mMeshes->RetireAll();
@@ -1162,6 +1162,21 @@ namespace mir
         std::vector<TerrainDrawUnit> units;
         mViews[mFrameViews[view]].selector->Collect({origin, viewProj}, Ready(), units);
         AppendDraws(units, out);
+    }
+
+    std::optional<size_t> TerrainRuntime::AreasLoading() const
+    {
+        if (!Bound() || !Streamer() || !mMeshes || mWorld->Resource<TerrainWorld>().Instances().empty())
+            return 0;
+        if (mFrameViews.empty())
+            return std::nullopt;
+        size_t loading = 0;
+        for (const size_t view : mFrameViews)
+        {
+            const TerrainViewStats &stats = mViews[view].selector->Stats();
+            loading += stats.missing + stats.coarserFallbacks + stats.otherFallbacks;
+        }
+        return loading;
     }
 
     TerrainUnitReady TerrainRuntime::Ready() const

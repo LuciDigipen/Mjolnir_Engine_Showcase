@@ -24,7 +24,7 @@ it belongs.
 
 ```
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
-mSplash                  shown until main closes it
+mSplash                  shown until the first view has loaded and the window opens
 mCommands, mWorld, mScheduler
 CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), AssetResolver, ProjectResources, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
@@ -37,6 +37,16 @@ Between two module members a `SplashStep` sets the splash's status line, so the
 splash follows startup without the constructor body doing it.
 
 `Run` advances a fixed timestep for the active World.
+
+The window stays hidden behind the splash while `Run` renders its first frames,
+so what the first view needs has loaded when it opens. Models load on their
+first frame; terrain streams, and `StartupGate` waits until every area the
+viewports chose can draw as chosen. It gives up with a warning after 10 s without
+progress or 60 s in all, for example past a budget or after a failed read.
+A standalone game creates its runtime before this wait and checks that runtime's
+terrain. Simulation is paused while the first view prepares. `RevealWindow` resumes
+the runtime, shows the window and closes the splash. A
+`--frames` or `--hidden` run does not wait, so frame counts mean what they did.
 
 ```
 Start(scheduler)                       systems cache their queries
@@ -55,6 +65,7 @@ while true:
     active SystemScheduler::Update     PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
     if ToggleFullscreen just pressed: ToggleFullscreen    F11; the swapchain follows next frame
     ++frame
+    until the window opens: StartupGate on TerrainRuntime::AreasLoading, then RevealWindow
     halfway through mMaxFrames, if mSwitchProjectTo: RequestOpenProject
     if mMaxFrames reached: RequestClose
 ```
@@ -117,6 +128,11 @@ merged once, ahead of every consumer that frame. Today it refreshes the terrain
 configuration, the one value whose effective form is computed from two sources.
 The other values are read as they are, and each consumer compares them with what
 it last applied.
+
+Player look preferences have a separate App-owned `ControlsSettings`, loaded once
+from the user settings file. Both input modules borrow it while keeping independent
+`InputState` resources. Both game shells use the same `GameControlsOptions` adapter,
+which edits the shared preferences and saves changes. Stop does not discard them.
 
 ### Transitions
 

@@ -34,6 +34,7 @@ namespace
                                      [](void *) { ++gReleased; } };
         }
         void Submit(const UIRect &, float, const UIDrawList &, const UITextures &) override {}
+        UISize MeasureText(std::string_view, float) const override { return {}; }
 
         int mCreated = 0;
     };

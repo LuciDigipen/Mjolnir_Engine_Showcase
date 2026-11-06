@@ -1,0 +1,92 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.49,
+          0.13,
+          -2.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.86,
+          0.14,
+          1.64
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.49,
+          0.13,
+          -2.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "High friction catch floor"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [
+          0.72,
+          0.54,
+          0.33,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "allowSleeping": true,
+        "axis": 1,
+        "detectStay": false,
+        "friction": 0.85,
+        "gravityFactor": 1.0,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 1.0,
+        "interpolate": false,
+        "isTrigger": false,
+        "layer": 0,
+        "mass": 1.0,
+        "motion": 0,
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "radius": 0.5,
+        "restitution": 0.0,
+        "rotationOffset": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "shape": 0
+      },
+      "type": "RigidBody"
+    }
+  ],
+  "id": 41,
+  "parent": 34,
+  "siblingIndex": 6
+}

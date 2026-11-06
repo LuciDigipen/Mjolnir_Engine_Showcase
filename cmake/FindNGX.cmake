@@ -36,5 +36,6 @@ set_target_properties(NGX::NGX PROPERTIES
 # "rel" (not "dev") matches a Release NGX log verbosity regardless of our own
 # build configuration; "dev" is for NGX-side debugging, not ours.
 set(NGX_DLSSD_DLL "${_ngx_lib_dir}/rel/nvngx_dlssd.dll" CACHE INTERNAL "")
+set(NGX_DLSS_DLL "${_ngx_lib_dir}/rel/nvngx_dlss.dll" CACHE INTERNAL "")
 
 message(STATUS "NGX/DLSS-RR SDK: ${ngx_sdk_SOURCE_DIR} (${_ngx_platform}, v310.9.16)")

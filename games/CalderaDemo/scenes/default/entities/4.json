@@ -1,0 +1,57 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -568.734,
+          22.555,
+          561.128
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -568.734,
+          22.555,
+          561.128
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Runway"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "animationAsset": "",
+        "clip": 0,
+        "loop": false,
+        "modelAsset": "",
+        "modelName": "models/runway.glb",
+        "playing": false,
+        "scene": -1,
+        "speed": 1.0,
+        "time": 0.0
+      },
+      "type": "ModelPlayer"
+    }
+  ],
+  "id": 4,
+  "parent": 0
+}

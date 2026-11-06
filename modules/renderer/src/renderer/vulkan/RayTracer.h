@@ -125,7 +125,7 @@ namespace mir::vk
             VkDescriptorSetLayout layout = VK_NULL_HANDLE;
             uint32_t instanceCount = 0;
             bool truncated = false; // Requested scene exceeded capacity, even if camera fallback succeeded.
-            // False when a per-material hit group offset exceeds DDGI's fixed SBT groups.
+            // False when an instance offset is outside the ordered material catalog.
             bool giCompatible = true;
         };
 
@@ -165,6 +165,9 @@ namespace mir::vk
         void DestroyDlssGuides();
         bool HasDlssGuides() const { return Image(RtImage::Albedo, 0) != VK_NULL_HANDLE; }
 
+        // Called only after the frame slot's fence has completed.
+        void ResetDeformations(uint32_t frame);
+
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
             VkBuffer &outBuffer, VmaAllocation &outAllocation, VkAccelerationStructureKHR &outAS);
@@ -187,6 +190,27 @@ namespace mir::vk
             VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation);
         // Aligned to minAccelerationStructureScratchOffsetAlignment.
         bool CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation);
+        bool InitializeDeformation();
+        bool CreateDeformationPipeline(VkPipeline &pipeline);
+        void ShutdownDeformation();
+
+        struct DeformedMesh
+        {
+            VkBuffer vertices = VK_NULL_HANDLE;
+            VmaAllocation vertexAllocation = VK_NULL_HANDLE;
+            VkBuffer deformation = VK_NULL_HANDLE;
+            VmaAllocation deformationAllocation = VK_NULL_HANDLE;
+            VkBuffer previousVertices = VK_NULL_HANDLE;
+            VmaAllocation previousVertexAllocation = VK_NULL_HANDLE;
+            VkBuffer previousDeformation = VK_NULL_HANDLE;
+            VmaAllocation previousDeformationAllocation = VK_NULL_HANDLE;
+            MeshBlas blas;
+            VkBuffer scratch = VK_NULL_HANDLE;
+            VmaAllocation scratchAllocation = VK_NULL_HANDLE;
+        };
+        const DeformedMesh *RecordDeformedMesh(VkCommandBuffer cmd, uint32_t frame,
+            const GpuMesh &mesh, std::span<const glm::vec4> deformation,
+            std::span<const glm::vec4> previousDeformation);
         PreparedScene RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
             const ResourceStore &resources, const MaterialStore &materials,
             std::optional<std::span<const DrawItem>> fallbackItems);
@@ -201,6 +225,9 @@ namespace mir::vk
         VkDescriptorSet mSets[kFramesInFlight]{};
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
         VkPipeline mPipeline = VK_NULL_HANDLE;
+        VkPipelineLayout mDeformationLayout = VK_NULL_HANDLE;
+        VkPipeline mDeformationPipeline = VK_NULL_HANDLE;
+        std::vector<DeformedMesh> mDeformedMeshes[kFramesInFlight];
 
         VkBuffer mSbtBuffer = VK_NULL_HANDLE;
         VmaAllocation mSbtAllocation = VK_NULL_HANDLE;
@@ -239,6 +266,7 @@ namespace mir::vk
         struct ShaderReloadCandidate
         {
             VkPipeline mPipeline = VK_NULL_HANDLE;
+            VkPipeline mDeformationPipeline = VK_NULL_HANDLE;
             VkBuffer mSbtBuffer = VK_NULL_HANDLE;
             VmaAllocation mSbtAllocation = VK_NULL_HANDLE;
             VkStridedDeviceAddressRegionKHR mRaygenRegion{};

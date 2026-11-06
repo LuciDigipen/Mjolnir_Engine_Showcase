@@ -42,6 +42,7 @@ target_link_libraries(engine_app PRIVATE tinyfiledialogs::tinyfiledialogs)
 target_sources(engine_app PRIVATE
     src/app/App.cpp
     src/app/ErrorReport.cpp
+    src/app/GameControlsOptions.cpp
     src/app/ProjectResources.cpp
     src/app/Prompt.cpp
 )

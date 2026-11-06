@@ -1,0 +1,58 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -1.5,
+          0.055,
+          -1.66
+        ],
+        "rotation": [
+          -0.70710677,
+          0.0,
+          0.0,
+          0.70710677
+        ],
+        "scale": [
+          1.18,
+          3.5,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -1.5,
+          0.055,
+          -1.66
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Mipmapped runway"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "animationAsset": "",
+        "clip": 0,
+        "loop": true,
+        "modelAsset": "86f90fe850f234ac",
+        "modelName": "models/texture-card.gltf",
+        "playing": false,
+        "scene": -1,
+        "speed": 1.0,
+        "time": 0.0
+      },
+      "type": "ModelPlayer"
+    }
+  ],
+  "id": 33,
+  "parent": 11,
+  "siblingIndex": 8
+}

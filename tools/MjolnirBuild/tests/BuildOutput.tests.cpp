@@ -15,6 +15,7 @@
 #include <chrono>
 #include <exception>
 #include <fstream>
+#include <optional>
 #include <thread>
 
 using namespace mir::build;
@@ -26,16 +27,16 @@ namespace
     {
         Sandbox mSandbox;
         fs::path mSource = mSandbox.mRoot / "checkout";
-        fs::path mPlayer = mSandbox.mRoot / "player";
+        fs::path mGameBuildDir = mSandbox.mRoot / "game-build";
 
         Layout()
         {
             fs::create_directories(mSource / "games" / "Demo");
             fs::create_directories(mSource / "builds");
-            fs::create_directories(mPlayer);
+            fs::create_directories(mGameBuildDir);
         }
 
-        OutputRules Rules() const { return { mSource, mPlayer }; }
+        OutputRules Rules() const { return { mSource, mGameBuildDir }; }
     };
 }
 
@@ -51,7 +52,7 @@ TEST_CASE("An output folder outside the checkout is accepted, missing or empty",
 TEST_CASE("An output folder under the checkout's builds/ is accepted", "[build-output]")
 {
     Layout layout;
-    CHECK_FALSE(CheckOutputDir(layout.mSource / "builds" / "player-out" / "Demo", layout.Rules()));
+    CHECK_FALSE(CheckOutputDir(layout.mSource / "builds" / "game-build-out" / "Demo", layout.Rules()));
 }
 
 TEST_CASE("An output folder elsewhere in the checkout is refused", "[build-output]")
@@ -80,20 +81,20 @@ TEST_CASE("An output folder inside a CMake build folder is refused", "[build-out
     CHECK(problem->find("build folder") != std::string::npos);
 }
 
-TEST_CASE("An output folder overlapping the player template is refused", "[build-output]")
+TEST_CASE("An output folder overlapping the game build template is refused", "[build-output]")
 {
     Layout layout;
-    CHECK(CheckOutputDir(layout.mPlayer, layout.Rules()));
-    CHECK(CheckOutputDir(layout.mPlayer / "out", layout.Rules()));
+    CHECK(CheckOutputDir(layout.mGameBuildDir, layout.Rules()));
+    CHECK(CheckOutputDir(layout.mGameBuildDir / "out", layout.Rules()));
 }
 
-TEST_CASE("A player template where the build stages or moves the previous build aside is refused", "[build-output]")
+TEST_CASE("A game build template where the build stages or moves the previous build aside is refused", "[build-output]")
 {
     Layout layout;
     const fs::path out = layout.mSandbox.mRoot / "Demo";
     CHECK(CheckOutputDir(out, { layout.mSource, StagingDir(out) }));
     CHECK(CheckOutputDir(out, { layout.mSource, PreviousDir(out) }));
-    CHECK(CheckOutputDir(out, { layout.mSource, StagingDir(out) / "player" }));
+    CHECK(CheckOutputDir(out, { layout.mSource, StagingDir(out) / "game-build" }));
 }
 
 TEST_CASE("A .tmp or .old folder a build did not make is refused", "[build-output]")
@@ -244,4 +245,44 @@ TEST_CASE("A commit retries until a temporary file handle is released", "[build-
     CHECK(committed);
     CHECK(fs::exists(out / "new.txt"));
     CHECK_FALSE(fs::exists(out / "running.txt"));
+}
+
+TEST_CASE("--result and --progress are refused inside the output, its .tmp or its .old", "[build-output]")
+{
+    Sandbox sandbox;
+    const fs::path out = sandbox.mRoot / "out";
+
+    CHECK_FALSE(ReportFileProblem(sandbox.mRoot / "result.json", out, "--result"));
+    CHECK_FALSE(ReportFileProblem(sandbox.mRoot / "out.tmpx" / "progress.json", out, "--progress"));
+    for (const fs::path &file : { out, out / "progress.json", sandbox.mRoot / "out.tmp" / "progress.json",
+             sandbox.mRoot / "out.old" / "deep" / "progress.json" })
+    {
+        INFO(PathText(file));
+        const std::optional<std::string> problem = ReportFileProblem(file, out, "--progress");
+        REQUIRE(problem);
+        CHECK(*problem == "--progress must not be inside --out or its .tmp and .old folders");
+    }
+}
+
+TEST_CASE("A report file is written into a folder not made yet, and past a reader holding it for a moment",
+    "[build-output]")
+{
+    Sandbox sandbox;
+    const fs::path file = sandbox.mRoot / "reports" / "new" / "progress.json";
+    REQUIRE(WriteReportFile(file, "first\n"));
+    CHECK(mir::ReadText(file) == "first\n");
+
+    // MSVC's ifstream does not share delete, so the file cannot be replaced while it is open
+    std::optional<std::ifstream> reader(std::in_place, file, std::ios::binary);
+    REQUIRE(reader->is_open());
+    CHECK_FALSE(mir::WriteTextAtomic(file, "blocked\n"));
+
+    std::thread release([&reader] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        reader.reset();
+    });
+    const bool written = WriteReportFile(file, "second\n");
+    release.join();
+    CHECK(written);
+    CHECK(mir::ReadText(file) == "second\n");
 }

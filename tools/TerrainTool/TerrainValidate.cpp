@@ -11,6 +11,7 @@
 #include "TerrainRegions.h"
 
 #include "TerrainCandidate.h"
+#include "TerrainProgress.h"
 #include "TerrainSeams.h"
 
 #include <assets/AssetId.h>
@@ -36,6 +37,9 @@ namespace mir::terrainbake
 {
     namespace
     {
+        constexpr std::string_view kIntegrityOnlyReason =
+            "publish checks integrity; bake and validate check the contents";
+
         std::string Tile(TileCoord t)
         {
             return std::format("({}, {})", t.x, t.z);
@@ -222,8 +226,10 @@ namespace mir::terrainbake
                                          ref.SamplePosition(grid.EdgeTiles(0) * ref.IntervalsPerTile())};
 
             size_t readable = 0;
+            uint64_t regionsDone = 0;
             for (const TerrainTileRecord &record : index.regions)
             {
+                TerrainProgressStep("validate: regions", regionsDone++, index.regions.size());
                 const TerrainRegionCoord region{record.level, record.tile.x, record.tile.z};
                 const std::string &pack = packNames[record.pack];
                 TerrainRegionSummary summary{record.level,
@@ -308,6 +314,228 @@ namespace mir::terrainbake
                        std::format("{} Regions in {} levels decode and match the final-source derivation; largest "
                                    "error {} m",
                                    readable, grid.Levels(), worst));
+        }
+
+        void CheckContents(const TerrainReleaseHandle &handle, const std::vector<std::string> &packNames,
+                           const TerrainValidateOptions &options, bool mixed, TerrainReport &report)
+        {
+            const TerrainIndex &index = handle.Index();
+            const TerrainLayout &layout = index.layout;
+            std::vector<std::unordered_map<TileCoord, TileHeights>> decoded(index.layers.size());
+            size_t decodedCount = 0;
+            size_t missing = 0;
+            size_t nonFinite = 0;
+            uint64_t recordsDone = 0;
+            for (const TerrainTileRecord &record : index.tiles)
+            {
+                TerrainProgressStep("validate: tiles", recordsDone++, index.tiles.size());
+                const std::string &pack = packNames[record.pack];
+                const auto *sourceRecord = index.Find(record.tile);
+                TerrainTileSummary summary{record.tile,
+                                           pack,
+                                           record.minHeight,
+                                           record.maxHeight,
+                                           false,
+                                           sourceRecord->sampleSpacing,
+                                           record.sampleSpacing,
+                                           static_cast<uint32_t>(record.samplesPerSide),
+                                           record.layer,
+                                           record.source};
+                summary.kind = static_cast<uint32_t>(record.kind);
+                summary.level = record.level;
+                summary.maxDeviation = record.maxDeviation;
+                summary.sourceChecksum = record.sourceChecksum;
+                summary.topologyHash = record.topologyHash;
+                if (!handle.Source().Size(pack))
+                {
+                    ++missing;
+                    report.Add({std::string(check::kCoverage),
+                                pack,
+                                {record.tile},
+                                std::nullopt,
+                                std::format("tile {} payload kind {} layer {} is missing: its pack {} does not exist",
+                                            Tile(record.tile), summary.kind, record.layer, pack)});
+                    report.tiles.push_back(summary);
+                    continue;
+                }
+                if (record.kind != TerrainPayloadKind::Height)
+                {
+                    TerrainPackError error;
+                    if (record.kind == TerrainPayloadKind::LodHeight)
+                        error = handle.ReadLod({index.release.asset, record.tile}, record.layer).error;
+                    else
+                        error = handle.ReadNormals({index.release.asset, record.tile}, record.layer).error;
+                    summary.readable = error.code == TerrainPackErrorCode::None;
+                    if (summary.readable)
+                        ++decodedCount;
+                    else
+                        report.Add(
+                            {std::string(check::kPayloads), "derived", {record.tile}, std::nullopt, error.message});
+                    report.tiles.push_back(summary);
+                    continue;
+                }
+                if (TerrainResult<TileHeights> read = handle.ReadTileRecord(record))
+                {
+                    summary.readable = true;
+                    decoded[record.layer].emplace(record.tile, std::move(*read.value));
+                    ++decodedCount;
+                }
+                else if (const std::optional<GlobalSampleIndex> bad = read.error.nonFiniteSample)
+                {
+                    ++nonFinite;
+                    report.Add({std::string(check::kFinite),
+                                "samples",
+                                {record.tile},
+                                bad,
+                                std::format("tile {} holds a non-finite height at sample ({}, {})", Tile(record.tile),
+                                            bad->x, bad->z)});
+                }
+                else
+                    report.Add(
+                        {std::string(check::kPayloads), "payload", {record.tile}, std::nullopt, read.error.message});
+                report.tiles.push_back(summary);
+            }
+            const size_t total = index.tiles.size();
+            report.Ran(check::kCoverage,
+                       std::format("{} of {} indexed payloads present, each key listed once", total - missing, total));
+            // A tile these checks never saw keeps them from passing.
+            const std::string payloads = std::format("{} of {} tiles read back and decode", decodedCount, total);
+            if (missing > 0)
+                report.Skip(check::kPayloads, payloads + "; missing tiles were not checked");
+            else
+                report.Ran(check::kPayloads, payloads);
+            const size_t checkedFinite = decodedCount + nonFinite;
+            const std::string finite =
+                std::format("{} of {} tiles checked, {} hold non-finite heights", checkedFinite, total, nonFinite);
+            if (checkedFinite < total)
+                report.Skip(check::kFinite, finite);
+            else
+                report.Ran(check::kFinite, finite);
+
+            for (uint32_t l = 0; l < index.layers.size(); ++l)
+            {
+                const auto &layerTiles = decoded[l];
+                std::unordered_set<TileCoord> baked;
+                for (const auto &r : index.tiles)
+                    if (r.layer == l && r.kind == TerrainPayloadKind::Height)
+                        baked.insert(r.tile);
+                const TileSampleLookup lookup = [&](TileCoord tile) -> std::span<const float>
+                {
+                    const auto it = layerTiles.find(tile);
+                    return it == layerTiles.end() ? std::span<const float>() : it->second.Samples();
+                };
+                // Sparse layers need only check pairs that were baked at that spacing.
+                CheckTileContinuity(index.layers[l], lookup, report,
+                                    [&baked](TileCoord tile)
+                                    {
+                                        return baked.contains(tile);
+                                    });
+            }
+
+            if (std::any_of(index.tiles.begin(), index.tiles.end(),
+                            [](const auto &r)
+                            {
+                                return r.kind == TerrainPayloadKind::LodHeight ||
+                                       (!r.source && r.kind == TerrainPayloadKind::Height && r.sourceChecksum != 0);
+                            }))
+            {
+                TerrainRecipe derivedRecipe{.layout = layout};
+                derivedRecipe.defaultSpacing = layout.SampleSpacing();
+                std::vector<TileHeights> sourceTiles;
+                bool allSources = true;
+                for (const auto &r : index.tiles)
+                    if (r.source)
+                    {
+                        derivedRecipe.sourceRules.push_back({r.tile, r.sampleSpacing});
+                        const auto it = decoded[r.layer].find(r.tile);
+                        if (it != decoded[r.layer].end())
+                            sourceTiles.push_back(it->second);
+                        else
+                            allSources = false;
+                    }
+                if (allSources)
+                {
+                    std::string why;
+                    auto expected = BakeTerrainDerivatives(derivedRecipe, sourceTiles, why);
+                    if (!expected)
+                        report.Add({std::string(check::kPayloads), "derived", {}, std::nullopt, why});
+                    else if (expected->layers.size() != index.layers.size() ||
+                             !std::equal(expected->layers.begin(), expected->layers.end(), index.layers.begin(),
+                                         [](const auto &a, const auto &b)
+                                         {
+                                             return a.SampleSpacing() == b.SampleSpacing() &&
+                                                    a.IntervalsPerTile() == b.IntervalsPerTile() &&
+                                                    a.Bounds() == b.Bounds();
+                                         }))
+                        report.Add({std::string(check::kPayloads),
+                                    "derivedLayers",
+                                    {},
+                                    std::nullopt,
+                                    "derived layer coverage differs from final-source derivation"});
+                    else
+                    {
+                        for (const auto &v : expected->payloads)
+                        {
+                            const auto &key = v.record;
+                            const auto *actual = index.Find(key.tile, key.layer, key.kind, key.level);
+                            auto bytes =
+                                actual ? handle.ReadPayload(*actual) : TerrainResult<std::vector<std::byte>>{};
+                            if (!actual || !bytes || *bytes.value != v.bytes)
+                                report.Add({std::string(check::kPayloads),
+                                            "derived",
+                                            {key.tile},
+                                            std::nullopt,
+                                            "LOD topology/error or normal order/neighbourhood differs from "
+                                            "final-source derivation"});
+                        }
+                        for (size_t i = 0; i < expected->queryHeights.size(); ++i)
+                        {
+                            const auto &tile = expected->queryHeights[i];
+                            const uint32_t layer = expected->queryLayers[i];
+                            if (layer >= decoded.size())
+                            {
+                                report.Add({std::string(check::kPayloads),
+                                            "queryDerivative",
+                                            {tile.Tile()},
+                                            std::nullopt,
+                                            "query derivative layer is missing"});
+                                continue;
+                            }
+                            const auto *actual = index.Find(tile.Tile(), layer);
+                            const auto it = decoded[layer].find(tile.Tile());
+                            if (!actual || actual->source || !actual->maxDeviation ||
+                                *actual->maxDeviation < expected->queryErrors[i] || it == decoded[layer].end() ||
+                                !std::equal(tile.Samples().begin(), tile.Samples().end(), it->second.Samples().begin(),
+                                            it->second.Samples().end()))
+                                report.Add({std::string(check::kPayloads),
+                                            "queryDerivative",
+                                            {tile.Tile()},
+                                            std::nullopt,
+                                            "regular query derivative/error differs from final-source derivation"});
+                        }
+                        report.Ran(check::kPayloads,
+                                   std::format("{} decoded payloads; {} LOD/normal records rederived from final source",
+                                               decodedCount, expected->payloads.size()));
+                    }
+                }
+            }
+
+            CheckRegions(handle, packNames, decoded, options, report);
+
+            if (mixed)
+            {
+                const TerrainContinuityLookup sources = [&](TileCoord tile)
+                {
+                    const auto *record = index.Find(tile);
+                    if (!record)
+                        return TerrainContinuityTile{};
+                    const auto it = decoded[record->layer].find(tile);
+                    return TerrainContinuityTile{&index.layers[record->layer], it == decoded[record->layer].end()
+                                                                                   ? std::span<const float>()
+                                                                                   : it->second.Samples()};
+                };
+                CheckMixedTileContinuity(layout, sources, report);
+            }
         }
     }
 
@@ -432,202 +660,6 @@ namespace mir::terrainbake
             report.Add({std::string(check::kPacks), "", {}, std::nullopt, packs.message});
         report.Ran(check::kPacks, std::format("{} packs: sizes, checksums, headers and payloads", index.packs.size()));
 
-        std::vector<std::unordered_map<TileCoord, TileHeights>> decoded(index.layers.size());
-        size_t decodedCount = 0;
-        size_t missing = 0;
-        size_t nonFinite = 0;
-        for (const TerrainTileRecord &record : index.tiles)
-        {
-            const std::string &pack = packNames[record.pack];
-            const auto *sourceRecord = index.Find(record.tile);
-            TerrainTileSummary summary{record.tile,
-                                       pack,
-                                       record.minHeight,
-                                       record.maxHeight,
-                                       false,
-                                       sourceRecord->sampleSpacing,
-                                       record.sampleSpacing,
-                                       static_cast<uint32_t>(record.samplesPerSide),
-                                       record.layer,
-                                       record.source};
-            summary.kind = static_cast<uint32_t>(record.kind);
-            summary.level = record.level;
-            summary.maxDeviation = record.maxDeviation;
-            summary.sourceChecksum = record.sourceChecksum;
-            summary.topologyHash = record.topologyHash;
-            if (!handle.Source().Size(pack))
-            {
-                ++missing;
-                report.Add({std::string(check::kCoverage),
-                            pack,
-                            {record.tile},
-                            std::nullopt,
-                            std::format("tile {} payload kind {} layer {} is missing: its pack {} does not exist",
-                                        Tile(record.tile), summary.kind, record.layer, pack)});
-                report.tiles.push_back(summary);
-                continue;
-            }
-            if (record.kind != TerrainPayloadKind::Height)
-            {
-                TerrainPackError error;
-                if (record.kind == TerrainPayloadKind::LodHeight)
-                    error = handle.ReadLod({index.release.asset, record.tile}, record.layer).error;
-                else
-                    error = handle.ReadNormals({index.release.asset, record.tile}, record.layer).error;
-                summary.readable = error.code == TerrainPackErrorCode::None;
-                if (summary.readable)
-                    ++decodedCount;
-                else
-                    report.Add({std::string(check::kPayloads), "derived", {record.tile}, std::nullopt, error.message});
-                report.tiles.push_back(summary);
-                continue;
-            }
-            if (TerrainResult<TileHeights> read = handle.ReadTileRecord(record))
-            {
-                summary.readable = true;
-                decoded[record.layer].emplace(record.tile, std::move(*read.value));
-                ++decodedCount;
-            }
-            else if (const std::optional<GlobalSampleIndex> bad = read.error.nonFiniteSample)
-            {
-                ++nonFinite;
-                report.Add({std::string(check::kFinite),
-                            "samples",
-                            {record.tile},
-                            bad,
-                            std::format("tile {} holds a non-finite height at sample ({}, {})", Tile(record.tile),
-                                        bad->x, bad->z)});
-            }
-            else
-                report.Add({std::string(check::kPayloads), "payload", {record.tile}, std::nullopt, read.error.message});
-            report.tiles.push_back(summary);
-        }
-        const size_t total = index.tiles.size();
-        report.Ran(check::kCoverage,
-                   std::format("{} of {} indexed payloads present, each key listed once", total - missing, total));
-        // A tile these checks never saw keeps them from passing.
-        const std::string payloads = std::format("{} of {} tiles read back and decode", decodedCount, total);
-        if (missing > 0)
-            report.Skip(check::kPayloads, payloads + "; missing tiles were not checked");
-        else
-            report.Ran(check::kPayloads, payloads);
-        const size_t checkedFinite = decodedCount + nonFinite;
-        const std::string finite =
-            std::format("{} of {} tiles checked, {} hold non-finite heights", checkedFinite, total, nonFinite);
-        if (checkedFinite < total)
-            report.Skip(check::kFinite, finite);
-        else
-            report.Ran(check::kFinite, finite);
-
-        for (uint32_t l = 0; l < index.layers.size(); ++l)
-        {
-            const auto &layerTiles = decoded[l];
-            std::unordered_set<TileCoord> baked;
-            for (const auto &r : index.tiles)
-                if (r.layer == l && r.kind == TerrainPayloadKind::Height)
-                    baked.insert(r.tile);
-            const TileSampleLookup lookup = [&](TileCoord tile) -> std::span<const float>
-            {
-                const auto it = layerTiles.find(tile);
-                return it == layerTiles.end() ? std::span<const float>() : it->second.Samples();
-            };
-            // Sparse layers need only check pairs that were baked at that spacing.
-            CheckTileContinuity(index.layers[l], lookup, report,
-                                [&baked](TileCoord tile)
-                                {
-                                    return baked.contains(tile);
-                                });
-        }
-
-        if (std::any_of(index.tiles.begin(), index.tiles.end(),
-                        [](const auto &r)
-                        {
-                            return r.kind == TerrainPayloadKind::LodHeight ||
-                                   (!r.source && r.kind == TerrainPayloadKind::Height && r.sourceChecksum != 0);
-                        }))
-        {
-            TerrainRecipe derivedRecipe{.layout = layout};
-            derivedRecipe.defaultSpacing = layout.SampleSpacing();
-            std::vector<TileHeights> sourceTiles;
-            bool allSources = true;
-            for (const auto &r : index.tiles)
-                if (r.source)
-                {
-                    derivedRecipe.sourceRules.push_back({r.tile, r.sampleSpacing});
-                    const auto it = decoded[r.layer].find(r.tile);
-                    if (it != decoded[r.layer].end())
-                        sourceTiles.push_back(it->second);
-                    else
-                        allSources = false;
-                }
-            if (allSources)
-            {
-                std::string why;
-                auto expected = BakeTerrainDerivatives(derivedRecipe, sourceTiles, why);
-                if (!expected)
-                    report.Add({std::string(check::kPayloads), "derived", {}, std::nullopt, why});
-                else if (expected->layers.size() != index.layers.size() ||
-                         !std::equal(expected->layers.begin(), expected->layers.end(), index.layers.begin(),
-                                     [](const auto &a, const auto &b)
-                                     {
-                                         return a.SampleSpacing() == b.SampleSpacing() &&
-                                                a.IntervalsPerTile() == b.IntervalsPerTile() &&
-                                                a.Bounds() == b.Bounds();
-                                     }))
-                    report.Add({std::string(check::kPayloads),
-                                "derivedLayers",
-                                {},
-                                std::nullopt,
-                                "derived layer coverage differs from final-source derivation"});
-                else
-                {
-                    for (const auto &v : expected->payloads)
-                    {
-                        const auto &key = v.record;
-                        const auto *actual = index.Find(key.tile, key.layer, key.kind, key.level);
-                        auto bytes = actual ? handle.ReadPayload(*actual) : TerrainResult<std::vector<std::byte>>{};
-                        if (!actual || !bytes || *bytes.value != v.bytes)
-                            report.Add(
-                                {std::string(check::kPayloads),
-                                 "derived",
-                                 {key.tile},
-                                 std::nullopt,
-                                 "LOD topology/error or normal order/neighbourhood differs from final-source derivation"});
-                    }
-                    for (size_t i = 0; i < expected->queryHeights.size(); ++i)
-                    {
-                        const auto &tile = expected->queryHeights[i];
-                        const uint32_t layer = expected->queryLayers[i];
-                        if (layer >= decoded.size())
-                        {
-                            report.Add({std::string(check::kPayloads),
-                                        "queryDerivative",
-                                        {tile.Tile()},
-                                        std::nullopt,
-                                        "query derivative layer is missing"});
-                            continue;
-                        }
-                        const auto *actual = index.Find(tile.Tile(), layer);
-                        const auto it = decoded[layer].find(tile.Tile());
-                        if (!actual || actual->source || !actual->maxDeviation ||
-                            *actual->maxDeviation < expected->queryErrors[i] || it == decoded[layer].end() ||
-                            !std::equal(tile.Samples().begin(), tile.Samples().end(), it->second.Samples().begin(),
-                                        it->second.Samples().end()))
-                            report.Add({std::string(check::kPayloads),
-                                        "queryDerivative",
-                                        {tile.Tile()},
-                                        std::nullopt,
-                                        "regular query derivative/error differs from final-source derivation"});
-                    }
-                    report.Ran(check::kPayloads,
-                               std::format("{} decoded payloads; {} LOD/normal records rederived from final source",
-                                           decodedCount, expected->payloads.size()));
-                }
-            }
-        }
-
-        CheckRegions(handle, packNames, decoded, options, report);
-
         bool mixed = false;
         for (const auto &record : index.tiles)
             if (record.source)
@@ -636,20 +668,13 @@ namespace mir::terrainbake
                       TileCoord{record.tile.x, record.tile.z == INT32_MAX ? record.tile.z : record.tile.z + 1}})
                     if (const auto *other = index.Find(neighbour); other && other->layer != record.layer)
                         mixed = true;
-        if (mixed)
-        {
-            const TerrainContinuityLookup sources = [&](TileCoord tile)
-            {
-                const auto *record = index.Find(tile);
-                if (!record)
-                    return TerrainContinuityTile{};
-                const auto it = decoded[record->layer].find(tile);
-                return TerrainContinuityTile{&index.layers[record->layer], it == decoded[record->layer].end()
-                                                                               ? std::span<const float>()
-                                                                               : it->second.Samples()};
-            };
-            CheckMixedTileContinuity(layout, sources, report);
-        }
+        if (options.integrityOnly)
+            SkipAll(report,
+                    {check::kCoverage, check::kPayloads, check::kFinite, check::kEdges, check::kCorners,
+                     check::kRegions},
+                    std::string(kIntegrityOnlyReason));
+        else
+            CheckContents(handle, packNames, options, mixed, report);
         const bool requiresSeams = (options.recipe && options.recipe->recipeVersion == 2) || mixed ||
                                    std::any_of(index.tiles.begin(), index.tiles.end(),
                                                [&](const auto &r)

@@ -99,7 +99,7 @@ namespace mir
 
     std::vector<std::string> BuildArguments(const BuildJobRequest &request)
     {
-        return { "--game", PathText(request.mGameDir), "--player", PathText(request.mPlayerDir), "--out",
+        return { "--game", PathText(request.mGameDir), "--game-build", PathText(request.mGameBuildDir), "--out",
             PathText(request.mOutDir), "--result", PathText(request.mResultFile) };
     }
 

@@ -38,7 +38,7 @@
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabModule.h>
 #include <prefab/PrefabSave.h>
-#include <project/PlayerInfo.h>
+#include <project/GameBuildInfo.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
@@ -200,7 +200,7 @@ namespace mir
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
         mEditor.SetBuildGame(BuildGame{ ProjectRoot(), mProject.mRootDir.lexically_normal(), mProject.mName,
-            mProject.mProjectSettingsPath, ExecutableDir() / kPlayerInfoFileName });
+            mProject.mProjectSettingsPath, ExecutableDir() / kGameBuildInfoFileName });
         mBuildTool = BuildToolPath();
         mMaterialEditor = std::make_unique<MaterialEditor>();
         mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), assetService,
@@ -460,6 +460,10 @@ namespace mir
         if (actions.mToggleMaterialEditor)
             mShowMaterialEditor = !mShowMaterialEditor;
 
+        mRenderer.Renderer().SetShowGiVolume(actions.mShowGiVolume);
+        if (actions.mRequestGiSceneBounds)
+            mRenderer.Renderer().RequestGiSceneBounds();
+
         RequestQueue &requests = mWorld.Resource<RequestQueue>();
         switch (actions.mScene)
         {
@@ -655,7 +659,7 @@ namespace mir
         const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
         const std::filesystem::path result =
             (ec ? ExecutableDir() : temp) / ("mjolnir-editor-build-" + std::to_string(CurrentProcessId()) + ".json");
-        mBuild.Start(BuildJobRequest{ mBuildTool, mProject.mRootDir, action.mPlayerDir, action.mOutDir, result });
+        mBuild.Start(BuildJobRequest{ mBuildTool, mProject.mRootDir, action.mGameBuildDir, action.mOutDir, result });
     }
 
     std::string EditorModule::BuildBlockedReason() const

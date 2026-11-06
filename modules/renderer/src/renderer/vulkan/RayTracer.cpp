@@ -44,6 +44,7 @@ namespace mir::vk
         constexpr uint32_t kInstanceAlphaTest = 8u;
         constexpr uint32_t kInstanceDoubleSided = 16u;
         constexpr uint32_t kInstanceRasterFacingCorrection = 32u;
+        constexpr uint32_t kInstanceAlphaBlend = 64u;
 
         VkTransformMatrixKHR ToTransformMatrixKHR(const glm::mat4 &m)
         {
@@ -95,7 +96,7 @@ namespace mir::vk
         mScratchAlignment =
             std::max<VkDeviceSize>(accelerationProperties.minAccelerationStructureScratchOffsetAlignment, 1);
 
-        if (!CreateOutputImages(extent) || !CreateScene() || !CreatePipeline(cameraSetLayout))
+        if (!CreateOutputImages(extent) || !CreateScene() || !CreatePipeline(cameraSetLayout) || !InitializeDeformation())
             return false;
 
         WriteDescriptorSets();
@@ -107,6 +108,7 @@ namespace mir::vk
         if (mDevice == nullptr)
             return;
 
+        ShutdownDeformation();
         DestroyBlases();
         DestroyScene();
 
@@ -940,6 +942,21 @@ namespace mir::vk
                 break;
             }
 
+            VkDeviceAddress vertexAddress = GetBufferAddress(mDevice->Handle(), mesh->mVertexBuffer);
+            VkDeviceAddress previousVertexAddress = vertexAddress;
+            VkDeviceAddress blasAddress = mBlases[item.mesh.mIndex].mAddress;
+            if (!item.deformation.empty())
+            {
+                const DeformedMesh *posed = RecordDeformedMesh(cmd, frameIndex, *mesh, item.deformation,
+                    item.previousDeformation);
+                if (posed == nullptr)
+                    continue;
+                vertexAddress = GetBufferAddress(mDevice->Handle(), posed->vertices);
+                previousVertexAddress = posed->previousVertices != VK_NULL_HANDLE
+                    ? GetBufferAddress(mDevice->Handle(), posed->previousVertices) : vertexAddress;
+                blasAddress = posed->blas.mAddress;
+            }
+
             // Only the model shader samples its texture and reads its alpha and side parameters.
             uint32_t flags = 0;
             uint32_t textureSlot = 0;
@@ -957,16 +974,17 @@ namespace mir::vk
                     samplerSlot = material->mSamplerSlot;
                     flags |= kInstanceTextured;
 
-                    if (static_cast<MaterialAlphaMode>(static_cast<uint32_t>(material->mParameters.x)) !=
-                        MaterialAlphaMode::Opaque)
+                    if (material->mDesc.alphaMode == MaterialAlphaMode::Mask)
                         flags |= kInstanceAlphaTest;
+                    else if (material->mDesc.alphaMode == MaterialAlphaMode::Blend)
+                        flags |= kInstanceAlphaBlend;
                     if (material->mParameters.z > 0.0f)
                         flags |= kInstanceDoubleSided;
                 }
                 materialRecord = material->mRecordOffset;
-                // The DDGI probe and camera pipelines keep one legacy hit pair;
-                // any per-material hit group would index past their SBT.
-                if (material->mRayTracingSbtOffset != 0)
+                // Base and GI pipelines share the same legacy/material pair layout.
+                if ((material->mRayTracingSbtOffset & 1u) != 0 ||
+                    material->mRayTracingSbtOffset >= SurfaceMaterialCatalog::HitGroupRecordOffset(mSurfaceMaterials.size()))
                     giCompatible = false;
             }
 
@@ -974,9 +992,10 @@ namespace mir::vk
                     item.model, *facing))
                 flags |= kInstanceRasterFacingCorrection;
 
-            // Non-opaque instances run the any-hit shaders, which do the alpha test.
+            // Masked and blended instances run the any-hit shaders for visibility.
             const VkGeometryInstanceFlagsKHR opacity =
-                (flags & kInstanceAlphaTest) != 0 ? VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR : 0;
+                (flags & (kInstanceAlphaTest | kInstanceAlphaBlend)) != 0
+                    ? VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR : 0;
 
             instances[instanceCount] = VkAccelerationStructureInstanceKHR{
                 .transform = ToTransformMatrixKHR(item.model),
@@ -984,10 +1003,10 @@ namespace mir::vk
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = material != nullptr ? material->mRayTracingSbtOffset : 0,
                 .flags = *facing | opacity,
-                .accelerationStructureReference = mBlases[item.mesh.mIndex].mAddress };
+                .accelerationStructureReference = blasAddress };
 
             instanceInfos[instanceCount] = RtInstanceInfo{
-                .vertexAddress = GetBufferAddress(mDevice->Handle(), mesh->mVertexBuffer),
+                .vertexAddress = vertexAddress,
                 .indexAddress = GetBufferAddress(mDevice->Handle(), mesh->mIndexBuffer),
                 .tint = item.tint,
                 .normalCol0 = glm::vec4(item.normalMatrix[0], 0.0f),
@@ -998,6 +1017,7 @@ namespace mir::vk
                 .baseColorSampler = samplerSlot,
                 .materialRecord = materialRecord,
                 .alphaCutoff = material != nullptr ? material->mParameters.y : 0.0f,
+                .previousVertexAddress = previousVertexAddress,
                 .prevModel = item.previousModel,
                 .modelCol0 = item.model[0],
                 .modelCol1 = item.model[1],
@@ -1355,6 +1375,12 @@ namespace mir::vk
             .size = static_cast<VkDeviceSize>(groupCount - 3) * regionSize };
         candidate.mCallableRegion = {};
         candidate.mPipeline = pipeline;
+        if (!CreateDeformationPipeline(candidate.mDeformationPipeline))
+        {
+            if (error != nullptr)
+                *error = "candidate RT deformation pipeline failed";
+            return false;
+        }
         candidate.mValid = true;
         return true;
     }
@@ -1384,11 +1410,14 @@ namespace mir::vk
             return;
         if (mPipeline != VK_NULL_HANDLE)
             vkDestroyPipeline(mDevice->Handle(), mPipeline, nullptr);
+        if (mDeformationPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mDeformationPipeline, nullptr);
         if (mSbtBuffer != VK_NULL_HANDLE)
             vmaDestroyBuffer(mDevice->Allocator(), mSbtBuffer, mSbtAllocation);
 
         mSurfaceMaterials = std::move(mReloadSurfaceMaterials);
         mPipeline = mReloadCandidate.mPipeline;
+        mDeformationPipeline = mReloadCandidate.mDeformationPipeline;
         mSbtBuffer = mReloadCandidate.mSbtBuffer;
         mSbtAllocation = mReloadCandidate.mSbtAllocation;
         mSbtRaygenRegion = mReloadCandidate.mRaygenRegion;
@@ -1403,6 +1432,8 @@ namespace mir::vk
     {
         if (mReloadCandidate.mPipeline != VK_NULL_HANDLE)
             vkDestroyPipeline(mDevice->Handle(), mReloadCandidate.mPipeline, nullptr);
+        if (mReloadCandidate.mDeformationPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mReloadCandidate.mDeformationPipeline, nullptr);
         if (mReloadCandidate.mSbtBuffer != VK_NULL_HANDLE)
             vmaDestroyBuffer(mDevice->Allocator(), mReloadCandidate.mSbtBuffer, mReloadCandidate.mSbtAllocation);
         mReloadCandidate = {};

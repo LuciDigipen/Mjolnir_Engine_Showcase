@@ -360,6 +360,21 @@ namespace mir::terrainbake
                 text += kHex[(bits >> shift) & 0xF];
             return text;
         }
+
+        std::filesystem::path Utf8Path(std::string_view text)
+        {
+            return std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t *>(text.data()), text.size()));
+        }
+
+        std::optional<uint64_t> ParseHash(std::string_view text)
+        {
+            if (text.size() != 16 ||
+                text.find_first_not_of("0123456789abcdef") != std::string_view::npos)
+                return std::nullopt;
+            uint64_t hash = 0;
+            std::from_chars(text.data(), text.data() + text.size(), hash, 16);
+            return hash;
+        }
     }
 
     RecipeParseResult ParseTerrainRecipe(std::string_view text)
@@ -395,17 +410,23 @@ namespace mir::terrainbake
         const std::optional<std::string> generatorId = generator.String("id");
         const std::optional<int64_t> generatorVersion =
             generator.Integer("version", 0, std::numeric_limits<uint32_t>::max());
-        const uint32_t expectedGenerator = recipeVersion && *recipeVersion == 1 ? 1 : kReliefGeneratorVersion;
+        const bool heightmap = generatorId && *generatorId == kHeightmapGeneratorId;
+        const uint32_t expectedGenerator = heightmap ? kHeightmapGeneratorVersion
+                                           : recipeVersion && *recipeVersion == 1 ? 1
+                                                                                   : kReliefGeneratorVersion;
         bool generatorSupported = false;
-        if (generatorId && *generatorId != kReliefGeneratorId)
+        if (generatorId && *generatorId != kReliefGeneratorId && !heightmap)
             checker.Add("generator.id", "unsupported generator \"" + *generatorId + "\" (supported: \"" +
-                                            std::string(kReliefGeneratorId) + "\")");
+                                            std::string(kReliefGeneratorId) + "\", \"" +
+                                            std::string(kHeightmapGeneratorId) + "\")");
         else if (generatorId && generatorVersion && *generatorVersion != expectedGenerator)
             checker.Add("generator.version", "unsupported version " + std::to_string(*generatorVersion) + " of \"" +
-                                                 std::string(kReliefGeneratorId) +
-                                                 "\" (supported: " + std::to_string(expectedGenerator) + ")");
+                                                 *generatorId + "\" (supported: " + std::to_string(expectedGenerator) +
+                                                 ")");
         else
             generatorSupported = generatorId && generatorVersion;
+        if (heightmap && recipeVersion && *recipeVersion == 1)
+            checker.Add("generator.id", "\"" + std::string(kHeightmapGeneratorId) + "\" requires recipeVersion 2");
 
         const std::optional<uint64_t> seed = top.Unsigned("seed");
 
@@ -536,8 +557,26 @@ namespace mir::terrainbake
 
         // An unknown generator has no schema for its parameters.
         std::optional<ReliefParameters> relief;
+        std::optional<std::string> heightmapPath;
+        std::optional<uint64_t> heightmapHash;
         if (!generatorSupported)
             top.Field("parameters");
+        else if (heightmap)
+        {
+            const ObjectReader parameters = top.Object("parameters", {"source", "contentHash"});
+            heightmapPath = parameters.String("source");
+            if (heightmapPath && (heightmapPath->empty() || Utf8Path(*heightmapPath).has_root_path()))
+            {
+                checker.Add("parameters.source", "\"" + *heightmapPath + "\" must be a path relative to the recipe");
+                heightmapPath.reset();
+            }
+            if (const std::optional<std::string> hash = parameters.String("contentHash"))
+            {
+                heightmapHash = ParseHash(*hash);
+                if (!heightmapHash)
+                    checker.Add("parameters.contentHash", "\"" + *hash + "\" is not 16 lowercase hex digits");
+            }
+        }
         else
         {
             const ObjectReader parameters =
@@ -594,11 +633,13 @@ namespace mir::terrainbake
             }
         }
 
-        if (!checker.Clean() || !layout || !relief || !seed)
+        const bool generatorComplete = heightmap ? heightmapPath && heightmapHash : relief.has_value();
+        if (!checker.Clean() || !layout || !generatorComplete || !seed)
             return {std::nullopt, checker.Take()};
         return {TerrainRecipe{static_cast<uint32_t>(*recipeVersion), *generatorId,
-                              static_cast<uint32_t>(*generatorVersion), *seed, *layout, *relief, defaultSpacing,
-                              std::move(rules)},
+                              static_cast<uint32_t>(*generatorVersion), *seed, *layout, relief.value_or(ReliefParameters{}),
+                              defaultSpacing, std::move(rules), heightmapPath.value_or(std::string{}),
+                              heightmapHash.value_or(0)},
                 {}};
     }
 
@@ -677,7 +718,10 @@ namespace mir::terrainbake
         const std::optional<std::string> text = ReadText(path);
         if (!text)
             return {std::nullopt, {{"", "cannot read " + PathUtf8(path)}}};
-        return ParseTerrainRecipe(*text);
+        RecipeParseResult result = ParseTerrainRecipe(*text);
+        if (result.recipe)
+            result.recipe->recipeDir = path.parent_path();
+        return result;
     }
 
     std::string CanonicalRecipeText(const TerrainRecipe &recipe)
@@ -696,20 +740,25 @@ namespace mir::terrainbake
         fields["layout.bounds.minZ"] = Bits(layout.Bounds().minZ);
         fields["layout.bounds.maxX"] = Bits(layout.Bounds().maxX);
         fields["layout.bounds.maxZ"] = Bits(layout.Bounds().maxZ);
-        fields["parameters.baseHeight"] = Bits(relief.baseHeight);
-        fields["parameters.tilt.x"] = Bits(relief.tiltX);
-        fields["parameters.tilt.z"] = Bits(relief.tiltZ);
-        const std::pair<const char *, const NoiseTerm *> terms[] = {
-            {"broad", &relief.broad}, {"ridges", &relief.ridges}, {"detail", &relief.detail}};
-        for (const auto &[name, term] : terms)
+        if (recipe.IsHeightmap())
+            fields["parameters.contentHash"] = std::to_string(recipe.heightmapHash);
+        else
         {
-            const std::string prefix = std::string("parameters.") + name + ".";
-            fields[prefix + "amplitude"] = Bits(term->amplitude);
-            fields[prefix + "wavelength"] = Bits(term->wavelength);
-            fields[prefix + "octaves"] = std::to_string(term->octaves);
+            fields["parameters.baseHeight"] = Bits(relief.baseHeight);
+            fields["parameters.tilt.x"] = Bits(relief.tiltX);
+            fields["parameters.tilt.z"] = Bits(relief.tiltZ);
+            const std::pair<const char *, const NoiseTerm *> terms[] = {
+                {"broad", &relief.broad}, {"ridges", &relief.ridges}, {"detail", &relief.detail}};
+            for (const auto &[name, term] : terms)
+            {
+                const std::string prefix = std::string("parameters.") + name + ".";
+                fields[prefix + "amplitude"] = Bits(term->amplitude);
+                fields[prefix + "wavelength"] = Bits(term->wavelength);
+                fields[prefix + "octaves"] = std::to_string(term->octaves);
+            }
+            fields["parameters.plains.height"] = Bits(relief.plainsHeight);
+            fields["parameters.plains.blend"] = Bits(relief.plainsBlend);
         }
-        fields["parameters.plains.height"] = Bits(relief.plainsHeight);
-        fields["parameters.plains.blend"] = Bits(relief.plainsBlend);
 
         if (recipe.recipeVersion != 1)
         {

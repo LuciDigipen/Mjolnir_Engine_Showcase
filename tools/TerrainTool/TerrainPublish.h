@@ -79,6 +79,7 @@ namespace mir::terrainbake
         std::optional<TerrainPublishFault> fault;
     };
 
+    // Checks the candidate's integrity; bake and validate check its contents.
     bool PublishTerrainCandidate(const TerrainPublishRequest &request, const TerrainRecipe *recipe,
                                  TerrainPublishLock *heldLock, TerrainReport &report);
 
@@ -99,7 +100,7 @@ namespace mir::terrainbake
         std::optional<TerrainPublishFault> fault;
     };
 
-    // The caller holds the lock; report.publish must be set.
+    // The caller holds the lock; report.publish must be set. The copy is checked for integrity only.
     bool InstallTerrainRelease(const TerrainReleaseInstall &install, const TerrainRecipe *recipe,
                                TerrainReport &report);
 

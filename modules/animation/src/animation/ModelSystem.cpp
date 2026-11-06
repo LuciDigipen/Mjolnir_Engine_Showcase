@@ -29,7 +29,6 @@ namespace mir
         // Unused GPU resources may stay cached after these claims are released.
         mModels.clear();
         mFailed.clear();
-        mDeformations.clear();
         mRequestedModels.clear();
         mPreviousPoses.clear();
         mCurrentPoses.clear();
@@ -190,7 +189,6 @@ namespace mir
         AdvancePreparations();
         auto &draws = context.world.Resource<ModelDrawItems>();
         draws.items.clear();
-        mDeformations.clear();
         mCurrentPoses.clear();
         auto *overrides = context.world.TryResource<ModelMorphOverrides>();
         std::unordered_set<uint64_t> alive;
@@ -293,7 +291,6 @@ namespace mir
             size_t drawCount = 0;
             for (const auto &result : results)
                 for (const auto &node : result.value.nodes) drawCount += node.deformations.size();
-            mDeformations.reserve(drawCount);
             draws.items.reserve(drawCount);
             for (size_t i = 0; i < inputs.size(); ++i)
             {
@@ -310,19 +307,31 @@ namespace mir
                     {
                         const auto mesh = input.loaded->resources->model->nodes[node.index].mesh;
                         const auto &gpu = input.loaded->meshes.at(mesh.value);
-                        const WorldPose *previous = nullptr;
+                        const NodeHistory *previous = nullptr;
                         if (auto entity = mPreviousPoses.find(input.entity); entity != mPreviousPoses.end())
                             if (auto pose = entity->second.find(node.index); pose != entity->second.end())
                                 previous = &pose->second;
-                        mCurrentPoses[input.entity][node.index] = node.world;
+                        auto &current = mCurrentPoses[input.entity][node.index];
+                        current.pose = node.world;
+                        current.primitives.reserve(node.deformations.size());
                         for (size_t primitive = 0; primitive < node.deformations.size(); ++primitive)
                         {
-                            mDeformations.push_back(std::move(node.deformations[primitive]));
                             const auto &material = gpu.at(primitive);
+                            current.primitives.push_back({material.mesh, std::move(node.deformations[primitive])});
                             WorldDrawItem item{material.mesh, node.world, node.normalMatrix, material.factor,
-                                node.mirrored ? material.mirrored : material.material, mDeformations.back()};
+                                node.mirrored ? material.mirrored : material.material,
+                                current.primitives.back().deformation};
                             item.transparent = material.transparent;
-                            if (previous) item.previousPose = *previous;
+                            if (previous && primitive < previous->primitives.size())
+                            {
+                                const auto &old = previous->primitives[primitive];
+                                if (old.mesh == material.mesh &&
+                                    old.deformation.size() == item.deformation.size())
+                                {
+                                    item.previousPose = previous->pose;
+                                    item.previousDeformation = old.deformation;
+                                }
+                            }
                             draws.items.push_back(item);
                         }
                     }

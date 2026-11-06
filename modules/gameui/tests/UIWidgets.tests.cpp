@@ -556,7 +556,9 @@ TEST_CASE("The demo screen draws inside the context's safe area at 16:9, 21:9 an
 
             // every rect, texture and line of text the screen drew
             const UIRect safe = f.UI().SafeArea();
-            CHECK(safe == Inset(UIRect{0, 0, area.width, area.height}, insets));
+            // the area in UI units, which a 1080-line display draws half as large again
+            CHECK(safe == Inset(f.UI().Bounds(), insets));
+            CHECK(f.UI().Bounds().height == Catch::Approx(area.height / f.UI().Scale()));
             REQUIRE_FALSE(f.UI().DrawList().Commands().empty());
             for (const UIDrawCommand &command : f.UI().DrawList().Commands())
             {
@@ -602,8 +604,9 @@ TEST_CASE("An area below the design size scales the whole UI down: bounds and th
         CHECK(f.UI().Scale() == Catch::Approx(0.25f));
         CHECK(f.UI().Bounds().width == Catch::Approx(640.0f));
     }
-    SECTION("a larger area is never scaled up")
+    SECTION("with no reference height a larger area is never scaled up")
     {
+        f.UI().SetReferenceHeight(0.0f);
         f.SetArea(UIRect{0, 0, 1920, 1080});
         f.Frame(draw);
         CHECK(f.UI().Scale() == 1.0f);
@@ -615,5 +618,84 @@ TEST_CASE("An area below the design size scales the whole UI down: bounds and th
         f.Frame(draw);
         CHECK(f.UI().Scale() == 1.0f);
         CHECK(f.UI().Bounds() == UIRect{0, 0, 320, 240});
+    }
+}
+
+TEST_CASE("An area taller than the reference height scales the UI up with it, so it takes the same share of any "
+          "display",
+          "[gameui][layout]")
+{
+    Fixture f;
+    const auto nothing = [](UIContext &) {};
+    const auto scaleAt = [&](const UIRect &area)
+    {
+        f.SetArea(area);
+        f.Frame(nothing);
+        return f.UI().Scale();
+    };
+
+    REQUIRE(f.UI().ReferenceHeight() == 720.0f);
+
+    // at or under the reference height, one pixel a unit
+    CHECK(scaleAt(UIRect{0, 0, 1280, 720}) == 1.0f);
+    CHECK(scaleAt(UIRect{0, 0, 1000, 600}) == 1.0f);
+
+    // above it, by height, whatever the aspect ratio
+    CHECK(scaleAt(UIRect{0, 0, 1920, 1080}) == Catch::Approx(1.5f));
+    CHECK(scaleAt(UIRect{0, 0, 2560, 1080}) == Catch::Approx(1.5f));
+    CHECK(scaleAt(UIRect{0, 0, 3840, 2160}) == Catch::Approx(3.0f));
+    CHECK(f.UI().Bounds() == UIRect{0, 0, 1280, 720});
+
+    // never so far that the design size stops fitting across a narrow area
+    CHECK(scaleAt(UIRect{0, 0, 800, 2000}) == Catch::Approx(800.0f / 640.0f));
+    CHECK(f.UI().Bounds().width == Catch::Approx(640.0f));
+
+    // and an area below the design size still shrinks to fit it
+    CHECK(scaleAt(UIRect{0, 0, 320, 240}) == Catch::Approx(0.5f));
+}
+
+namespace
+{
+    // measures in fixed pixels a character, and keeps the size it was asked for
+    class MeasuringBackend final : public IUIBackend
+    {
+    public:
+        UIBackendTexture CreateTexture(uint32_t, uint32_t, std::span<const uint8_t>) override { return {}; }
+        void Submit(const UIRect &, float, const UIDrawList &, const UITextures &) override {}
+        UISize MeasureText(std::string_view text, float fontSize) const override
+        {
+            mAskedSize = fontSize;
+            return UISize{10.0f * static_cast<float>(text.size()), fontSize};
+        }
+
+        mutable float mAskedSize = -1.0f;
+    };
+}
+
+TEST_CASE("Text is measured in UI units at the style's font size, by the backend when there is one",
+          "[gameui][text]")
+{
+    Fixture f;
+
+    SECTION("without a backend, an estimate of half the font size a character")
+    {
+        f.Frame([](UIContext &ui) { CHECK(ui.MeasureText("Pause") == UISize{40.0f, 16.0f}); });
+    }
+
+    SECTION("by the backend, at the size it is drawn, given back in UI units")
+    {
+        MeasuringBackend backend;
+        f.UI().SetBackend(&backend);
+        f.SetArea(UIRect{0, 0, 1920, 1080});
+        f.Frame(
+            [&](UIContext &ui)
+            {
+                REQUIRE(ui.Scale() == Catch::Approx(1.5f));
+                const UISize size = ui.MeasureText("Pause");
+                CHECK(backend.mAskedSize == Catch::Approx(16.0f * 1.5f));
+                CHECK(size.width == Catch::Approx(50.0f / 1.5f));
+                CHECK(size.height == Catch::Approx(16.0f));
+            });
+        f.UI().SetBackend(nullptr);
     }
 }

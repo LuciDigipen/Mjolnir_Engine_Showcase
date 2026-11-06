@@ -237,61 +237,71 @@ namespace mir
 
     void RegisterRendererEntityTypes()
     {
-        EntityPresetRegistry::Instance().Register("Light/Sun", &CreateLightEntity<LightType::Sun>, &CanCreateSunLight);
-        EntityPresetRegistry::Instance().Register("Light/Point", &CreateLightEntity<LightType::Point>);
-        EntityPresetRegistry::Instance().Register("Light/Spot", &CreateLightEntity<LightType::Spot>);
-        EntityPresetRegistry::Instance().Register("Light/Area", &CreateLightEntity<LightType::Area>);
+        // These factories belong to the process-wide registry, across App lifetimes.
+        static const bool registered = []
+            {
+                EntityPresetRegistry::Instance().Register("Light/Sun", &CreateLightEntity<LightType::Sun>, &CanCreateSunLight);
+                EntityPresetRegistry::Instance().Register("Light/Point", &CreateLightEntity<LightType::Point>);
+                EntityPresetRegistry::Instance().Register("Light/Spot", &CreateLightEntity<LightType::Spot>);
+                EntityPresetRegistry::Instance().Register("Light/Area", &CreateLightEntity<LightType::Area>);
 
-        EntityPresetRegistry::Instance().Register("Sky", [](World &world, Entity entity)
-            {
-                AddTransform(world, entity);
-                world.AddComponent<Sky>(entity, Sky{});
-                world.AddComponent<Name>(entity, MakeName(std::format("Sky_Entity{}", entity.mIndex)));
-            }, &CanCreateSky);
+                EntityPresetRegistry::Instance().Register("Sky", [](World &world, Entity entity)
+                    {
+                        AddTransform(world, entity);
+                        world.AddComponent<Sky>(entity, Sky{});
+                        world.AddComponent<Name>(entity, MakeName(std::format("Sky_Entity{}", entity.mIndex)));
+                    }, &CanCreateSky);
 
-        EntityPresetRegistry::Instance().Register("Camera", [](World &world, Entity entity)
-            {
-                AddTransform(world, entity);
-                Camera camera{};
-                camera.mActive = !AnyEntityHas(world, [](const World &w, Entity e) { return w.Has<Camera>(e); });
-                world.AddComponent<Camera>(entity, camera);
-                world.AddComponent<Name>(entity, MakeName(std::format("Camera_Entity{}", entity.mIndex)));
-            });
+                EntityPresetRegistry::Instance().Register("Camera", [](World &world, Entity entity)
+                    {
+                        AddTransform(world, entity);
+                        Camera camera{};
+                        camera.mActive = !AnyEntityHas(world, [](const World &w, Entity e) { return w.Has<Camera>(e); });
+                        world.AddComponent<Camera>(entity, camera);
+                        world.AddComponent<Name>(entity, MakeName(std::format("Camera_Entity{}", entity.mIndex)));
+                    });
 
-        EntityPresetRegistry::Instance().Register("Primitive/Cube", [](World &world, Entity entity)
-            {
-                CreatePrimitiveEntity(world, entity, kCubeMeshName, "Cube");
-            });
-        EntityPresetRegistry::Instance().Register("Primitive/Sphere", [](World &world, Entity entity)
-            {
-                CreatePrimitiveEntity(world, entity, kSphereMeshName, "Sphere");
-            });
-        EntityPresetRegistry::Instance().Register("Primitive/Plane", [](World &world, Entity entity)
-            {
-                CreatePrimitiveEntity(world, entity, kPlaneMeshName, "Plane");
-            });
-        EntityPresetRegistry::Instance().Register("Primitive/Cylinder", [](World &world, Entity entity)
-            {
-                CreatePrimitiveEntity(world, entity, kCylinderMeshName, "Cylinder");
-            });
-        EntityPresetRegistry::Instance().Register("Primitive/Capsule", [](World &world, Entity entity)
-            {
-                CreatePrimitiveEntity(world, entity, kCapsuleMeshName, "Capsule");
-            });
-        EntityPresetRegistry::Instance().Register("Primitive/Cone", [](World &world, Entity entity)
-            {
-                CreatePrimitiveEntity(world, entity, kConeMeshName, "Cone");
-            });
+                EntityPresetRegistry::Instance().Register("Primitive/Cube", [](World &world, Entity entity)
+                    {
+                        CreatePrimitiveEntity(world, entity, kCubeMeshName, "Cube");
+                    });
+                EntityPresetRegistry::Instance().Register("Primitive/Sphere", [](World &world, Entity entity)
+                    {
+                        CreatePrimitiveEntity(world, entity, kSphereMeshName, "Sphere");
+                    });
+                EntityPresetRegistry::Instance().Register("Primitive/Plane", [](World &world, Entity entity)
+                    {
+                        CreatePrimitiveEntity(world, entity, kPlaneMeshName, "Plane");
+                    });
+                EntityPresetRegistry::Instance().Register("Primitive/Cylinder", [](World &world, Entity entity)
+                    {
+                        CreatePrimitiveEntity(world, entity, kCylinderMeshName, "Cylinder");
+                    });
+                EntityPresetRegistry::Instance().Register("Primitive/Capsule", [](World &world, Entity entity)
+                    {
+                        CreatePrimitiveEntity(world, entity, kCapsuleMeshName, "Capsule");
+                    });
+                EntityPresetRegistry::Instance().Register("Primitive/Cone", [](World &world, Entity entity)
+                    {
+                        CreatePrimitiveEntity(world, entity, kConeMeshName, "Cone");
+                    });
+                return true;
+            }();
     }
 
     void RegisterRendererPostEffects()
     {
-        RegisterFogPostEffect();
-        RegisterHdrPostEffect();
-        RegisterBloomPostEffect();
-        RegisterDepthOfFieldPostEffect();
-        RegisterFilmPostEffect();
-        RegisterMotionBlurPostEffect();
-        RegisterAntiAliasingPostEffect();
+        // These factories belong to the process-wide registry, across App lifetimes.
+        static const bool registered = []
+            {
+                RegisterFogPostEffect();
+                RegisterHdrPostEffect();
+                RegisterBloomPostEffect();
+                RegisterDepthOfFieldPostEffect();
+                RegisterFilmPostEffect();
+                RegisterMotionBlurPostEffect();
+                RegisterAntiAliasingPostEffect();
+                return true;
+            }();
     }
 }

@@ -16,15 +16,21 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace mir
 {
+    class VulkanRenderer;
     class ProjectSettingsPanel
     {
     public:
 
         void Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath, bool &showInputSettings,
-            PhysicsLayerTable *sharedLayers, IEditorAudio *audio, bool editing);
+            PhysicsLayerTable *sharedLayers, IEditorAudio *audio, bool editing, const VulkanRenderer *renderer = nullptr);
+
+        // The editor forwards these to the renderer; the panel only reads it.
+        bool ShowGiVolume() const { return mShowGiVolume; }
+        bool TakeGiSceneBoundsRequest() { return std::exchange(mGiSceneBoundsRequested, false); }
 
         void OnHidden()
         {
@@ -54,6 +60,11 @@ namespace mir
         std::optional<SsgiSettings> mSsgiEdit;
         // The same for the DDGI value, whose widgets can also pass through a value it rejects.
         std::optional<DdgiSettings> mDdgiEdit;
+        const VulkanRenderer *mRenderer = nullptr;
+        float mGiPadding = 4.0f;
+        std::string mGiFitStatus;
+        bool mShowGiVolume = false;
+        bool mGiSceneBoundsRequested = false;
 
         // The layer name being typed, by slot, kept while its field is active. A name another layer already
         // uses reaches the shared table only once it is valid.

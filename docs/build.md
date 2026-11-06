@@ -178,20 +178,20 @@ A module that starts linking `mir::editor` unconditionally fails this
 configure, because the target does not exist, so the separation cannot erode
 without someone noticing.
 
-## A player template
+## A game build template
 
-A game build folder holds every game, their cooked assets and the build's own
-leftovers. `cmake --install` copies out only what the player itself needs, so a
+A game preset's build folder holds every game, their cooked assets and the build's own
+leftovers. `cmake --install` copies out only what the game build itself needs, so a
 build tool can add one game to it:
 
 ```
 cmake --build --preset windows-msvc-game-release
-cmake --install builds/windows-msvc-game-release --prefix builds/player/release
+cmake --install builds/windows-msvc-game-release --prefix builds/game-build/release
 ```
 
 The template holds `MjolnirEngine.exe`, `MjolnirErrorReporter.exe`, the DLLs
 they import, the current shader generation (plus `shaders/rtxgi/` with RTXGI),
-`fonts/`, `branding/`, `player_info.json`, and `nvngx_dlssd.dll` with DLSS. It
+`fonts/`, `branding/`, `game_build_info.json`, and `nvngx_dlssd.dll` with DLSS. It
 has no `games/`, `cooked/` or `engine.json`, which belong to a game. The debug
 tree installs the same way, with the debug DLLs. Only the game presets have
 install rules.
@@ -204,19 +204,19 @@ DLLs are found from the executables' imports rather than
 target names no DLL. Windows system DLLs and the MSVC runtime are left out, so a
 machine without Visual Studio needs the Visual C++ Redistributable.
 
-Every build writes `player_info.json` next to `MjolnirEngine`, the editor's
+Every build writes `game_build_info.json` next to `MjolnirEngine`, the editor's
 included: the engine version, commit, configuration, and whether the editor,
 large world, audio, DLSS and RTXGI were built in. Comparing the editor's copy
 with a template's tells whether the two came from the same engine.
 
 ## Packaging a game
 
-`MjolnirBuild` puts one game and a player template together into a folder of
+`MjolnirBuild` puts one game and a game build template together into a folder of
 its own:
 
 ```
 cmake --build --preset windows-msvc-debug --target MjolnirBuild
-builds/windows-msvc-debug/tools/MjolnirBuild/MjolnirBuild.exe --game games/HelloWorld --player builds/player/release --out builds/player-out/HelloWorld --result builds/player-out/HelloWorld.json
+builds/windows-msvc-debug/tools/MjolnirBuild/MjolnirBuild.exe --game games/HelloWorld --game-build builds/game-build/release --out builds/game-build-out/HelloWorld --result builds/game-build-out/HelloWorld.json
 ```
 
 It copies the template, then cooks the engine's `assets/` and the game's
@@ -244,7 +244,7 @@ The output starts its game with no arguments, so a double-click plays it:
   `kMachineSettingsSections` in `modules/project/include/project/ProjectSettings.h`;
   add a new machine-specific section there. The source file is never changed.
 
-The template's `player_info.json` is compared with the one beside the
+The template's `game_build_info.json` is compared with the one beside the
 `MjolnirEngine` that MjolnirBuild was built with, which for an editor build is
 the editor's. A different commit or engine version, or a different large
 world, audio, DLSS or RTXGI option, is a warning, as is a game with SoundBanks
@@ -265,7 +265,24 @@ step's status and time, warnings, the error (or, once built, the exe's path as
 when the build failed, 2 for bad arguments. The editor finds the tool through
 `buildTool` in `asset_workspace.json`.
 
-A game build's CTest packages every game the same way. `build.player` installs
+`--progress <file>` is rewritten as each step starts, and in the `game build`
+step as each phase starts and as Ninja moves through the compile, read from
+the log every 250 ms:
+
+```json
+{"version":1,"step":"game build","phase":"compile","done":412,"total":1310}
+```
+
+`phase` (`environment`, `configure`, `compile` or `install`) is only there in
+the `game build` step, and `done` and `total` only once Ninja has printed its
+`[done/total]`. `--result` and `--progress` must be different files outside
+`<out>`, `<out>.tmp` and `<out>.old`, and their folders are made if missing. A
+reader holding the progress file open delays the next write for a moment;
+MjolnirBuild retries for about 200 ms. Either way the terminal gets a line as
+each step and phase starts, such as `MjolnirBuild: game build: compile...`,
+and a table of every step's time at the end.
+
+A game preset's CTest packages every game the same way. `build.game_build` installs
 the build as a template, `build.package.<game>` runs MjolnirBuild into
 `builds/smoke-build/<build folder>/<game>`, and `smoke.build.<game>` starts the
 exe with no `--game`, as a double-click does. All are labelled `smoke`:
@@ -274,28 +291,107 @@ exe with no `--game`, as a double-click does. All are labelled `smoke`:
 ctest --test-dir builds/windows-msvc-game-release -R "^smoke\.build\." --output-on-failure
 ```
 
+### Compiling the game build
+
+With `--game-build-preset <preset>`, a `game build` step between `check` and
+`template` compiles the game build from the checkout and installs it as the
+template first, so no template has to be made by hand:
+
+```
+builds/windows-msvc-debug/tools/MjolnirBuild/MjolnirBuild.exe --game games/HelloWorld --game-build builds/game-build/release --game-build-preset windows-msvc-game-release --out builds/game-build-out/HelloWorld
+```
+
+It runs from any shell, or from the editor started from Explorer: the step
+loads Visual Studio itself. It writes `mjolnir_game_build.bat` into the
+preset's build folder (its `binaryDir`, e.g. `builds/<preset>`) and runs it
+with `cmd /d /c`. The script:
+
+1. Loads Visual Studio with `call vcvars64.bat`, finding it in this order:
+   - nothing, when this is already a Developer PowerShell or Developer Command
+     Prompt (`VCToolsInstallDir` is set);
+   - the `CMAKE_CXX_COMPILER` in the build folder's `CMakeCache.txt`, with
+     `-vcvars_ver=<toolset>`, so a build folder keeps the Visual Studio and
+     toolset it was configured with, even when a newer one is installed;
+   - the same entry in the editor's own build folder, for a first compile;
+   - the newest install with the C++ tools, whether a release, a preview or the
+     Build Tools, from `vswhere -latest -prerelease -products *`.
+
+   It then checks that `cl`, `cmake` and `ninja` are on PATH. Without any
+   Visual Studio, `check` fails asking for the "Desktop development with C++"
+   workload; without `cmake` or `ninja`, the compile fails naming "C++ CMake
+   tools for Windows".
+2. Configures with `cmake --preset <preset>`, passing `MIR_LARGE_WORLD`,
+   `MIR_WITH_AUDIO`, `MIR_WITH_DLSS` and `MIR_WITH_RTXGI` as the editor's
+   `game_build_info.json` records them. It configures on every compile, so a
+   preset whose settings changed, such as `CMAKE_BUILD_TYPE`, is never
+   packaged with the old ones.
+3. Compiles only `MjolnirEngine` and `MjolnirErrorReporter`, with
+   `cmake --build --preset <preset> --target ...`, not the tests and tools
+   the preset also builds.
+4. Installs with `cmake --install <build folder> --prefix <template>.tmp`.
+   That folder replaces `<template>` only after every phase succeeds, so a
+   failed compile keeps the previous template and the previous build. The
+   previous template is moved to `<template>.old` first and deleted only once
+   the new one is in place, so a locked file cannot leave it half removed. The
+   install is fresh every time, because `cmake --install` only adds files and
+   would keep stale shader generations.
+
+The script stays in the build folder, so the same commands can be run by
+hand, and its output goes to `mjolnir_game_build.log` beside it, replaced
+on each compile. The script echoes `mjolnir_game_build: <phase>` into it as
+each phase starts. A failure names the phase, quotes the first three distinct
+error lines in the log (`error C…`, `error LNK…`, vcvars' `[ERROR:…]`, or
+`CMake Error` with the line after it, each cut at 300 characters) and gives
+the log's path:
+
+```
+compiling the game build with windows-msvc-game-release failed:
+  C:\alpha\modules\render\src\Renderer.cpp(88): error C2065: 'frameIndex': undeclared identifier
+The whole output is in C:\alpha\builds\windows-msvc-game-release\mjolnir_game_build.log
+```
+
+From a plain shell with no build folder, a first compile of
+`windows-msvc-game-release` took 199 s on an Intel Core Ultra 9 185H, with
+vcpkg restoring its packages from the binary cache. A compile with nothing
+changed took 13 s, most of it configure.
+
+`check` makes sure of everything it can before the compile, so a bad folder
+fails in seconds: the game and output checks, a non-hidden configure preset
+and a build preset of that name in `CMakePresets.json`, `CMakeUserPresets.json`
+or a file they include, a `binaryDir` it sets or inherits using only
+`${sourceDir}`, `${presetName}` and the other plain macros (not `$env{}`), and a template folder that can be replaced. That is a
+missing or empty folder, or a game build template (a `game_build_info.json` with
+`editor: false`); a CMake build folder, a packaged game or other files are
+refused and left alone. The build folder, the template and the output must
+not overlap, and neither may their `.tmp` and `.old` folders, and the build
+folder must not be the folder this MjolnirBuild was built in. The template checks (the exe, name conflicts, path length, the
+comparison with the editor) run on what was installed, in the `template` step.
+
+Without `--game-build-preset`, `game build` is skipped and the template is used as it
+is.
+
 ### Build Settings in the editor
 
 File > Build Settings... holds what a build from the editor uses:
 
-- **Profile.** Development packages the game-debug player, Release the
+- **Profile.** Development packages the game-debug build, Release the
   game-release one. It is the only build setting shared through git, as
   `"build": { "profile": "development" }` in the game's
   `project_settings.json`; a missing or unknown profile is Release.
-- **Player template**, one per profile, and the **output folder**, one per game.
+- **Game build template**, one per profile, and the **output folder**, one per game.
   Paths differ per machine, so they live in the editor preferences
   (`%LOCALAPPDATA%/Mjolnir/editor/editor_preferences.json`) and never in
   `project_settings.json`. Left empty, the template is
-  `builds/player/debug` or `builds/player/release` and the output is
-  `builds/player-out/<game>`; a relative path is from the checkout.
+  `builds/game-build/debug` or `builds/game-build/release` and the output is
+  `builds/game-build-out/<game>`; a relative path is from the checkout.
 - **Run after build**, also per machine.
 
-The panel shows the selected template's `player_info.json` and whether it
+The panel shows the selected template's `game_build_info.json` and whether it
 matches the editor, with the same checks MjolnirBuild warns about
-(`modules/project/include/project/PlayerInfo.h`), plus a template built for the
+(`modules/project/include/project/GameBuildInfo.h`), plus a template built for the
 other profile. A missing, broken or mismatched template shows the
 `cmake --preset`, `cmake --build` and `cmake --install` commands that make it.
-The editor does not run them: building the player needs the MSVC environment.
+The editor does not run them: compiling the game build needs the MSVC environment.
 
 **Build**, at the bottom of the window, runs MjolnirBuild (the `buildTool` in
 `asset_workspace.json`) with the template and output above. It runs in the

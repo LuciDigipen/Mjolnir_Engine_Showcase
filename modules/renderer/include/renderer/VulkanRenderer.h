@@ -85,6 +85,8 @@ namespace mir
         const ISurfaceProvider *window;
         const char *appName;
         bool enableValidation;
+        // Device checks can omit NGX when exercising ordinary RT or probe GI.
+        bool enableDlss = true;
     };
 
     // A generation-checked copy of one live surface material's accepted layout
@@ -123,6 +125,10 @@ namespace mir
         // "no history" (new this frame, or the producer doesn't track it) -
         // BuildViewDrawItems then falls back to `pose` itself, i.e. zero velocity.
         std::optional<WorldPose> previousPose;
+
+        // Previous morph/skin sample of this primitive. Empty means no
+        // compatible history; use the current deformation instead.
+        std::span<const glm::vec4> previousDeformation;
     };
 
     // One draw call's worth of data for one viewport. Temporary: it lives only
@@ -150,6 +156,8 @@ namespace mir
         // Equal to `model` when there is no history, so a still object under a
         // still camera comes out to exactly zero velocity.
         glm::mat4 previousModel{ 1.0f };
+
+        std::span<const glm::vec4> previousDeformation;
     };
 
     // Draw items produced outside the MeshRenderer query (by ModelSystem),
@@ -322,7 +330,8 @@ namespace mir
 
         bool RayTracingSupported() const;
 
-        // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path -
+        // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path, which a scene
+        // too large to trace turns off -
         // the one flag AA mode clamping and the panel must agree with dispatch on.
         bool RayTracingActive(bool requested) const;
 
@@ -362,6 +371,18 @@ namespace mir
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
         void SetGlobalIllumination(const DdgiSettings &settings);
+        struct GiBounds { std::array<double, 3> minimum{}, maximum{}; };
+        // Scene bounds are gathered only on the frame after a request, not every frame.
+        void RequestGiSceneBounds() { mGiSceneBoundsRequested = true; }
+        bool GiSceneBoundsRequested() const { return mGiSceneBoundsRequested; }
+        void UpdateGiSceneBounds(std::span<const WorldDrawItem> items);
+        std::optional<GiBounds> GetGiSceneBounds() const { return mGiSceneBounds; }
+        std::string GiStatus() const;
+        std::span<const GiProbeDebug> GiProbeStates() const;
+        // Changes whenever GiProbeStates() content changes.
+        uint64_t GiProbeStatesGeneration() const;
+        void SetShowGiVolume(bool show) { mShowGiVolume = show; }
+        bool ShowGiVolume() const { return mShowGiVolume; }
         void SetScreenSpaceGlobalIllumination(const SsgiSettings &settings) { mSsgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
@@ -384,6 +405,10 @@ namespace mir
     private:
         FxDeviceContext FxDevice() const;
         bool RecreateSwapchain();
+        // The BLAS of every CreateMesh mesh these views draw that does not have one yet. Waits on the GPU.
+        // False builds nothing and turns tracing off until the scene is released: they would not fit in memory.
+        bool BuildOwedBlases(std::span<const RenderView> views);
+
         // Shared prelude of DrawFrame and TraceFrame; nullopt skips the frame.
         std::optional<vk::FrameContext> BeginFrame();
         // No wait: the caller idles the device first. False for a null or stale handle.
@@ -442,9 +467,16 @@ namespace mir
         std::unique_ptr<vk::Ddgi> mDdgi;
 #endif
         DdgiSettings mDdgiSettings;
+        std::optional<GiBounds> mGiSceneBounds;
+        bool mGiSceneBoundsRequested = false;
+        // Log receiver bounds once they arrive after GI starts shading.
+        bool mLogGiSceneBounds = false;
+        bool mShowGiVolume = false;
         bool mGiWasShading = false;
         // views[0]'s camera on the last TraceFrame.
         uint64_t mTracedHistoryId = 0;
+        // This scene's BLASes do not fit in device memory, so it draws raster.
+        bool mRayTracingOutOfMemory = false;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;

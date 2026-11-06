@@ -9,6 +9,7 @@
 #include "TerrainRegions.h"
 
 #include "TerrainFinalSurface.h"
+#include "TerrainProgress.h"
 
 #include <terrain/TerrainLod.h>
 
@@ -241,6 +242,7 @@ namespace mir::terrainbake
         std::vector<uint64_t> levelChecksums;
         for (uint64_t ordinal = 0; ordinal < grid->RegionCount(); ++ordinal)
         {
+            TerrainProgressStep("regions", ordinal, grid->RegionCount());
             const TerrainRegionCoord region = grid->AtOrdinal(ordinal);
             if (region.x == 0 && region.z == 0)
                 levelChecksums = TerrainRegionSourceChecksums(*grid, region.level, checksums);

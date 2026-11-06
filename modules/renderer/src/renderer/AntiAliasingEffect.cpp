@@ -91,6 +91,24 @@ namespace mir
                 }
             }
 
+            if (aa.mode == AntiAliasingMode::Dlss)
+            {
+                changed |= ImGui::Checkbox("Ray Reconstruction", &aa.dlssRayReconstruction);
+                if (aa.dlssRayReconstruction)
+                {
+                    constexpr const char *presets[]{ "E", "D" };
+                    int preset = aa.dlssRrPreset == DlssRrPreset::D ? 1 : 0;
+                    if (ImGui::Combo("Ray Reconstruction preset", &preset, presets, 2))
+                    {
+                        aa.dlssRrPreset = preset == 1 ? DlssRrPreset::D : DlssRrPreset::E;
+                        changed = true;
+                    }
+                    ImGui::TextWrapped("E reduced motion trails in testing. D is retained for comparison. Changing the preset restarts reconstruction history.");
+                }
+                else
+                    ImGui::TextWrapped("DLAA remains active. Ray-traced lighting is not denoised by Ray Reconstruction.");
+            }
+
             if (changed)
                 WriteAntiAliasingParams(params, aa);
         }
@@ -128,13 +146,31 @@ namespace mir
         AntiAliasingParams aa;
         aa.mode = ParseMode(params.value("mode", std::string(ToString(aa.mode))));
         aa.rtSampleCount = params.value("rtSampleCount", aa.rtSampleCount);
+        const auto reconstruction = params.find("dlssRayReconstruction");
+        if (reconstruction != params.end() && reconstruction->is_boolean())
+            aa.dlssRayReconstruction = reconstruction->get<bool>();
+        const auto preset = params.find("dlssRrPreset");
+        if (preset != params.end() && preset->is_string())
+            aa.dlssRrPreset = ParseDlssRrPreset(preset->get<std::string>());
         return aa;
+    }
+
+    std::string_view ToString(DlssRrPreset preset)
+    {
+        return preset == DlssRrPreset::D ? "d" : "e";
+    }
+
+    DlssRrPreset ParseDlssRrPreset(std::string_view name)
+    {
+        return name == "d" ? DlssRrPreset::D : DlssRrPreset::E;
     }
 
     void WriteAntiAliasingParams(nlohmann::json &params, const AntiAliasingParams &aa)
     {
         params["mode"] = std::string(ToString(aa.mode));
         params["rtSampleCount"] = aa.rtSampleCount;
+        params["dlssRrPreset"] = std::string(ToString(aa.dlssRrPreset));
+        params["dlssRayReconstruction"] = aa.dlssRayReconstruction;
     }
 
     AntiAliasingMode ClampAntiAliasingMode(AntiAliasingMode requested, bool rayTracing, bool dlssAvailable)

@@ -7,7 +7,7 @@
 
 #include "LightingCommon.slang"
 
-static const float kPi = 3.14159265;
+static const float kPbrPi = 3.14159265;
 static const float kMinRoughness = 0.045;
 static const float kMinNdotV = 1e-4;
 
@@ -16,7 +16,7 @@ float DistributionGgx(float NdotH, float roughness)
     const float a = roughness * roughness;
     const float a2 = a * a;
     const float d = (1.0 - NdotH * NdotH) + NdotH * NdotH * a2;
-    return a2 / max(kPi * d * d, 1e-12);
+    return a2 / max(kPbrPi * d * d, 1e-12);
 }
 
 float GeometrySmith(float NdotV, float NdotL, float roughness)
@@ -67,7 +67,7 @@ float3 EvaluateSpecularPbr(float3 f0, float roughness, float3 N, float3 V, float
     const float NdotL = saturate(dot(N, L));
     if (NdotL <= 0.0)
         return float3(0.0, 0.0, 0.0);
-    return kPi * SpecularBrdf(f0, roughness, N, V, L) * lightColor * NdotL;
+    return kPbrPi * SpecularBrdf(f0, roughness, N, V, L) * lightColor * NdotL;
 }
 
 // Directional-albedo fit from Ray Tracing Gems, referenced by NVIDIA DLSS RR.
@@ -168,6 +168,21 @@ float3 PbrTotalLighting(PbrLighting lighting)
 float3 ShadePbr<V : IShadowVisibility>(V visibility, SurfaceOutput surface, float3 worldPos)
 {
     return PbrTotalLighting(EvaluatePbrLighting(visibility, surface, worldPos));
+}
+
+// The legacy glTF material supplies base color and opacity. Its blended
+// passes use the same fixed dielectric finish in raster and ray tracing.
+SurfaceOutput BlendedModelSurface(float3 albedo, float3 normal)
+{
+    SurfaceOutput surface;
+    surface.albedo = albedo;
+    surface.normalWS = normal;
+    surface.roughness = 0.24;
+    surface.f0 = 0.04;
+    surface.ao = 1.0;
+    surface.height = 0.0;
+    surface.emissive = float3(0.0, 0.0, 0.0);
+    return surface;
 }
 
 #endif

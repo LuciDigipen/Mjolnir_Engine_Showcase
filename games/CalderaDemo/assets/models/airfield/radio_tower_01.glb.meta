@@ -1,0 +1,16 @@
+{
+  "guid": "ec33d3d7e78a4b17",
+  "importer": {
+    "next": 8,
+    "objects": {
+      "material:name/building": "1",
+      "mesh:name/far": "4",
+      "mesh:name/near": "3",
+      "mesh:name/shared": "2",
+      "node:name/far": "7",
+      "node:name/near": "6",
+      "node:name/shared": "5"
+    }
+  },
+  "version": 1
+}

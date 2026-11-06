@@ -56,7 +56,7 @@ namespace mir
         // MjolnirBuild
         std::filesystem::path mTool;
         std::filesystem::path mGameDir;
-        std::filesystem::path mPlayerDir;
+        std::filesystem::path mGameBuildDir;
         std::filesystem::path mOutDir;
         // where MjolnirBuild writes its report, outside mOutDir
         std::filesystem::path mResultFile;

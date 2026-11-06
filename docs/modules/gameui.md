@@ -24,8 +24,22 @@ unless `SetDesignSize` changes it, has one pixel per unit. A smaller one gets a
 grows to match, so a screen lays out exactly as it would at the
 design size and the backend draws all of it smaller: rects, rounding, clips and
 the font size alike. Text therefore shrinks with the buttons it sits on, rather
-than a stack cutting its last rows away to fit. A larger area is never scaled
-up.
+than a stack cutting its last rows away to fit.
+
+An area taller than the reference height, 720 unless `SetReferenceHeight`
+changes it, scales up by its height: 1.5 on a 1080-line display, 3 on 2160. So
+the UI takes the same share of any display rather than shrinking on a large
+one. It stops short of the scale at which the design size would no longer fit
+across a narrow area. Between the design size and the reference height it is
+one pixel a unit. A reference height of 0 never scales up.
+
+Text is drawn at `UIStyle::mFontSize`, 16 UI units, times the scale, so it grows
+and shrinks with its boxes. It does not follow ImGui's own font size, which the
+editor multiplies by the monitor's DPI scale: text at that size outgrew the
+boxes laid out for it. `UIContext::MeasureText` gives a string's size in UI
+units, measured by the backend's font at the size it is drawn, and screens size
+and centre their text with it. Without a backend it estimates half the font
+size a character.
 
 `GameUIModule` owns the `UIContext` and the screens drawn into it, each a
 function registered with `AddScreen`. `SetSuspended(true)` makes `RunFrame` return without running a screen or reading the pointer, for a scene that is still preparing its resources. `RunFrame(area, pointer)` is one frame:
@@ -101,6 +115,14 @@ driven by every device. That is the difference from
 for every reader, so a menu that set it would lock itself out of the very keys
 it is navigated by.
 
+A screen that wants the mouse cursor out of sight calls
+`UIContext::HideCursor()` in each frame it should be hidden, the same way:
+`EndFrame` latches it into `HidesCursor()`, and the first frame no screen calls
+it, the cursor is back. gameui names no OS cursor, so the bridge applies it:
+`gameui_imgui` sets `ImGuiMouseCursor_None` after the frame, because ImGui's
+GLFW backend sets the OS cursor from ImGui's own every frame and would undo a
+direct `glfwSetInputMode`. A suspended game UI hides nothing.
+
 Two things are decided by `InputState::ActiveDevice()`, the device that last
 spoke, and nothing else in gameui reads it. The first is whether the focus
 highlight is drawn. Under the mouse it is noise, since the pointer already
@@ -167,8 +189,8 @@ button beside it. A focusable one clicks and takes focus like a button.
 
 Every widget draws its focus ring, a rect `mFocusThickness` larger behind it,
 from `mShowFocus`, so the ring follows the active device. Colours, sprites,
-rounding and padding are in `UIStyle`. Text is left-aligned after the padding and centred by
-`mTextHeight`, since nothing measures it yet.
+rounding and padding are in `UIStyle`. Text is left-aligned after the padding and centred down
+the widget by its measured height.
 
 The ImGui backend draws into ImGui's background list, which is why one code
 path serves both builds; see [gameui_imgui.md](gameui_imgui.md). Recording, not
@@ -256,8 +278,8 @@ length a stack of given sizes needs, gaps included, to size a region that hugs
 its contents, as the demo menu's height does.
 
 Sizes stay the caller's: a fixed size, a share of the container clamped to
-limits, or whatever `Rest` leaves. There is no flex, wrap or grid, and no
-measuring pass, since nothing measures text yet.
+limits, whatever `Rest` leaves, or a measured text width. There is no flex,
+wrap or grid, and no measuring pass.
 
 ## API
 
@@ -273,7 +295,7 @@ measuring pass, since nothing measures text yet.
 | `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing |
 | `UIAnchor`, `UIAxis`, `UIStack`; `Inset`, `Anchor` | `gameui/UILayout.h` | Layout over rects: insets, anchoring to a point of a container, rows and columns cut from either end; `kUITopLeft` to `kUIBottomRight` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by `App` under `--ui-demo`; `Layout(safeArea)` places it without drawing |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area. Each command stores its clip already intersected with
@@ -438,8 +460,8 @@ that counts its clicks; a `Toggle` that swaps the style between that art and
 grey box; a disabled `Button` that up and down pass over; a `Slider` with a
 `Label` showing its percentage; a `Bar` driven by the slider; the icon as an
 `Image` tinted by the toggle. The Confirm and Back prompts sit at the bottom
-right, a pill with the gamepad button or a key cap with the key, sized by a
-guess at the label's width. The button, toggle and slider are a column
+right, a pill with the gamepad button or a key cap with the key, sized to the
+label's measured width with the label centred in it. The button, toggle and slider are a column
 linked up and down with wrap, and focus starts on the button. Clicks, toggles
 and `UICancel` log a line. That is the check that hit testing follows the
 viewport around the dock, and that hover, the stick, the D-pad and the arrow
@@ -522,11 +544,12 @@ looks right is verified by running `--ui-demo`.
    2026-09-28.
 3. **Content from the game.** Replace `UIDemoScreen` as the only game UI with UI a game
    authors, through Lua or data.
-4. **Text measurement**, for layout and for culling text by its bounds. A
-   prompt or a button sized to its label guesses 8 pixels a character today.
-5. **DPI.** Coordinates are framebuffer pixels, as the editor's viewport rect
-   is; nothing scales with the monitor yet. Nine-slice corners are drawn at
-   their texel size, so they would want a scale too.
+4. ~~**Text measurement**~~ for layout landed 2026-11-04. Culling text by its
+   bounds still uses only the clip.
+5. **DPI.** The UI scales with the display's height above the reference
+   height, which covers a fullscreen game on any monitor. A small window on a
+   high-DPI monitor is still sized by its pixels alone. Nine-slice corners are
+   drawn at their texel size, so they would want a scale too.
 6. **Repeat while held.** A held direction steps once. Menus usually repeat
    after a delay and then at a rate; that fits in `UINavStepper`, which would
    then need the frame's time.
@@ -558,6 +581,22 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-11-04* — **Text is measured, and the UI scales up with the display.**
+Was: `UIStyle::mFontSize` was 0, so text drew at ImGui's font size, which
+follows the monitor's DPI, while prompts and buttons guessed 8 pixels a
+character; and an area larger than the design size was never scaled up. Now:
+`mFontSize` is 16 UI units, `UIContext::MeasureText` and `TextWidth` measure
+through the new `IUIBackend::MeasureText`, widgets centre text by its measured
+height, and areas above `ReferenceHeight()` (720) scale up by height. A backend
+must implement `MeasureText`. Because on a scaled monitor the text outgrew its
+buttons and key caps, and on a large display the UI shrank to a corner.
+
+*2026-11-04* — **A screen can hide the cursor.** Was: nothing in gameui could
+hide the OS cursor. Now: `UIContext::HideCursor()` and `HidesCursor()`, latched
+at `EndFrame` like `HoldInput`, and `UIState::PointerMoved()`. Default off, so
+existing screens are unchanged. Because the game shell hides the cursor in
+Play, and only the bridge may touch the OS cursor.
 
 *2026-10-24* — **Backend-free, with a module.** Was: `UIBackendImGui.cpp` lived
 here and gameui linked `imgui`, and `App` held the `UIContext`, chose the area

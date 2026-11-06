@@ -19,6 +19,7 @@ TEST_CASE("AntiAliasingEffect: ReadAntiAliasingParams on an empty params object 
 
     CHECK(aa.mode == mir::AntiAliasingParams{}.mode);
     CHECK(aa.rtSampleCount == mir::AntiAliasingParams{}.rtSampleCount);
+    CHECK(aa.dlssRrPreset == mir::DlssRrPreset::E);
 }
 
 TEST_CASE("AntiAliasingEffect: ReadAntiAliasingParams falls back per field when some are missing", "[renderer]")
@@ -36,6 +37,8 @@ TEST_CASE("AntiAliasingEffect: WriteAntiAliasingParams then ReadAntiAliasingPara
     mir::AntiAliasingParams saved;
     saved.mode = mir::AntiAliasingMode::Msaa;
     saved.rtSampleCount = 2;
+    saved.dlssRrPreset = mir::DlssRrPreset::D;
+    saved.dlssRayReconstruction = false;
 
     nlohmann::json params = nlohmann::json::object();
     mir::WriteAntiAliasingParams(params, saved);
@@ -43,6 +46,42 @@ TEST_CASE("AntiAliasingEffect: WriteAntiAliasingParams then ReadAntiAliasingPara
     const mir::AntiAliasingParams loaded = mir::ReadAntiAliasingParams(params);
     CHECK(loaded.mode == saved.mode);
     CHECK(loaded.rtSampleCount == saved.rtSampleCount);
+    CHECK(loaded.dlssRrPreset == saved.dlssRrPreset);
+    CHECK(loaded.dlssRayReconstruction == saved.dlssRayReconstruction);
+}
+
+TEST_CASE("AntiAliasingEffect: legacy DLSS settings select E and retain explicit comparison presets", "[renderer]")
+{
+    const auto legacy = mir::ReadAntiAliasingParams({{"mode", "dlss"}, {"rtSampleCount", 4}});
+    CHECK(legacy.mode == mir::AntiAliasingMode::Dlss);
+    CHECK(legacy.dlssRrPreset == mir::DlssRrPreset::E);
+    CHECK(legacy.dlssRayReconstruction);
+    for (auto preset : {mir::DlssRrPreset::D, mir::DlssRrPreset::E})
+    {
+        auto saved = legacy;
+        saved.dlssRrPreset = preset;
+        nlohmann::json params = { {"unrelated", 17} };
+        mir::WriteAntiAliasingParams(params, saved);
+        CHECK(mir::ReadAntiAliasingParams(params) == saved);
+        CHECK(params["unrelated"] == 17);
+    }
+}
+
+TEST_CASE("AntiAliasingEffect: unsupported or malformed RR presets safely select E", "[renderer]")
+{
+    for (const nlohmann::json &value : { nlohmann::json("f"), nlohmann::json("default"),
+        nlohmann::json(""), nlohmann::json(6), nlohmann::json(nullptr), nlohmann::json(false) })
+    {
+        const auto loaded = mir::ReadAntiAliasingParams({{"mode", "dlss"}, {"dlssRrPreset", value}});
+        CHECK(loaded.mode == mir::AntiAliasingMode::Dlss);
+        CHECK(loaded.dlssRrPreset == mir::DlssRrPreset::E);
+    }
+}
+
+TEST_CASE("AntiAliasingEffect: malformed RR switches retain the legacy enabled default", "[renderer]")
+{
+    for (const nlohmann::json &value : { nlohmann::json("false"), nlohmann::json(0), nlohmann::json(nullptr) })
+        CHECK(mir::ReadAntiAliasingParams({{"dlssRayReconstruction", value}}).dlssRayReconstruction);
 }
 
 TEST_CASE("AntiAliasingEffect: ToString/ParseMode round-trip every mode", "[renderer]")

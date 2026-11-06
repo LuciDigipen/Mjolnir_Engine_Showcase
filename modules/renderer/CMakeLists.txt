@@ -115,6 +115,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/PostProcess.cpp
     src/renderer/vulkan/PostProcessingStack.cpp
     src/renderer/vulkan/RayTracer.cpp
+    src/renderer/vulkan/RayTracerDeformation.cpp
     src/renderer/vulkan/RasterSurfaces.cpp
     src/renderer/vulkan/SsgiTrace.cpp
     src/renderer/vulkan/ResourceStore.cpp

@@ -9,11 +9,17 @@
 
 #include "TerrainDerivatives.h"
 #include "TerrainFinalSurface.h"
+#include "TerrainProgress.h"
 #include <terrain/TileAddressing.h>
+#include <jobs/JobExecutor.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
-#include <map>
+#include <cstddef>
+#include <limits>
+#include <numeric>
+#include <thread>
 #include <tuple>
 #include <format>
 #include <glm/geometric.hpp>
@@ -23,6 +29,8 @@ namespace mir::terrainbake
     namespace
     {
         using FinalSurface = TerrainFinalSurface;
+        // Marks a reference-grid point whose vertex id is not assigned yet.
+        constexpr uint32_t kUnassignedVertex = std::numeric_limits<uint32_t>::max();
         TerrainLodSurface Mesh(const FinalSurface &final, const TileHeights &source, const TerrainLayout &layout,
                                uint32_t layer, uint32_t sourceLayer, bool ring)
         {
@@ -38,20 +46,6 @@ namespace mir::terrainbake
             lod.origin = *TerrainLocalPosition::FromMeters({ref.SamplePosition(firstX), 0, ref.SamplePosition(firstZ)});
             const int ratio = ref.IntervalsPerTile() / layout.IntervalsPerTile();
             const int total = ref.IntervalsPerTile(), n = layout.IntervalsPerTile();
-            std::map<std::pair<int, int>, uint32_t> ids;
-            auto vertex = [&](int ix, int iz)
-            {
-                auto [it, inserted] = ids.try_emplace({iz, ix}, static_cast<uint32_t>(lod.positions.size()));
-                if (inserted)
-                {
-                    const double x = ref.SamplePosition(firstX + ix), z = ref.SamplePosition(firstZ + iz);
-                    const bool edge = ix == 0 || iz == 0 || ix == total || iz == total;
-                    const double h = ring && edge ? final.SharedHeight(x, z, source) : final.Height(source, x, z);
-                    lod.positions.emplace_back(float(x - lod.origin.Meters().x), float(h),
-                                               float(z - lod.origin.Meters().z));
-                }
-                return it->second;
-            };
             std::array<int, 4> edgeRatios{ratio, ratio, ratio, ratio};
             if (ring)
             {
@@ -66,7 +60,38 @@ namespace mir::terrainbake
                         edgeRatios[e] = std::min(edgeRatios[e], ref.IntervalsPerTile() / other->IntervalsPerTile());
                 }
             }
+            // Off-lattice vertices lie only on the tile edges, at multiples of that edge's step.
+            std::vector<uint32_t> latticeIds(size_t(n + 1) * (n + 1), kUnassignedVertex);
+            std::array<int, 4> edgeSteps{};
+            std::array<std::vector<uint32_t>, 4> edgeIds;
+            for (int e = 0; e < 4; ++e)
+            {
+                edgeSteps[e] = std::gcd(ratio, edgeRatios[e]);
+                edgeIds[e].assign(size_t(total / edgeSteps[e]) + 1, kUnassignedVertex);
+            }
+            auto slot = [&](int ix, int iz) -> uint32_t &
+            {
+                if (ix % ratio == 0 && iz % ratio == 0)
+                    return latticeIds[size_t(iz / ratio) * (n + 1) + ix / ratio];
+                const int e = ix == 0 ? 0 : ix == total ? 1 : iz == 0 ? 2 : 3;
+                return edgeIds[e][size_t((e < 2 ? iz : ix) / edgeSteps[e])];
+            };
+            auto vertex = [&](int ix, int iz)
+            {
+                uint32_t &id = slot(ix, iz);
+                if (id == kUnassignedVertex)
+                {
+                    id = static_cast<uint32_t>(lod.positions.size());
+                    const double x = ref.SamplePosition(firstX + ix), z = ref.SamplePosition(firstZ + iz);
+                    const bool edge = ix == 0 || iz == 0 || ix == total || iz == total;
+                    const double h = ring && edge ? final.SharedHeight(x, z, source) : final.Height(source, x, z);
+                    lod.positions.emplace_back(float(x - lod.origin.Meters().x), float(h),
+                                               float(z - lod.origin.Meters().z));
+                }
+                return id;
+            };
             const auto extent = *ref.ValidExtent(lod.tile);
+            std::vector<std::array<uint32_t, 3>> triangles;
             for (int iz = 0; iz < n; ++iz)
                 for (int ix = 0; ix < n; ++ix)
                 {
@@ -76,7 +101,7 @@ namespace mir::terrainbake
                     if (gx1 <= extent.minX || gx0 >= extent.maxX || gz1 <= extent.minZ || gz0 >= extent.maxZ)
                         continue;
                     uint32_t a = vertex(x0, z0), b = vertex(x1, z0), c = vertex(x1, z1), d = vertex(x0, z1);
-                    std::vector<std::array<uint32_t, 3>> triangles{{a, d, c}, {a, c, b}};
+                    triangles.assign({{a, d, c}, {a, c, b}});
                     auto split = [&](uint32_t start, uint32_t end, int e, int from, int to, bool alongZ, int fixed)
                     {
                         uint32_t previous = start;
@@ -121,7 +146,8 @@ namespace mir::terrainbake
     }
     std::optional<TerrainDerivatives> BakeTerrainDerivatives(const TerrainRecipe &recipe,
                                                              std::span<const TileHeights> heights, std::string &error,
-                                                             const TerrainRegionSettings *regions)
+                                                             const TerrainRegionSettings *regions,
+                                                             std::optional<std::size_t> workers)
     {
         TerrainDerivatives result;
         result.layers.push_back(recipe.layout);
@@ -157,23 +183,35 @@ namespace mir::terrainbake
                 break;
             result.layers.push_back(*next);
         }
-        for (const auto &tile : heights)
+        struct TileSlot
         {
+            std::vector<TerrainPayloadWrite> payloads;
+            std::vector<TileHeights> queryHeights;
+            std::vector<uint32_t> queryLayers;
+            std::vector<double> queryErrors;
+            std::string error;
+        };
+        std::vector<TileSlot> slots(heights.size());
+        const auto &layers = result.layers;
+        auto deriveTile = [&](std::size_t index)
+        {
+            const auto &tile = heights[index];
+            auto &slot = slots[index];
             const auto sourceLayout = final.Layout(tile);
-            auto found = std::find_if(result.layers.begin(), result.layers.end(),
+            auto found = std::find_if(layers.begin(), layers.end(),
                                       [&](const auto &v)
                                       {
                                           return v.SampleSpacing() == sourceLayout.SampleSpacing();
                                       });
-            if (found == result.layers.end())
+            if (found == layers.end())
             {
-                error = "source grid is missing from derivative layers";
-                return {};
+                slot.error = "source grid is missing from derivative layers";
+                return;
             }
-            const uint32_t sourceLayer = static_cast<uint32_t>(found - result.layers.begin());
-            for (uint32_t layer = sourceLayer; layer < result.layers.size(); ++layer)
+            const uint32_t sourceLayer = static_cast<uint32_t>(found - layers.begin());
+            for (uint32_t layer = sourceLayer; layer < layers.size(); ++layer)
             {
-                const auto &layout = result.layers[layer];
+                const auto &layout = layers[layer];
                 if (layer != sourceLayer && layout.SampleSpacing() > kTerrainInitialMaxLodSpacing)
                     break;
                 auto mesh = Mesh(final, tile, layout, layer, sourceLayer, true);
@@ -190,13 +228,13 @@ namespace mir::terrainbake
                     }
                     const auto extent = *layout.ValidExtent(tile.Tile());
                     const auto origin = mesh.origin.Meters();
-                    error = std::format(
+                    slot.error = std::format(
                         "tile ({}, {}) LOD {} m: actual float support [{},{}]..[{},{}], valid [{} ,{}]..[{},{}]; uncovered X/Z widths {} / {} m; topology/error cannot be enclosed",
                         tile.Tile().x, tile.Tile().z, layout.SampleSpacing(), minX, minZ, maxX, maxZ,
                         extent.minX - origin.x, extent.minZ - origin.z, extent.maxX - origin.x, extent.maxZ - origin.z,
                         std::max({0.0, minX - (extent.minX - origin.x), (extent.maxX - origin.x) - maxX}),
                         std::max({0.0, minZ - (extent.minZ - origin.z), (extent.maxZ - origin.z) - maxZ}));
-                    return {};
+                    return;
                 }
                 mesh.maxDeviation = *bound;
                 std::vector<glm::vec3> normals;
@@ -232,9 +270,9 @@ namespace mir::terrainbake
                 record.vertexCount = static_cast<uint32_t>(mesh.positions.size());
                 record.indexCount = static_cast<uint32_t>(mesh.indices.size());
                 record.kind = TerrainPayloadKind::LodHeight;
-                result.payloads.push_back({record, EncodeTerrainLod(mesh)});
+                slot.payloads.push_back({record, EncodeTerrainLod(mesh)});
                 record.kind = TerrainPayloadKind::Normal;
-                result.payloads.push_back({record, EncodeTerrainNormals(mesh, normals)});
+                slot.payloads.push_back({record, EncodeTerrainNormals(mesh, normals)});
                 if (layer == sourceLayer)
                     continue;
                 const int n = layout.IntervalsPerTile(), ratio = tile.IntervalsPerTile() / n;
@@ -248,13 +286,48 @@ namespace mir::terrainbake
                 auto queryBound = query ? TerrainRegularDeviation(sourceLayout, tile, layout, *query) : std::nullopt;
                 if (!query || !queryBound)
                 {
-                    error = "query derivative/error cannot be enclosed";
-                    return {};
+                    slot.error = "query derivative/error cannot be enclosed";
+                    return;
                 }
-                result.queryHeights.push_back(std::move(*query));
-                result.queryLayers.push_back(layer);
-                result.queryErrors.push_back(*queryBound);
+                slot.queryHeights.push_back(std::move(*query));
+                slot.queryLayers.push_back(layer);
+                slot.queryErrors.push_back(*queryBound);
             }
+        };
+        JobExecutor executor(workers.value_or(JobExecutor::DefaultWorkerCount()));
+        std::atomic<std::size_t> completed{0};
+        const auto caller = std::this_thread::get_id();
+        TerrainProgressStep("derivatives: tiles", 0, heights.size());
+        executor.ParallelFor(heights.size(), 1,
+                             [&](std::size_t begin, std::size_t end)
+                             {
+                                 for (std::size_t index = begin; index < end; ++index)
+                                 {
+                                     deriveTile(index);
+                                     const std::size_t done =
+                                         completed.fetch_add(1, std::memory_order_relaxed) + 1;
+                                     // The progress sink is not thread safe, so only the caller reports.
+                                     if (std::this_thread::get_id() == caller)
+                                         TerrainProgressStep("derivatives: tiles", done, heights.size());
+                                     if (!slots[index].error.empty())
+                                         break;
+                                 }
+                             });
+        TerrainProgressStep("derivatives: tiles", heights.size(), heights.size());
+        for (const auto &slot : slots)
+            if (!slot.error.empty())
+            {
+                error = slot.error;
+                return {};
+            }
+        for (auto &slot : slots)
+        {
+            for (auto &payload : slot.payloads)
+                result.payloads.push_back(std::move(payload));
+            for (auto &query : slot.queryHeights)
+                result.queryHeights.push_back(std::move(query));
+            result.queryLayers.insert(result.queryLayers.end(), slot.queryLayers.begin(), slot.queryLayers.end());
+            result.queryErrors.insert(result.queryErrors.end(), slot.queryErrors.begin(), slot.queryErrors.end());
         }
         if (regions && !(result.regions = BakeTerrainRegions(recipe, heights, *regions, error)))
             return {};

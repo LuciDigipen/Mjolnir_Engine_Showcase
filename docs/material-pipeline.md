@@ -181,6 +181,12 @@ struct RockMaterial : IMaterial
 The pass supplies `SurfaceCommon.slang`; a material must not include it or
 declare bindings. Sampling goes through `context.Sample(texture, uv)`.
 
+A material that animates reads `jitterAndPad.z`: seconds from a steady clock,
+running in the editor and in Play, wrapped at 3600. Use whole cycles per 3600 s
+so the wrap does not show. `rayCone.x` is one pixel's angular size in both
+frontends, so a footprint from it also works in a hit shader, where `ddx` cannot
+compile.
+
 ## Building
 
 `engine_add_surface_materials` recursively discovers `*.material.json` at

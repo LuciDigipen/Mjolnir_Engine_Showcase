@@ -22,11 +22,13 @@
 #include <input/DefaultInputMap.h>
 #include <input/InputState.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <imgui.h>
 
 #include <atomic>
+#include <cfloat>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -37,6 +39,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace mir;
@@ -322,5 +325,47 @@ TEST_CASE("EndFrame draws into an area below the design size at the UI's scale, 
         CHECK(vertex.pos.y >= 49.0f);
         CHECK(vertex.pos.x <= 151.0f);
         CHECK(vertex.pos.y <= 71.0f);
+    }
+}
+
+TEST_CASE("Text keeps to the box sized for it, whatever ImGui's DPI scale and at a scaled-up UI", "[gameui]")
+{
+    ImGuiFixture imgui;
+    ImGuiUIBackend backend;
+    UIContext ui;
+    ui.SetBackend(&backend);
+    InputState input;
+    const InputMap map = DefaultInputMap();
+
+    // as the editor does on a 200% monitor; the game UI's text must not follow it
+    ImGui::GetStyle().FontScaleDpi = 2.0f;
+
+    ImGui::NewFrame();
+    ui.BeginFrame(UIRect{0, 0, 1920, 1080}, input, map, UIPointer{});
+    REQUIRE(ui.Scale() == Catch::Approx(1.5f));
+
+    // measured with ImGui's own font at the size it is drawn
+    const std::string_view text = "Escape";
+    const UISize size = ui.MeasureText(text);
+    const ImVec2 imguiSize = ImGui::GetFont()->CalcTextSizeA(16.0f * 1.5f, FLT_MAX, 0.0f, text.data(),
+                                                             text.data() + text.size());
+    CHECK(size.width * 1.5f == Catch::Approx(imguiSize.x));
+    CHECK(size.height == Catch::Approx(16.0f).margin(1.0f));
+
+    const float padding = ui.Style().mPadding;
+    const UIRect rect{100, 100, size.width + 2.0f * padding, 32};
+    Button(ui, UIId("button"), rect, text);
+    ui.EndFrame();
+    ImGui::Render();
+
+    // the face, in pixels, holds every vertex: its own and its text's; a pixel over for the anti-aliased edge
+    const ImDrawList *drawList = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
+    REQUIRE(drawList->VtxBuffer.Size > 4);
+    for (const ImDrawVert &vertex : drawList->VtxBuffer)
+    {
+        CHECK(vertex.pos.x >= rect.x * 1.5f - 1.0f);
+        CHECK(vertex.pos.y >= rect.y * 1.5f - 1.0f);
+        CHECK(vertex.pos.x <= rect.Right() * 1.5f + 1.0f);
+        CHECK(vertex.pos.y <= rect.Bottom() * 1.5f + 1.0f);
     }
 }

@@ -14,19 +14,26 @@
 #include <input/PromptLabel.h>
 
 #include <algorithm>
+#include <limits>
 
 namespace mir
 {
     namespace
     {
-        float FitScale(const UIRect &area, float designWidth, float designHeight)
+        // Below the design size, shrunk to fit it. Above the reference height, grown with the height, but never so
+        // far that the design size stops fitting
+        float FitScale(const UIRect &area, float designWidth, float designHeight, float referenceHeight)
         {
-            float scale = 1.0f;
+            float fit = std::numeric_limits<float>::max();
             if (designWidth > 0.0f && area.width > 0.0f)
-                scale = std::min(scale, area.width / designWidth);
+                fit = std::min(fit, area.width / designWidth);
             if (designHeight > 0.0f && area.height > 0.0f)
-                scale = std::min(scale, area.height / designHeight);
-            return scale;
+                fit = std::min(fit, area.height / designHeight);
+            if (fit < 1.0f)
+                return fit;
+
+            const float grown = referenceHeight > 0.0f ? area.height / referenceHeight : 1.0f;
+            return std::min(std::max(grown, 1.0f), fit);
         }
     } // namespace
 
@@ -35,7 +42,7 @@ namespace mir
         MIR_ASSERT(!mInFrame, "UIContext::BeginFrame twice without EndFrame");
 
         mArea = area;
-        mScale = FitScale(area, mDesignWidth, mDesignHeight);
+        mScale = FitScale(area, mDesignWidth, mDesignHeight, mReferenceHeight);
         mInput = &input;
         mInputMap = &map;
         mNav = ReadNavInput(input);
@@ -63,8 +70,10 @@ namespace mir
 
             mHoldsInput = mHoldInput;
             mInput->SetGameInputHeld(mHoldsInput);
+            mHidesCursor = mHideCursor;
         }
         mHoldInput = false;
+        mHideCursor = false;
 
         mInput = nullptr;
         mInputMap = nullptr;
@@ -76,6 +85,12 @@ namespace mir
     {
         MIR_ASSERT(mInFrame, "UIContext::HoldInput outside BeginFrame/EndFrame");
         mHoldInput = mInFrame;
+    }
+
+    void UIContext::HideCursor()
+    {
+        MIR_ASSERT(mInFrame, "UIContext::HideCursor outside BeginFrame/EndFrame");
+        mHideCursor = mInFrame;
     }
 
     UIInteraction UIContext::Interact(UIId id, const UIRect &rect, const UIWidgetOptions &options)
@@ -93,5 +108,19 @@ namespace mir
 
         const DeviceKind device = mInput->ActiveDevice();
         return UIPrompt{PromptLabel(*mInputMap, action, device), device == DeviceKind::Gamepad};
+    }
+
+    UISize UIContext::MeasureText(std::string_view text) const
+    {
+        if (mBackend == nullptr)
+            return EstimateTextSize(text, mStyle.mFontSize > 0.0f ? mStyle.mFontSize : mStyle.mTextHeight);
+
+        // the backend's own size is not scaled when drawn, so it is already in UI units
+        if (mStyle.mFontSize <= 0.0f)
+            return mBackend->MeasureText(text, 0.0f);
+
+        // measured at the size it is drawn, since a font's widths do not scale exactly
+        const UISize pixels = mBackend->MeasureText(text, mStyle.mFontSize * mScale);
+        return UISize{pixels.width / mScale, pixels.height / mScale};
     }
 } // namespace mir

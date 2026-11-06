@@ -1,0 +1,44 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "03 | Particle fountain and focus pull"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 43,
+  "parent": 10,
+  "siblingIndex": 2
+}

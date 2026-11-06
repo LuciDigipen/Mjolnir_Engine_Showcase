@@ -1,0 +1,107 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -0.27,
+          0.38,
+          -4.33
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -0.27,
+          0.38,
+          -4.33
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Showcase Fountain"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "emitterOffset0": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffset1": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffset2": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffset3": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffset4": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffset5": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffset6": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffset7": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "emitterOffsetPlacement0": 0,
+        "emitterOffsetPlacement1": 0,
+        "emitterOffsetPlacement2": 0,
+        "emitterOffsetPlacement3": 0,
+        "emitterOffsetPlacement4": 0,
+        "emitterOffsetPlacement5": 0,
+        "emitterOffsetPlacement6": 0,
+        "emitterOffsetPlacement7": 0,
+        "overrideParameters": false,
+        "playOnStart": false,
+        "sizeScale": 1.0,
+        "spawnRateScale": 1.0,
+        "systemName": "particles/fountain.particle.json",
+        "wind": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "type": "ParticleSystem"
+    }
+  ],
+  "id": 44,
+  "parent": 43,
+  "siblingIndex": 0
+}

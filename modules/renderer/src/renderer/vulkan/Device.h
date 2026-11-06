@@ -49,6 +49,8 @@ namespace mir::vk
         const VkPhysicalDeviceProperties &Properties() const { return mProperties; }
 
         bool RayTracingSupported() const { return mCapabilities.rayTracing; }
+        // Budget less use on the largest device-local heap; 0 when over budget.
+        uint64_t DeviceLocalFreeBytes() const;
         const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &RtProperties() const { return mRtProperties; }
 
         // Shared image/sampler/material-record tables, available with or without ray tracing.
@@ -57,6 +59,8 @@ namespace mir::vk
         float MaxSamplerAnisotropy() const { return mCapabilities.maxSamplerAnisotropy; }
 
         bool NgxSupported() const { return mNgxSupported; }
+        // DLSS Super Sampling at native resolution, used when Ray Reconstruction is off.
+        bool NgxDlaaSupported() const { return mNgxDlaaSupported; }
 
         // line polygon mode, for the editor's wireframe view
         bool FillModeNonSolidSupported() const { return mFillModeNonSolidSupported; }
@@ -121,6 +125,8 @@ namespace mir::vk
 
         bool mNgxSupported = false;
         bool mNgxInstanceExtensionsSupported = false;
+        bool mNgxDlaaSupported = false;
+        bool mNgxDlaaInstanceExtensionsSupported = false;
         std::vector<std::string> mNgxDeviceExtensions;
 
         bool mMemoryBudgetSupported = false;

@@ -22,6 +22,7 @@
 #include <audio/AudioModule.h>
 #include <audio_script/AudioScriptModule.h>
 #endif
+#include <app/GameControlsOptions.h>
 #include <camera/CameraModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
@@ -50,7 +51,10 @@
 #include <terrain/TerrainModule.h>
 #include <terrain_runtime/TerrainRuntimeModule.h>
 #include <terrain_script/TerrainScriptModule.h>
+#include <core/StartupGate.h>
 #include <window/Splash.h>
+
+#include <chrono>
 #include <window/WindowModule.h>
 #include <jobs/JobExecutor.h>
 
@@ -188,7 +192,7 @@ namespace mir
         void ToggleFullscreen();
 
     private:
-        // shown while App is built, closed by main or by its destructor
+        // shown while App is built and the first view loads, closed by RevealWindow or by its destructor
         struct StartupSplash
         {
             SplashScreen screen;
@@ -267,6 +271,12 @@ namespace mir
 
         void ReplaceSceneFromDisk(bool incomplete);
 
+        // a frame's check of the first view's loading, until the window opens
+        void WaitForFirstView();
+
+        // resumes the prepared runtime, shows the window and closes the splash
+        void RevealWindow();
+
         // the mSwitchProjectTo test hook
         void RunSwitchHook();
 
@@ -316,6 +326,8 @@ namespace mir
         AssetResolver mResolver;
         // every World borrows from it, so it outlives them
         ProjectResources mProjectResources{ mProject };
+        ControlsSettings mControls;
+        GameControlsOptions mControlsOptions;
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
         // so the textures must still be there
         WorldState mWorldState;
@@ -370,6 +382,9 @@ namespace mir
         struct RuntimeSession;
         std::unique_ptr<RuntimeSession> mRuntime;
 
+        // set until the window opens; a bounded or hidden run does not wait
+        std::optional<StartupGate> mFirstView;
+        std::chrono::steady_clock::time_point mFirstViewStart;
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;
         double mElapsed = 0.0;

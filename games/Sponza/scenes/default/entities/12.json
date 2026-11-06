@@ -1,0 +1,44 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "02 | Rigid Body Drop Lab"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 12,
+  "parent": 10,
+  "siblingIndex": 1
+}

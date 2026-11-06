@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "shader": { "file": "materials/oceanWater.slang", "type": "OceanWaterMaterial" },
+  "frontends": ["mesh"],
+  "parameters": {
+    "deepColor": [0.004, 0.024, 0.052, 6.0],
+    "sandColor": [0.36, 0.33, 0.25, 0.6],
+    "absorption": [0.60, 0.17, 0.11, 0.6],
+    "skyZenith": [0.15, 0.30, 0.60, 12000.0],
+    "skyHorizon": [0.48, 0.60, 0.78, 70000.0],
+    "scatterColor": [0.02, 0.32, 0.26, 0.9],
+    "wind": [0.6, 1.0, 420.0, 6.0],
+    "waveShape": [110.0, 0.72, 0.13, 0.97]
+  }
+}

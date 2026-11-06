@@ -20,6 +20,29 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+
+TEST_CASE("GI overlay maps asymmetric GPU probe order and relocation into camera space", "[renderer][ddgi]")
+{
+    mir::DdgiSettings gi;
+    gi.origin = {12, 3, -8};
+    gi.probeCounts = {3, 2, 4};
+    gi.probesPerFrame = 24;
+    std::vector<mir::GiProbeDebug> states(24);
+    // X varies fastest, then Z, then the Y array layer. Probe 3 is (0,0,1).
+    states[3].offset = {.25f, .5f, .75f};
+    states[3].inactive = true;
+    const auto camera = mir::WorldPosition::FromDoubleMeters({10, 2, -9});
+    REQUIRE(camera.has_value());
+    std::vector<mir::DebugLinePoint> volumeLines, lines;
+    mir::BuildGiVolumeLines(gi, volumeLines, states);
+    mir::AppendGiVolumeLines(gi, *camera, volumeLines, lines);
+    CHECK(std::count_if(lines.begin(), lines.end(), [](const auto &point)
+        { return point.color == 0xFF808080u; }) == 4);
+    // Centre is (.25,.5,.75) after camera subtraction and relocation.
+    CHECK(std::any_of(lines.begin(), lines.end(), [](const auto &point)
+        { return point.color == 0xFF808080u && std::abs(point.position.x - .17f) < 1e-5f &&
+            std::abs(point.position.y - .5f) < 1e-5f && std::abs(point.position.z - .75f) < 1e-5f; }));
+}
 #include <vector>
 
 namespace
@@ -444,16 +467,21 @@ TEST_CASE("A cut view draws a moved item with no velocity", "[renderer][camera]"
 {
     WorldDrawItem item = ItemAt({ 1.0, 2.0, 3.0 });
     item.previousPose = WorldPose{ At({ 101.0, 2.0, 3.0 }) };
+    const glm::vec4 current[]{{1, 0, 0, 0}}, previous[]{{0, 0, 0, 0}};
+    item.deformation = current;
+    item.previousDeformation = previous;
     const std::vector<WorldDrawItem> world{ item };
 
     std::vector<DrawItem> view;
     mir::BuildViewDrawItems(world, At({ 0.0, 0.0, 0.0 }), glm::mat4(1.0f), view);
     REQUIRE(view.size() == 1);
     CHECK(view[0].previousModel != view[0].model);
+    CHECK(view[0].previousDeformation.data() == previous);
 
     mir::BuildViewDrawItems(world, At({ 0.0, 0.0, 0.0 }), glm::mat4(1.0f), view, /*cut*/ true);
     REQUIRE(view.size() == 1);
     CHECK(view[0].previousModel == view[0].model);
+    CHECK(view[0].previousDeformation.data() == current);
 }
 
 TEST_CASE("Neighbouring tile draws meet on their shared edge after narrowing", "[renderer][lwc]")

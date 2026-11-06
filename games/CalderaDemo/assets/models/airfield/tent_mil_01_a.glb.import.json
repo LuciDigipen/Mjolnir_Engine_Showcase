@@ -1,0 +1,17 @@
+{
+  "aliases": [
+    "games/CalderaDemo/assets/models/airfield/tent_mil_01_a.glb"
+  ],
+  "identityPath": "games/CalderaDemo/assets/models/airfield/tent_mil_01_a.glb",
+  "next": 8,
+  "objects": {
+    "material:name/building": "1",
+    "mesh:name/far": "4",
+    "mesh:name/near": "3",
+    "mesh:name/shared": "2",
+    "node:name/far": "7",
+    "node:name/near": "6",
+    "node:name/shared": "5"
+  },
+  "version": 2
+}

@@ -15,6 +15,7 @@
 #include "VulkanUtil.h"
 
 #include <core/log/Log.h>
+#include <renderer/MeshAssetDecoder.h>
 
 #include <vk_mem_alloc.h>
 
@@ -327,6 +328,7 @@ namespace mir::vk
             mQueued.erase(found);
 
             const uint32_t vertexCount = uint32_t(queued.source.vertices.size());
+            mesh->mBounds = ComputeMeshBounds(queued.source.vertices);
             const uint32_t indexCount = uint32_t(queued.source.indices.size());
             const VkDeviceSize vertexBytes = VkDeviceSize(vertexCount) * sizeof(Vertex);
             const VkDeviceSize indexBytes = VkDeviceSize(indexCount) * sizeof(uint32_t);
@@ -417,7 +419,8 @@ namespace mir::vk
             srcStages |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
             srcAccess |= VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
             dstStages |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
-                         VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+                         VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR |
+                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
             dstAccess |= VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT;
         }
         const VkMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,

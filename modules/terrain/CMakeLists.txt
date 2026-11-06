@@ -40,3 +40,10 @@ target_link_libraries(engine_terrain PUBLIC mir::assets mir::core nlohmann_json:
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+
+# /RTC1 cannot combine with TerrainLod.cpp's Debug /O2 and /Od /Ob0 would only be overridden; cl defaults to /Od.
+# Tests keep all three.
+if(MSVC)
+    string(REGEX REPLACE "/RTC1|/Ob0|/Od" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+endif()
+set_property(SOURCE src/terrain/TerrainLod.cpp APPEND PROPERTY COMPILE_OPTIONS "$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:/O2>")

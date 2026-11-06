@@ -69,7 +69,7 @@ meters, row-major with x fastest, shared edge and padding samples included.
 It is the one block the bake, query, mesh and heightfield code pass around.
 
 A bake encodes one source per map tile and optional sparse coarse payloads
-into one format 2 *release*: an index plus one pack per storage chunk (16 x 16
+into one format 2 _release_: an index plus one pack per storage chunk (16 x 16
 tiles by default). The index records each tile/layer key, source flag, pack,
 byte offset and length, checksum, height range, spacing and clipped extent,
 so a reader fetches one payload without reading its pack. Releases live in `<releasesRoot>/<assetIdHex16>/<releaseIdHex16>/`,
@@ -96,13 +96,13 @@ highest-density development reference; this decision supplies a baseline for
 dependent engine work, without requiring game-specific entities or content.
 These sizes may change after P3 measurements.
 
-| Unit | Role and current relationship |
-|---|---|
-| Logical tile | Addressable source/final height data; payloads can be requested independently |
-| Chunk | Spatial grouping for index organization and possible regional work; does not require all member tiles resident |
-| `.tpack` | Physical container; format 1 maps each occupied chunk to one file |
-| Render patch / Region | Draw geometry; P1 has one mesh per tile, while future coarse Regions may combine tiles independently of chunks |
-| Physics area | Sample block for one collision shape; since #128 one whole-map piece per Eager release and pieces of `collision.pieceTiles` tiles otherwise, independent of chunk size |
+| Unit                  | Role and current relationship                                                                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Logical tile          | Addressable source/final height data; payloads can be requested independently                                                                                          |
+| Chunk                 | Spatial grouping for index organization and possible regional work; does not require all member tiles resident                                                         |
+| `.tpack`              | Physical container; format 1 maps each occupied chunk to one file                                                                                                      |
+| Render patch / Region | Draw geometry; P1 has one mesh per tile, while future coarse Regions may combine tiles independently of chunks                                                         |
+| Physics area          | Sample block for one collision shape; since #128 one whole-map piece per Eager release and pieces of `collision.pieceTiles` tiles otherwise, independent of chunk size |
 
 The following results describe the **2026-10-03 measurement build**. CPU
 experiments used `BakeFinalHeights`, `BuildTerrainTileMesh`,
@@ -113,11 +113,11 @@ Clipped map-edge tiles retain their full height block but can have fewer mesh
 cells. All memory figures below are **bytes**.
 
 | Spacing | Samples = vertices | Indices | Height payload | CPU mesh | GPU buffer payload |
-|---|---:|---:|---:|---:|---:|
-| 1 m | 257² = 66049 | 393216 | 264196 | 3158040 | 5800000 |
-| 2 m | 129² = 16641 | 98304 | 66564 | 792600 | 1458240 |
-| 4 m | 65² = 4225 | 24576 | 16900 | 199704 | 368704 |
-| 8 m | 33² = 1089 | 6144 | 4356 | 50712 | 94272 |
+| ------- | -----------------: | ------: | -------------: | -------: | -----------------: |
+| 1 m     |       257² = 66049 |  393216 |         264196 |  3158040 |            5800000 |
+| 2 m     |       129² = 16641 |   98304 |          66564 |   792600 |            1458240 |
+| 4 m     |         65² = 4225 |   24576 |          16900 |   199704 |             368704 |
+| 8 m     |         33² = 1089 |    6144 |           4356 |    50712 |              94272 |
 
 CPU mesh bytes use that build's 24-byte `TerrainMeshVertex` and uint32 indices;
 GPU payload uses its 64-byte renderer `Vertex` and the same indices. They
@@ -140,11 +140,11 @@ The project's pinned **Jolt 5.5.0, port 2, double-precision build** was
 checked through `PhysicsWorld` with `blockSize=2`, `bitsPerSample=8`:
 
 | Spacing | Input side -> actual Jolt side | Shape bytes | Build median |
-|---|---:|---:|---:|
-| 1 m | 257 -> 258 | 246487 | 8.17 ms |
-| 2 m | 129 -> 130 | 62583 | 1.98 ms |
-| 4 m | 65 -> 66 | 16199 | 0.48 ms |
-| 8 m | 33 -> 34 | 4399 | 0.13 ms |
+| ------- | -----------------------------: | ----------: | -----------: |
+| 1 m     |                     257 -> 258 |      246487 |      8.17 ms |
+| 2 m     |                     129 -> 130 |       62583 |      1.98 ms |
+| 4 m     |                       65 -> 66 |       16199 |      0.48 ms |
+| 8 m     |                       33 -> 34 |        4399 |      0.13 ms |
 
 Build timings include destroying the previous shape. All four closed corners
 hit, and four probes 0.25 sample spacings beyond the sides missed. The
@@ -161,11 +161,11 @@ four-pack grouping and hide their full-chunk cost difference.
 Full positive-coordinate chunk-sized batches were also measured at all four
 spacings. The dense 1 m results are below; **MiB = 2^20 bytes**.
 
-| Chunk | Tiles per full chunk | Full tpack, 1 m | Serial generation | Encoding | Packs in 150 km map (expected) |
-|---|---:|---:|---:|---:|---:|
-| 2048 m | 64 | 16.126 MiB | 0.802 s | 97 ms | 5476 |
-| 4096 m | 256 | 64.504 MiB | 3.216 s | 380 ms | 1444 |
-| 8192 m | 1024 | 258.016 MiB | 13.050 s | 1565 ms | 400 |
+| Chunk  | Tiles per full chunk | Full tpack, 1 m | Serial generation | Encoding | Packs in 150 km map (expected) |
+| ------ | -------------------: | --------------: | ----------------: | -------: | -----------------------------: |
+| 2048 m |                   64 |      16.126 MiB |           0.802 s |    97 ms |                           5476 |
+| 4096 m |                  256 |      64.504 MiB |           3.216 s |   380 ms |                           1444 |
+| 8192 m |                 1024 |     258.016 MiB |          13.050 s |  1565 ms |                            400 |
 
 At 8 m the full packs were 0.267 / 1.066 / 4.266 MiB. The 150 km columns
 are layout-derived expectations, not a generated world: bounds [-75000,75000]
@@ -189,9 +189,9 @@ decoding took about 0.19-0.20 ms per tile. A storage workload with an 8 x 4
 tile window, sampled every 0.25 s along 40 s paths, yielded:
 
 | Path speed | Tile requests | Payload bytes | Distinct packs, 2048 / 4096 / 8192 m |
-|---|---:|---:|---:|
-| 150 m/s | 128 | 557568 | 10 / 6 / 4 |
-| 200 m/s | 156 | 679536 | 12 / 6 / 4 |
+| ---------- | ------------: | ------------: | -----------------------------------: |
+| 150 m/s    |           128 |        557568 |                           10 / 6 / 4 |
+| 200 m/s    |           156 |        679536 |                           12 / 6 / 4 |
 
 This window is a storage workload, not a chosen render or physics radius.
 The path crosses the z=0 chunk boundary. Requests were replayed synchronously
@@ -280,14 +280,14 @@ a prototype map of 64 x 64 tiles
 of 256 m (about 16.25 x 16.17 km, signed and clipped edges), 8 m by default
 with 1, 2 and 4 m blocks, 23.6 MB of final heights. Release, Ryzen 7 5800H:
 
-| Level 0 | Cells | Regions | Level 0 cell | Region bytes (all levels) | Largest Region (L0) | Vertices per L0 Region | L0 max error | L0 sampled P95 | Bake |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4096 m | 64 | 21 | 64 m | 5.51 MB (0.23 x heights) | 0.31 MB | 7169 | 15.01 m | 2.29 m | 33.0 s |
-| **4096 m** | **128** | 21 | 32 m | 17.61 MB (0.75 x) | 0.89 MB | 19329 | 5.80 m | 1.32 m | 10.9 s |
-| 4096 m | 256 | 21 | 16 m | 66.11 MB (2.80 x) | 3.24 MB | 68225 | 3.00 m | 0.51 m | 8.1 s |
-| 8192 m | 64 | 5 | 128 m | 1.43 MB (0.06 x) | 0.31 MB | 7283 | 20.04 m | 3.41 m | 25.4 s |
-| 8192 m | 128 | 5 | 64 m | 4.33 MB (0.18 x) | 0.89 MB | 19443 | 15.01 m | 2.28 m | 7.7 s |
-| 8192 m | 256 | 5 | 32 m | 15.91 MB (0.67 x) | 3.22 MB | 67957 | 5.80 m | 1.31 m | 3.6 s |
+| Level 0    |   Cells | Regions | Level 0 cell | Region bytes (all levels) | Largest Region (L0) | Vertices per L0 Region | L0 max error | L0 sampled P95 |   Bake |
+| ---------- | ------: | ------: | -----------: | ------------------------: | ------------------: | ---------------------: | -----------: | -------------: | -----: |
+| 4096 m     |      64 |      21 |         64 m |  5.51 MB (0.23 x heights) |             0.31 MB |                   7169 |      15.01 m |         2.29 m | 33.0 s |
+| **4096 m** | **128** |      21 |         32 m |         17.61 MB (0.75 x) |             0.89 MB |                  19329 |       5.80 m |         1.32 m | 10.9 s |
+| 4096 m     |     256 |      21 |         16 m |         66.11 MB (2.80 x) |             3.24 MB |                  68225 |       3.00 m |         0.51 m |  8.1 s |
+| 8192 m     |      64 |       5 |        128 m |          1.43 MB (0.06 x) |             0.31 MB |                   7283 |      20.04 m |         3.41 m | 25.4 s |
+| 8192 m     |     128 |       5 |         64 m |          4.33 MB (0.18 x) |             0.89 MB |                  19443 |      15.01 m |         2.28 m |  7.7 s |
+| 8192 m     |     256 |       5 |         32 m |         15.91 MB (0.67 x) |             3.22 MB |                  67957 |       5.80 m |         1.31 m |  3.6 s |
 
 Each level up doubles the cell, so an 8192 m level 0 is the 4096 m hierarchy
 without its finest level. The edge polylines add about 29k vertices to the
@@ -376,7 +376,7 @@ take). In the engine that loader is the `TerrainStreamer` of the next section;
 `PreloadTerrainTiles` and `PreloadAllTerrainTiles` stay as synchronous fills
 for tools and tests.
 
-A query has one or more *layers*, finest first, each a layout of one spacing
+A query has one or more _layers_, finest first, each a layout of one spacing
 over the same tiles. Format 2 permits sparse layers and one source spacing
 per tile; optional coarse payloads can answer while a fine payload loads.
 P2 bakes coarse levels and measured per-tile deviation bounds.
@@ -479,15 +479,36 @@ and then nothing loads. Later P3 issues add their own sections. TerrainCheck
 ships:
 
 ```json
-{ "cpu": { "budgetMiB": 16 }, "io": { "workerThreads": 2, "maxInstallsPerFrame": 32 },
-  "retry": { "maxAttempts": 3, "firstDelaySeconds": 0.1, "maxDelaySeconds": 2.0, "failedHoldSeconds": 10.0 },
+{
+  "cpu": { "budgetMiB": 16 },
+  "io": { "workerThreads": 2, "maxInstallsPerFrame": 32 },
+  "retry": {
+    "maxAttempts": 3,
+    "firstDelaySeconds": 0.1,
+    "maxDelaySeconds": 2.0,
+    "failedHoldSeconds": 10.0
+  },
   "residency": { "mode": "Auto", "queryLeaseSeconds": 2.0 },
-  "view": { "refineErrorPixels": 1.0, "mergeErrorPixels": 0.75, "prefetchErrorPixels": 0.5,
-            "prefetchBudgetMiB": 4 },
+  "view": {
+    "refineErrorPixels": 1.0,
+    "mergeErrorPixels": 0.75,
+    "prefetchErrorPixels": 0.5,
+    "prefetchBudgetMiB": 4
+  },
   "gpu": { "budgetMiB": 128, "stagingMiB": 32, "meshRetainSeconds": 2.0 },
-  "collision": { "spacingsMeters": [8.0, 4.0, 2.0, 1.0], "maxErrorMeters": 0.05, "pieceTiles": 4,
-                 "seamOverlapMeters": 64.0, "bodyToleranceMeters": 0.05, "loadLatencySeconds": 0.5,
-                 "latencyMarginSeconds": 0.5, "prefetchSeconds": 2.0, "budgetMiB": 64, "retainSeconds": 2.0 } }
+  "collision": {
+    "spacingsMeters": [8.0, 4.0, 2.0, 1.0],
+    "maxErrorMeters": 0.05,
+    "pieceTiles": 4,
+    "seamOverlapMeters": 64.0,
+    "bodyToleranceMeters": 0.05,
+    "loadLatencySeconds": 0.5,
+    "latencyMarginSeconds": 0.5,
+    "prefetchSeconds": 2.0,
+    "budgetMiB": 64,
+    "retainSeconds": 2.0
+  }
+}
 ```
 
 These are provisional development-machine values, not measured budgets; #130
@@ -551,9 +572,9 @@ frames, Release), each frame wanting the 3 x 3 tiles under the mover as
 Required, tiles within 1.5 km as Visible, to 2.5 km as Prefetch and the level 0
 Regions within 6 km:
 
-| Update (main thread) P50 / P95 / P99 / max | HeightAt P99 | height available | Visible ready P50 / P95 | peak / budget | reads | evictions | worker read + decode |
-|---|---|---|---|---|---|---|---|
-| 0.094 / 0.142 / 0.219 / 0.81 ms | 8.4 µs | every frame | 24 / 40 ms | 15.99 / 16 MiB | 813 (18.8 MiB) | 177 | 0.35 + 0.06 s |
+| Update (main thread) P50 / P95 / P99 / max | HeightAt P99 | height available | Visible ready P50 / P95 | peak / budget  | reads          | evictions | worker read + decode |
+| ------------------------------------------ | ------------ | ---------------- | ----------------------- | -------------- | -------------- | --------- | -------------------- |
+| 0.094 / 0.142 / 0.219 / 0.81 ms            | 8.4 µs       | every frame      | 24 / 40 ms              | 15.99 / 16 MiB | 813 (18.8 MiB) | 177       | 0.35 + 0.06 s        |
 
 Latencies are counted in whole frames (16.7 ms) and only for payloads that
 were not already resident (prefetched) when first wanted. Cold-cache IO, more
@@ -638,13 +659,13 @@ from nothing, as its four level 0 Regions; the coarse root fills in first.
 levels, streamed by interest from memory with two workers; development
 baselines, not budgets):
 
-| View | Above ground | Draws: tiles (by LOD) + Regions | Vertices | Max projected error | Settled after | Background pixels |
-|---|---:|---|---:|---:|---:|---:|
-| high altitude | 3000 m | 38 (22 L0, 7 L1, 5 L2, 4 L3) + 9 L0 | 211 k | 0.86 px | 7 frames | 440126 (sky) |
-| low approach | 90 m | 425 (393, 14, 10, 8) + 10 L0 | 655 k | 0.74 px | 25 frames | 440806 (sky) |
-| tilted, rolled 35 degrees | 400 m | 450 (415, 12, 18, 5) + 3 L0 | 590 k | 0.98 px | 17 frames | |
-| map edge, looking out | 60 m | 206 (206 L0) + 3 L0 | 270 k | 0.74 px | 8 frames | |
-| nadir, ground only | 3500 m | 132 (116, 7, 5, 4) + 3 L0 | 209 k | 0.92 px | 3 frames | 0 |
+| View                      | Above ground | Draws: tiles (by LOD) + Regions     | Vertices | Max projected error | Settled after | Background pixels |
+| ------------------------- | -----------: | ----------------------------------- | -------: | ------------------: | ------------: | ----------------: |
+| high altitude             |       3000 m | 38 (22 L0, 7 L1, 5 L2, 4 L3) + 9 L0 |    211 k |             0.86 px |      7 frames |      440126 (sky) |
+| low approach              |         90 m | 425 (393, 14, 10, 8) + 10 L0        |    655 k |             0.74 px |     25 frames |      440806 (sky) |
+| tilted, rolled 35 degrees |        400 m | 450 (415, 12, 18, 5) + 3 L0         |    590 k |             0.98 px |     17 frames |                   |
+| map edge, looking out     |         60 m | 206 (206 L0) + 3 L0                 |    270 k |             0.74 px |      8 frames |                   |
+| nadir, ground only        |       3500 m | 132 (116, 7, 5, 4) + 3 L0           |    209 k |             0.92 px |      3 frames |                 0 |
 
 The projected error counts only units coarser than their source. #124's
 unculled whole-Region mix drew 2311 units (4.0 M vertices) and 1546 (2.5 M) for
@@ -658,9 +679,9 @@ A flight at a steady 60 Hz from 6000 m up and 9.9 km out down to 25 m over a
 1 m source tile (1801 frames, 35 s), starting with nothing resident:
 
 | CPU budget | Frames with missing areas | Frames with stand-ins | Units changed per frame (mean, P95 / P99 / max) | Selection P50 / P95 / P99 | Frame P50 / P95 / P99 / max | Peak resident | Reads | Evictions |
-|---|---:|---:|---|---|---|---:|---:|---:|
-| 512 MiB | 2 (the first two) | 112 | 0.79, 2 / 5 / 257 | 1.19 / 2.39 / 2.60 ms | 5.3 / 10.7 / 16.0 / 538 ms | 104.9 MiB | 2399 | 0 |
-| 64 MiB | 2 (the first two) | 113 | 0.79, 2 / 5 / 257 | 1.22 / 2.50 / 2.70 ms | 5.2 / 10.7 / 18.2 / 569 ms | 64.0 MiB | 2401 | 1005 |
+| ---------- | ------------------------: | --------------------: | ----------------------------------------------- | ------------------------- | --------------------------- | ------------: | ----: | --------: |
+| 512 MiB    |         2 (the first two) |                   112 | 0.79, 2 / 5 / 257                               | 1.19 / 2.39 / 2.60 ms     | 5.3 / 10.7 / 16.0 / 538 ms  |     104.9 MiB |  2399 |         0 |
+| 64 MiB     |         2 (the first two) |                   113 | 0.79, 2 / 5 / 257                               | 1.22 / 2.50 / 2.70 ms     | 5.2 / 10.7 / 18.2 / 569 ms  |      64.0 MiB |  2401 |      1005 |
 
 The worst frames upload a refined level 0 Region's 256 tiles at once (up to
 256 synchronous `CreateMesh` calls with their BLAS); #127's budgeted
@@ -733,21 +754,21 @@ unless noted; development baselines, not budgets). Frame times leave out the
 capture frames. No flight frame called `vkDeviceWaitIdle` or `vkQueueWaitIdle`,
 and no draw met a stale or unfinished mesh:
 
-| Flight | Path | Frame P50 / P95 / P99 / max | `Request` P99 / max | Peak held (+ retiring) | BLAS | Frames with missing areas | Settling |
-|---|---|---|---|---|---:|---|---|
-| approach (as in #125) | raster | 5.6 / 11.6 / 13.0 / 15.5 ms | 0.56 / 2.26 ms | 81.4 MiB | 0 | first 6 | |
-| approach | RT | 7.6 / 11.7 / 14.9 / 25.2 ms | 0.87 / 1.72 ms | 207.7 (+2.6) MiB | 1265 | first 6 | |
-| approach, 64 MiB CPU | raster | 5.6 / 11.5 / 12.4 / 35.8 ms | 0.58 / 2.56 ms | 81.4 MiB | 0 | first 6 | |
-| approach, 48 MiB GPU | raster | 5.5 / 9.0 / 11.1 / 13.8 ms | 0.49 / 2.57 ms | 48.0 MiB | 0 | first 6 | 612 evicted, 470 waits |
-| straight, 250 m/s at 300 m | raster | 8.8 / 12.6 / 14.9 / 20.5 ms | 0.65 / 3.05 ms | 76.4 MiB | 0 | first 11 | |
-| straight | RT | 9.0 / 13.5 / 17.2 / 34.1 ms | 0.91 / 1.64 ms | 195.8 (+2.6) MiB | 1020 | first 11 | |
-| turns, 180 degrees/s at 150 m | raster | 7.6 / 10.6 / 12.9 / 15.0 ms | 0.90 / 2.53 ms | 137.4 MiB | 0 | 251 after settling | first view in 103 frames |
-| turns | RT | 8.9 / 13.8 / 17.1 / 31.4 ms | 1.09 / 1.54 ms | 335.5 (+1.5) MiB | 2884 | 202 after settling | 106 frames |
-| turns, 64 MiB prefetch | raster | 8.6 / 11.7 / 13.6 / 16.3 ms | 2.15 / 4.11 ms | 172.0 MiB | 0 | 39 after settling | 95 frames |
-| teleport to 4 corners every 2.5 s | raster | 9.4 / 12.1 / 14.5 / 17.5 ms | 2.92 / 4.34 ms | 110.3 MiB | 0 | 40 | 13 to 33 frames a jump |
-| teleport | RT | 9.1 / 15.2 / 17.0 / 25.6 ms | 1.59 / 2.07 ms | 282.4 (+1.5) MiB | 3720 | 94 | 29 to 55 frames |
-| scene unload midway | raster | 7.7 / 9.5 / 11.7 / 13.4 ms | 1.48 / 3.67 ms | 71.9 MiB | 0 | 14 | 15 frames after the unload |
-| scene unload | RT | 8.3 / 13.8 / 16.3 / 18.7 ms | 1.03 / 1.72 ms | 180.8 (+1.5) MiB | 1055 | 14 | 33 frames |
+| Flight                            | Path   | Frame P50 / P95 / P99 / max | `Request` P99 / max | Peak held (+ retiring) | BLAS | Frames with missing areas | Settling                   |
+| --------------------------------- | ------ | --------------------------- | ------------------- | ---------------------- | ---: | ------------------------- | -------------------------- |
+| approach (as in #125)             | raster | 5.6 / 11.6 / 13.0 / 15.5 ms | 0.56 / 2.26 ms      | 81.4 MiB               |    0 | first 6                   |                            |
+| approach                          | RT     | 7.6 / 11.7 / 14.9 / 25.2 ms | 0.87 / 1.72 ms      | 207.7 (+2.6) MiB       | 1265 | first 6                   |                            |
+| approach, 64 MiB CPU              | raster | 5.6 / 11.5 / 12.4 / 35.8 ms | 0.58 / 2.56 ms      | 81.4 MiB               |    0 | first 6                   |                            |
+| approach, 48 MiB GPU              | raster | 5.5 / 9.0 / 11.1 / 13.8 ms  | 0.49 / 2.57 ms      | 48.0 MiB               |    0 | first 6                   | 612 evicted, 470 waits     |
+| straight, 250 m/s at 300 m        | raster | 8.8 / 12.6 / 14.9 / 20.5 ms | 0.65 / 3.05 ms      | 76.4 MiB               |    0 | first 11                  |                            |
+| straight                          | RT     | 9.0 / 13.5 / 17.2 / 34.1 ms | 0.91 / 1.64 ms      | 195.8 (+2.6) MiB       | 1020 | first 11                  |                            |
+| turns, 180 degrees/s at 150 m     | raster | 7.6 / 10.6 / 12.9 / 15.0 ms | 0.90 / 2.53 ms      | 137.4 MiB              |    0 | 251 after settling        | first view in 103 frames   |
+| turns                             | RT     | 8.9 / 13.8 / 17.1 / 31.4 ms | 1.09 / 1.54 ms      | 335.5 (+1.5) MiB       | 2884 | 202 after settling        | 106 frames                 |
+| turns, 64 MiB prefetch            | raster | 8.6 / 11.7 / 13.6 / 16.3 ms | 2.15 / 4.11 ms      | 172.0 MiB              |    0 | 39 after settling         | 95 frames                  |
+| teleport to 4 corners every 2.5 s | raster | 9.4 / 12.1 / 14.5 / 17.5 ms | 2.92 / 4.34 ms      | 110.3 MiB              |    0 | 40                        | 13 to 33 frames a jump     |
+| teleport                          | RT     | 9.1 / 15.2 / 17.0 / 25.6 ms | 1.59 / 2.07 ms      | 282.4 (+1.5) MiB       | 3720 | 94                        | 29 to 55 frames            |
+| scene unload midway               | raster | 7.7 / 9.5 / 11.7 / 13.4 ms  | 1.48 / 3.67 ms      | 71.9 MiB               |    0 | 14                        | 15 frames after the unload |
+| scene unload                      | RT     | 8.3 / 13.8 / 16.3 / 18.7 ms | 1.03 / 1.72 ms      | 180.8 (+1.5) MiB       | 1055 | 14                        | 33 frames                  |
 
 The approach flight is the one #125 measured with synchronous uploads (frame
 P99 16.0 ms, max 538 ms): the frame that replaces a level 0 Region by its 256
@@ -863,14 +884,14 @@ single shape's envelope, about −5 mm to +1.8 mm. The first two columns are P1'
 corner path in 12 headings, the last one 3 sites x 24 headings across whole
 bands:
 
-| Variant | Jumps > 0.3 m/s, largest | Gap | Across bands: jumps, largest |
-|---|---|---|---|
-| one shape (P1) | 0, 0.135 m/s | −4.6 to +1.8 mm | 0, 0.163 m/s |
-| a body per tile, shared range | 11, 2.82 m/s | −20.1 to +22.8 mm | 34, 1.88 m/s |
-| bodies overlapping 1 / 8 cells | 17 / 11, 2.97 / 2.80 m/s | to +22 mm | 34 / 38 |
-| `MutableCompoundShape`, adjacent / 1 cell | 11 / 17, 2.8 m/s | to +23 mm | 33 / 33 |
-| compound, 8 cells overlap | 0, 0.134 m/s | −4.6 to +1.8 mm | 4, 0.82 m/s |
-| overlap 5 or 8 cells, shared range, one owner (chosen) | 0, 0.135 m/s | −4.6 to +1.8 mm | 0, 0.163 m/s |
+| Variant                                                | Jumps > 0.3 m/s, largest | Gap               | Across bands: jumps, largest |
+| ------------------------------------------------------ | ------------------------ | ----------------- | ---------------------------- |
+| one shape (P1)                                         | 0, 0.135 m/s             | −4.6 to +1.8 mm   | 0, 0.163 m/s                 |
+| a body per tile, shared range                          | 11, 2.82 m/s             | −20.1 to +22.8 mm | 34, 1.88 m/s                 |
+| bodies overlapping 1 / 8 cells                         | 17 / 11, 2.97 / 2.80 m/s | to +22 mm         | 34 / 38                      |
+| `MutableCompoundShape`, adjacent / 1 cell              | 11 / 17, 2.8 m/s         | to +23 mm         | 33 / 33                      |
+| compound, 8 cells overlap                              | 0, 0.134 m/s             | −4.6 to +1.8 mm   | 4, 0.82 m/s                  |
+| overlap 5 or 8 cells, shared range, one owner (chosen) | 0, 0.135 m/s             | −4.6 to +1.8 mm   | 0, 0.163 m/s                 |
 
 Separate bodies snag because another body's boundary edges are active edges
 that enhanced internal edge removal cannot void. A compound fails across the
@@ -890,10 +911,10 @@ single shape's own spread, widened by that spread. Every run of either keeps
 step jumps within 0.3 m/s, and on P1's corner path pieces equal the single
 shape exactly:
 
-| Build | P1 corner, one shape = pieces | Lowest gap, one shape / pieces: hand-over bands | wider bands | Largest jump, pieces |
-|---|---|---|---|---|
-| Release | 0.1345 m/s, −4.567 to +1.834 mm | −10.86 / −10.91, −10.85 / −10.69 mm | −19.04 / −18.37, −3.98 / −3.98 mm | 0.149 m/s |
-| Debug | 0.1350 m/s, −5.004 to +1.830 mm | −10.82 / −10.87, −10.83 / −10.70 mm | −18.49 / −20.10, −3.95 / −3.95 mm | 0.151 m/s |
+| Build   | P1 corner, one shape = pieces   | Lowest gap, one shape / pieces: hand-over bands | wider bands                       | Largest jump, pieces |
+| ------- | ------------------------------- | ----------------------------------------------- | --------------------------------- | -------------------- |
+| Release | 0.1345 m/s, −4.567 to +1.834 mm | −10.86 / −10.91, −10.85 / −10.69 mm             | −19.04 / −18.37, −3.98 / −3.98 mm | 0.149 m/s            |
+| Debug   | 0.1350 m/s, −5.004 to +1.830 mm | −10.82 / −10.87, −10.83 / −10.70 mm             | −18.49 / −20.10, −3.95 / −3.95 mm | 0.151 m/s            |
 
 The gate's figures are P1's own Debug measurement of this path rounded to
 0.1 mm (ADR 0017), so the single shape itself sits on them. Away from the
@@ -1086,10 +1107,10 @@ do not require a game's generated files or a fixed locally minted release id.
 
 A game's terrain has three places with separate lifetimes:
 
-| What | Where | Lifetime |
-|---|---|---|
-| source recipe | `games/<G>/<assetsRoot>/terrain/<name>.terrain.json` | tracked in git; its path is the asset's identity |
-| candidate | the build directory (`builds/<preset>/terrain/<G>/<name>/`) | replaced by the next bake |
+| What               | Where                                                                                       | Lifetime                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| source recipe      | `games/<G>/<assetsRoot>/terrain/<name>.terrain.json`                                        | tracked in git; its path is the asset's identity                                                                                     |
+| candidate          | the build directory (`builds/<preset>/terrain/<G>/<name>/`)                                 | replaced by the next bake                                                                                                            |
 | published releases | `games/<G>/terrain/releases/<assetIdHex16>/<releaseIdHex16>/` plus `<assetIdHex16>/current` | git-ignored; only ever added to; never cooked or watched; a build without the editor packages the current one next to the executable |
 
 `terrain/TerrainAssetPath.h` holds the rule both TerrainTool and the engine
@@ -1131,7 +1152,7 @@ TerrainTool package --id-root <logical root> --source-path <relative path>
   `MakeAssetId(MakeLogicalAssetPath(idRoot, sourcePath))` a cooked asset at
   that place would get, for a path ending in `.terrain.json` (spelled exactly
   so). For `games/G/assets/terrain/hills.terrain.json` pass `--id-root
-  games/G/assets --source-path terrain/hills.terrain.json`. `--recipe` is the
+games/G/assets --source-path terrain/hills.terrain.json`. `--recipe` is the
   file to read and may live anywhere (tests use fixtures), but when its name
   on disk differs from `--source-path`'s only in case, the command refuses:
   ids keep case, so it would publish an asset no reference spelled like the
@@ -1157,24 +1178,29 @@ TerrainTool package --id-root <logical root> --source-path <relative path>
   index's settings and must match byte for byte; a recipe-backed candidate
   must have one), and identity (manifest against index; with `--recipe`,
   fingerprint and layout).
-- **publish** validates the candidate (with `candidate.json`), takes the
-  asset's lock (`<asset>/.publish.lock`, opened exclusively; the OS drops it
-  if the process dies), removes `.partial` directories earlier publishes left,
-  copies only the files `candidate.json` lists into
+- **publish** validates the candidate's integrity (with `candidate.json`):
+  manifest, stray files, format, index, whole packs, the file sizes and
+  Fnv1a64 the manifest records, and identity. It does not decode payloads,
+  rederive Regions or check continuity; bake and `validate` check the contents.
+  It takes the asset's lock (`<asset>/.publish.lock`, opened exclusively; the
+  OS drops it if the process dies), removes `.partial` directories earlier
+  publishes left, copies only the files `candidate.json` lists into
   `<asset>/<releaseIdHex16>.partial/` (each checked against its recorded size
-  and Fnv1a64, then flushed to disk), validates the copy again and compares
-  checksums, renames it to `<asset>/<releaseIdHex16>/` (failing if that
-  exists), and only then replaces `current` (`current.tmp`, flushed, renamed
-  over it). Until that last rename the old `current` and every release are
-  untouched; a release that is renamed but never made current stays as an
-  unused directory. Another publisher of the same asset makes it fail at once.
+  and Fnv1a64, then flushed to disk), checks the copy's file checksums and
+  that its index names the same release, renames it to
+  `<asset>/<releaseIdHex16>/` (failing if that exists), and only then replaces
+  `current` (`current.tmp`, flushed, renamed over it). Until that last rename
+  the old `current` and every release are untouched; a release that is renamed
+  but never made current stays as an unused directory. Another publisher of
+  the same asset makes it fail at once.
 - **sync** is what the build runs for every recipe. Under the same lock it
   compares the recipe with the current release (pointer, index, source
   fingerprint, format and minor, content version, pack sizes) and stops there
   when they match. Otherwise it deletes its own old candidate (only a
-  directory holding nothing but candidate files), bakes, validates and
-  publishes. It waits up to 10 minutes for the lock, so Debug and Release
-  builds of one tree can run at once: the second finds the asset current.
+  directory holding nothing but candidate files), bakes and validates it, then
+  publishes it with the integrity checks above. It waits up to 10 minutes for
+  the lock, so Debug and Release builds of one tree can run at once: the
+  second finds the asset current.
 - **package** copies one asset from `--game-dir`'s releases to `--out`'s
   (`TerrainReleasesRoot` of each; neither may contain the other). Under the
   output asset's lock it stops when the output's `current` already names the
@@ -1373,15 +1399,15 @@ Fine layers may be sparse. Every map tile has exactly one `source` Height
 record, which must be its finest baked record. Additional coarse Height
 payloads have `source=false` and may carry a measured `maxDeviation`.
 
-| Block | Bytes | Fields (offset type name) |
-|---|---|---|
-| Index header | 152 | 0 `"MJTI"`, 4 u32 major, 8 u32 minor, 12 u32 headerSize, 16 u32 contentVersion, 20 u32 alignment, 24 u64 asset, 32 u64 release, 40 u64 sourceFingerprint, 48 f64 reference spacing, 56 i32 intervals, 60 i32 chunkTiles, 64/72/80/88 f64 bounds, 96/100 u32 pack count/size, 104/108 u32 payload count/size, 112 u64 heightsHash, 120/124 u32 layer count/size; minor 2: 128/132 u32 Region count/size, 136 u32 Region tiles (0: no Regions), 140 u32 cells, 144 u32 unit, 148 u32 levels (minors 0 and 1 end at 128) |
-| Pack record | 32 | 0/4 i32 chunk, 8 u32 payloadCount (tile and Region payloads), 12 reserved, 16 u64 fileSize, 24 u64 checksum |
-| Payload record | 144 | 0/4 i32 tile, 8 u32 pack, 12 u32 samplesPerSide, 16/24/32 u64 offset/length/checksum, 40 f64 spacing, 48/52 f32 min/max, 56/64/72/80 f64 extent, 88 u32 layer, 92 u32 kind, 96 u32 level, 100 u32 source flag, 104 u32 deviation flag, 108 reserved, 112 f64 deviation; minor 1: 120/128 u64 sourceChecksum/topologyHash, 136/140 u32 vertex/index count |
-| Layer record | 16 | 0 f64 spacing, 8 i32 intervalsPerTile, 12 reserved |
-| Region record | 144 | the payload record: Region x/z in tile, level, layer 0, kind 3, spacing = widest cell, samplesPerSide = cells + 1, extent = valid extent, min/max of the mesh, deviation required, sourceChecksum = Fnv1a64 of its map tiles' (x, z, source checksum) |
-| Pack header | 48 | 0 `"MJTP"`, 4/8/12 u32 major/minor/headerSize, 16/24 u64 asset/release, 32/36 i32 chunk, 40/44 u32 payloadCount/contentVersion |
-| Region payload | 112 + 24 V + 4 I | 0 `"RGN1"`, 4 u32 content version, 8 u32 level, 12/16 i32 x/z, 24/32 f64 origin x/z, 40 f64 cell spacing, 48..60 i32 map tile range, 64/72 u64 source checksum/topology hash, 80/84 u32 V/I, 88 f64 deviation; then V float3 positions, V float3 normals, I u32 indices |
+| Block          | Bytes            | Fields (offset type name)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Index header   | 152              | 0 `"MJTI"`, 4 u32 major, 8 u32 minor, 12 u32 headerSize, 16 u32 contentVersion, 20 u32 alignment, 24 u64 asset, 32 u64 release, 40 u64 sourceFingerprint, 48 f64 reference spacing, 56 i32 intervals, 60 i32 chunkTiles, 64/72/80/88 f64 bounds, 96/100 u32 pack count/size, 104/108 u32 payload count/size, 112 u64 heightsHash, 120/124 u32 layer count/size; minor 2: 128/132 u32 Region count/size, 136 u32 Region tiles (0: no Regions), 140 u32 cells, 144 u32 unit, 148 u32 levels (minors 0 and 1 end at 128) |
+| Pack record    | 32               | 0/4 i32 chunk, 8 u32 payloadCount (tile and Region payloads), 12 reserved, 16 u64 fileSize, 24 u64 checksum                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Payload record | 144              | 0/4 i32 tile, 8 u32 pack, 12 u32 samplesPerSide, 16/24/32 u64 offset/length/checksum, 40 f64 spacing, 48/52 f32 min/max, 56/64/72/80 f64 extent, 88 u32 layer, 92 u32 kind, 96 u32 level, 100 u32 source flag, 104 u32 deviation flag, 108 reserved, 112 f64 deviation; minor 1: 120/128 u64 sourceChecksum/topologyHash, 136/140 u32 vertex/index count                                                                                                                                                              |
+| Layer record   | 16               | 0 f64 spacing, 8 i32 intervalsPerTile, 12 reserved                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Region record  | 144              | the payload record: Region x/z in tile, level, layer 0, kind 3, spacing = widest cell, samplesPerSide = cells + 1, extent = valid extent, min/max of the mesh, deviation required, sourceChecksum = Fnv1a64 of its map tiles' (x, z, source checksum)                                                                                                                                                                                                                                                                 |
+| Pack header    | 48               | 0 `"MJTP"`, 4/8/12 u32 major/minor/headerSize, 16/24 u64 asset/release, 32/36 i32 chunk, 40/44 u32 payloadCount/contentVersion                                                                                                                                                                                                                                                                                                                                                                                        |
+| Region payload | 112 + 24 V + 4 I | 0 `"RGN1"`, 4 u32 content version, 8 u32 level, 12/16 i32 x/z, 24/32 f64 origin x/z, 40 f64 cell spacing, 48..60 i32 map tile range, 64/72 u64 source checksum/topology hash, 80/84 u32 V/I, 88 f64 deviation; then V float3 positions, V float3 normals, I u32 indices                                                                                                                                                                                                                                               |
 
 Tables follow header, packs, payloads, layers, Regions (minor 2), optional
 extension bytes and an 8-byte FNV64 trailer. Payload keys sort by
@@ -1455,7 +1481,9 @@ seam next to an unreadable tile is reported as not checked, never as passing.
 (#113) evaluates each sample at `SamplePosition(i)` in double and rounds once to
 float, with no per-tile state, so neighbours share edge and corner samples bit
 for bit and tile order cannot change a sample. Its output is source height, not
-the final height a release stores (#114, #115).
+the final height a release stores (#114, #115). `mir.heightmap` keeps this rule:
+each sample reads its grid position from the MHGT file, exactly on the file's
+samples, and clamps at the file's edge for a coarse grid's filter ring.
 
 **Terrain-local and world convert only through core.** `AddressWorld` and the
 height query use `TryWorldToTerrainLocal`, and the query places its surface
@@ -1645,7 +1673,7 @@ while its queued bytes are below the same budget.
 
 ## State
 
-*As of 2026-10-13.* Format 2 supports sparse layers, independent payload
+_As of 2026-10-13._ Format 2 supports sparse layers, independent payload
 ranges and unique per-tile source records (#145). Recipes and runtime meshes
 still use one layer until the remaining P2 issues are integrated. See
 local validation notes for validation and full-map measurements.
@@ -1863,7 +1891,18 @@ applies on next registration, rebuild or restart. Because: an edit to a budget o
 detail bound could not reach a running World, and nothing said which settings could
 ever be applied.
 
-*2026-10-31* — **Terrain follows the renderer's upload budget (#359).** Was:
+_2026-10-31_ — **Authored heights through `mir.heightmap`.** Was: `mir.relief`
+was the only generator. Now: a recipe can name an MHGT file by relative
+`parameters.source` and FNV-1a 64 `parameters.contentHash`. The fingerprint
+holds the hash, not the path, so moving the file does not rebake. Only a bake
+reads the file, so `sync` with a current release needs no source; a missing or
+mismatched file fails `generate` with its reason. Relief fingerprints are
+unchanged. See `TerrainHeightSource.h` for the format. The `TerrainTool`
+command line also prints timed stage and percent progress to stdout
+(`TerrainProgress.h`); library callers stay silent. Validation rebuilds regions
+and repeats those stages.
+
+_2026-10-31_ — **Terrain follows the renderer's upload budget (#359).** Was:
 `gpu.uploadMiBPerFrame` in `terrain_streaming.json` set the renderer's per-frame
 budget and `gpu.stagingMiB` configured its ring, and terrain drew nothing if
 that configuration was refused. Now: the budget is the game's
@@ -1877,7 +1916,7 @@ and set `rendering.uploadMiBPerFrame` instead. Because: terrain is one consumer
 of an upload path every asset shares, so it cannot own the number, and a game
 that streams a large terrain needs that number in its project settings.
 
-*2026-10-13* — **Release switches checked and prewarmed off the main thread
+_2026-10-13_ — **Release switches checked and prewarmed off the main thread
 (#129).** Was: in Edit the poll adopted a moved `current` at once, opening the
 new index on the main thread, and `PlayScene` and `StopScene` did the same; a
 new Eager release with a damaged payload failed where it was used, with the old
@@ -1892,7 +1931,7 @@ until Stop. `TerrainReleaseHandle::VerifyPack`, `ListTerrainReleases`, staged
 `Usage(release)` on the three residencies and `discarded` counts on the mesh and
 collision stats are new.
 
-*2026-10-12* — **Collision residency (#128).** Was: app built one height field
+_2026-10-12_ — **Collision residency (#128).** Was: app built one height field
 over a whole Eager instance at load, the engine waited for every Eager release
 at load, on Play entry and at an Edit switch, an Interest release had no
 collider, every instance built its own shape, and `TerrainCollisionPolicy` had
@@ -1905,7 +1944,7 @@ resolves with `TerrainEagerLoad::Async`. `TerrainStreamingSettings` gains the
 `collision` section, which also holds the policy's spacings and error.
 TerrainCheck gains `StreamedSphere` on its streamed map.
 
-*2026-10-11* — **GPU meshes within budgets and without waits (#127).** Was: app
+_2026-10-11_ — **GPU meshes within budgets and without waits (#127).** Was: app
 built a drawn unit's mesh on the main thread and uploaded it with the
 synchronous `CreateMesh` (a BLAS on any RT device), counted a unit ready once its
 payloads were resident, and destroyed unused meshes with a device wait. Now:
@@ -1916,7 +1955,7 @@ terrain gets a BLAS only while the project traces. `view.meshRetainSeconds`
 moved to `gpu.meshRetainSeconds`; `BuildTestLods` moved to the shared test
 support.
 
-*2026-10-10* — **Per-viewport tile and Region selection (#125).** Was: app drew
+_2026-10-10_ — **Per-viewport tile and Region selection (#125).** Was: app drew
 every tile of an Eager release at its source LOD in every view, Regions were
 never drawn and an Interest release did not load. Now: `TerrainViewSelector`
 chooses each viewport's tiles and whole Regions from the indexed error bounds
@@ -1927,7 +1966,7 @@ viewport (renderer `ViewDrawSources`) and loads Interest releases without a
 collider. `TerrainStreamingSettings` gains the `view` section. TerrainCheck
 streams a second, 16 x 16 tile map by interest under a 16 MiB budget.
 
-*2026-10-10* — **Asynchronous range reads and CPU residency (#126).** Was:
+_2026-10-10_ — **Asynchronous range reads and CPU residency (#126).** Was:
 `ResolveTerrainWorld` read every pack whole (`VerifyAllPacks`) and preloaded
 every tile on the main thread, and nothing took the height query's payload
 requests. Now: a `TerrainStreamer` merges wants from interests, Eager releases
@@ -1942,7 +1981,7 @@ until #128) and builds meshes from resident payloads. `TerrainHeightQuery`
 gains `Evict` and `TakeUsedTiles`; `TerrainResidentRelease::Load` became
 `Open` (index only) and `Create`.
 
-*2026-10-09* — **Region coarse hierarchy (#124).** Format 2.2: the index header
+_2026-10-09_ — **Region coarse hierarchy (#124).** Format 2.2: the index header
 gains the Region settings and a Region table; every Region payload (positions,
 normals, indices, provenance, error) is one aligned range in the pack of its
 first map tile, addressed by level and Region coordinate. TerrainTool bakes
@@ -1951,26 +1990,26 @@ level 0 = 16 tiles with 128 cells (prototype in
 reports Regions in a `regions` check and report section (tool 8, report 6),
 and sync rebakes older releases. Format hashes pin the generated test fixture.
 
-*2026-10-08* — **Recorded measured P1/P2 sizes ([#24](https://github.com/GAM550F26/alpha/issues/24)).**
+_2026-10-08_ — **Recorded measured P1/P2 sizes ([#24](https://github.com/GAM550F26/alpha/issues/24)).**
 Accepted 256 m logical tiles and 4096 m chunks as revisable engine-development
 defaults, using measurements collected on 2026-10-03 for sample/mesh memory,
 pinned-Jolt padding/boundaries, chunk grouping and file reads. Render Regions,
 physics areas and P3 streaming budgets remain independent. This is a
 documentation decision; the production terrain runtime is unchanged.
 
-*2026-10-06* — **Sparse format 2 releases (#145).** One unique source per tile,
+_2026-10-06_ — **Sparse format 2 releases (#145).** One unique source per tile,
 nested layer grids, independent payload keys/ranges and per-tile deviation
 bounds; v1 readers/writers removed. Candidate manifest and sync use format 2.
 All four build presets pass; full-map index measurements are recorded in
 local validation notes.
 
-*2026-10-03* — **A build without the editor packages terrain (#116).** Was: no
+_2026-10-03_ — **A build without the editor packages terrain (#116).** Was: no
 packaging step, so the `windows-msvc-game-*` builds, which read `games/` next
 to the executable, would find no release. Now: `TerrainTool package` copies
 each recipe's current release and a `current` naming it there, and removes
 older copies; publish and package share `InstallTerrainRelease`.
 
-*2026-10-02* — **Scenes hold terrain, and Play pins its release (#118).** Was:
+_2026-10-02_ — **Scenes hold terrain, and Play pins its release (#118).** Was:
 nothing in a scene referred to terrain, and nothing in the engine opened a
 published release. Now: the `TerrainInstance` component (recipe path; the root
 entity's position is the placement), `CollectTerrainScene` and
@@ -1980,7 +2019,7 @@ preload, reuse what is pinned), the `TerrainWorld` World resource with
 and `BuildTerrainAreaSamples` for one collider over the map. App builds meshes
 and height fields from it and swaps them only at Edit frame boundaries.
 
-*2026-10-02* — **Published releases and the shared path rule (#116).**
+_2026-10-02_ — **Published releases and the shared path rule (#116).**
 `terrain/TerrainAssetPath.h` adds `ResolveTerrainAssetPath`,
 `TerrainReleasesRoot` and `IsTerrainFileExcludedFromCook`, used by TerrainTool,
 AssetCooker and (with #118) the engine. TerrainTool gains `publish` (copy,
@@ -1989,49 +2028,49 @@ release) and `sync`, which every build runs per game recipe. AssetCooker no
 longer cooks `.terrain.json`, `.tindex`, `.tpack` or anything under
 `terrain/releases`; `games/*/terrain/releases/` is git-ignored.
 
-*2026-10-02* — **TerrainTool bake and validate (#115).** `tools/TerrainTool/`
+_2026-10-02_ — **TerrainTool bake and validate (#115).** `tools/TerrainTool/`
 adds the headless `TerrainTool` executable and, in `terrain_bake`, the bake
 (recipe to final heights to a release id minted once to an encoded candidate
 written through a `.partial` directory) and the validation (reader integrity,
 coverage, finite heights, bit-identical seams and surface probes, identity)
 with a JSON report. No change to the module itself.
 
-*2026-10-02* — **Static height fields (#16).** Physics builds a Jolt height
+_2026-10-02_ — **Static height fields (#16).** Physics builds a Jolt height
 field from a block of these samples (`PhysicsWorld::CreateStaticHeightField`).
 No change to the module itself; the physics tests use it to compute the
 expected surface.
 
-*2026-10-02* — **Resident height query (#117).** Was: heights came only from
+_2026-10-02_ — **Resident height query (#117).** Was: heights came only from
 `EvaluateSurface` over samples a caller supplied, and a temporary analytic mock
 source (#110) stood in for real data. Now: `TerrainHeightQuery` holds one
 release's tiles and answers with status, spacing, source spacing, release
 identity and a known or unknown error, records missing payloads for a loader,
 and never reads files. The mock source and its tests are deleted.
 
-*2026-10-02* — **Tile raster meshes (#14).** Was: nothing turned samples into
+_2026-10-02_ — **Tile raster meshes (#14).** Was: nothing turned samples into
 geometry. Now: `BuildTerrainTileMesh` makes a tile's fixed-LOD mesh from one
 release's samples with `TriangulateCell` indices, tile-relative float vertices,
 central-difference normals that read the edge neighbours, bounds, and the
 release and surface version it came from. The module still has no renderer
 types; `app` uploads the mesh.
 
-*2026-10-01* — **Canonical surface (#114).** `TerrainSurface`: fixed-diagonal
+_2026-10-01_ — **Canonical surface (#114).** `TerrainSurface`: fixed-diagonal
 triangles over final samples, shared by query, mesh and collision, with
 `kTerrainSurfaceVersion` 1 and a tolerance of half a float32 ulp.
 
-*2026-10-01* — **Source recipe and generator (#113).** `tools/TerrainTool/`
+_2026-10-01_ — **Source recipe and generator (#113).** `tools/TerrainTool/`
 adds `terrain_bake`: recipe validation that names every bad field, the source
 fingerprint, and a deterministic generator filling tile blocks on this grid.
 No change to the module itself.
 
-*2026-10-01* — **Versioned tile packs and a range reader (#112).** Was: release
+_2026-10-01_ — **Versioned tile packs and a range reader (#112).** Was: release
 ids and format versions had types but no values, and nothing stored heights.
 Now: `TileHeights`, the format 1.0 index and pack layout, an in-memory encoder,
 release-id minting, and `TerrainReleaseHandle`, which reads one tile's byte
 range and checks it. The module now reads files, through core FileIO and only
 in the release reader; it still writes none.
 
-*2026-09-30* — **Module created (#110).**
+_2026-09-30_ — **Module created (#110).**
 
 ## P2 #144: Lua height queries
 

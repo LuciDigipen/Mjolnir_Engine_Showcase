@@ -15,6 +15,10 @@
 
 #include "PbrCommon.slang"
 #include "SurfaceCommon.slang"
+#include "RayPayload.slang"
+#ifdef MIR_DDGI
+#include "ProbePayload.slang"
+#endif
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure gSurfaceTlas;
 
@@ -38,20 +42,11 @@ struct RtInstanceInfo
     uint materialRecord;
     float alphaCutoff;
     float pad0;
-    float pad1;
-    float pad2;
+    float *previousVertexAddress;
     float4x4 prevModel;
     float4 modelCol0;
     float4 modelCol1;
     float4 modelCol2;
-};
-
-struct RayPayload
-{
-    float3 color;
-    float distance;
-    float hardwareDepth;
-    float2 velocity;
 };
 
 struct ShadowPayload
@@ -64,12 +59,15 @@ struct RtPushConstants
     uint2 outputOffset;
     uint aaMode;
     uint sampleCount;
+#ifdef MIR_DDGI
+    float giIntensity;
+    float giWeight;
+#endif
 };
 
 [[vk::push_constant]] RtPushConstants pushData;
 
 static const uint kInstanceRasterFacingCorrection = 32u;
-static const uint kAaModeDlss = 3u;
 static const uint kVertexStrideFloats = 16;
 static const uint kColorOffset = 3;
 static const uint kNormalOffset = 6;
@@ -166,10 +164,26 @@ float UvDensity(RtInstanceInfo info, uint3 indices, float3 op0, float3 op1, floa
     return SurfaceUvDensity(e1, e2, uv0, uv1, uv2);
 }
 
+#ifdef MIR_DDGI_PROBE
+typedef ProbePayload SurfacePayload;
+#else
+typedef RayPayload SurfacePayload;
+#endif
+
 [shader("closesthit")]
-void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
     const RtInstanceInfo info = gInstances[InstanceID()];
+    bool frontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
+        frontFace = !frontFace;
+#ifdef MIR_DDGI_PROBE
+    // Relocation/classification need the same facing the raster path sees.
+    payload.distance = RayTCurrent();
+    payload.kind = frontFace ? HIT_KIND_TRIANGLE_FRONT_FACE : HIT_KIND_TRIANGLE_BACK_FACE;
+    if (!frontFace || DispatchRaysIndex().x < kFixedProbeRays)
+        return;
+#endif
     const float3 barycentrics = Barycentrics(attribs);
     const uint3 indices = TriangleIndices(info);
 
@@ -184,9 +198,6 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
         info.normalCol0.xyz * objNormal.x + info.normalCol1.xyz * objNormal.y + info.normalCol2.xyz * objNormal.z,
         float3(0.0, 1.0, 0.0));
     const float3 geometricNormal = FaceNormal(info, op0, op1, op2);
-    bool frontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
-    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
-        frontFace = !frontFace;
 
     const float4 vertexColor = float4(InterpolateFloat3(info, indices, barycentrics, kColorOffset),
         InterpolateFloat(info, indices, barycentrics, kAlphaOffset));
@@ -200,7 +211,12 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     context.rayTraced = true;
     context.uvDx = float2(0.0, 0.0);
     context.uvDy = float2(0.0, 0.0);
+#ifdef MIR_DDGI_PROBE
+    // Probe filtering is independent of the camera lens and resolution.
+    context.footprintMeters = RayTCurrent() * 0.01 / cosIncidence;
+#else
     context.footprintMeters = RayTCurrent() * rayCone.x / cosIncidence;
+#endif
     context.incidence = cosIncidence;
     context.uvDensity = uvDensity;
 
@@ -213,16 +229,35 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     visibility.origin = hitWorldPos + geometricNormal *
                                           max(kShadowNormalBias, length(hitWorldPos) * kShadowNormalBiasPerDistance);
 
+#ifdef MIR_DDGI_PROBE
+    const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, hitWorldPos);
+    payload.radiance = lighting.diffuseDirect + lighting.emissive;
+    payload.diffuseReflectance = min(surface.albedo * (1.0 - surface.f0), float3(0.9)) * surface.ao;
+    payload.geometricNormal = FaceNormal(info, op0, op1, op2);
+    payload.materialHit = 1;
+#else
     const float3 lit = ShadePbr(visibility, surface, hitWorldPos);
+#ifdef MIR_DDGI
+    // Sample in raygen so generic material specialization stays SDK-independent.
+    payload.giDiffuse = surface.albedo * (1.0 - surface.f0) * surface.ao;
+    payload.giAmbient = surface.albedo * surface.ao * ambientColor.rgb;
+    payload.giNormal = FaceNormal(info, op0, op1, op2);
+    payload.materialGi = 1;
+    payload.color = lit;
+#else
     payload.color = ApplyFog(lit, RayTCurrent());
+#endif
     payload.distance = RayTCurrent();
 
     const float4 currClip = mul(viewProj, float4(hitWorldPos, 1.0));
     payload.hardwareDepth = saturate(currClip.z / currClip.w);
-    const float4 prevClip = mul(prevViewProj, mul(info.prevModel, float4(objectPos, 1.0)));
+    RtInstanceInfo previousInfo = info;
+    previousInfo.vertexAddress = info.previousVertexAddress;
+    const float3 previousObjectPos = InterpolateFloat3(previousInfo, indices, barycentrics, 0);
+    const float4 prevClip = mul(prevViewProj, mul(info.prevModel, float4(previousObjectPos, 1.0)));
     payload.velocity = (currClip.xy / currClip.w) - (prevClip.xy / prevClip.w);
 
-    if (pushData.aaMode == kAaModeDlss)
+    if (payload.writeGuides != 0)
     {
         const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
         const float3 viewDir = normalize(cameraPos.xyz - hitWorldPos);
@@ -232,4 +267,6 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
             float4(SpecularAlbedoGuide(surface.f0.xxx, surface.roughness * surface.roughness, NoV), 1.0);
         gNormal[guidePixel] = float4(surface.normalWS, surface.roughness);
     }
+#endif // camera payload
+
 }

@@ -26,6 +26,7 @@
 #include "NgxIdentity.h"
 
 #include <format>
+#include <algorithm>
 
 namespace mir::vk
 {
@@ -99,6 +100,24 @@ namespace mir::vk
         DestroyOutputImages();
     }
 
+    void DlssRayReconstruction::SetOptions(bool rayReconstruction, DlssRrPreset preset)
+    {
+        preset = preset == DlssRrPreset::D ? DlssRrPreset::D : DlssRrPreset::E;
+        // DLAA needs the separate Super Sampling feature; without it RR stays on.
+        if (!rayReconstruction && mDevice != nullptr && !mDevice->NgxDlaaSupported())
+            rayReconstruction = true;
+        const bool recreate = rayReconstruction != mRayReconstruction ||
+            (rayReconstruction && preset != mPreset);
+        mPreset = preset;
+        if (!recreate) return;
+        if (mHandle != nullptr) mDevice->WaitIdle();
+        DestroyFeature();
+        mRayReconstruction = rayReconstruction;
+        mResetHistory = true;
+        MIR_LOG_INFO("DLSS: Ray Reconstruction {}, RR preset {}",
+            mRayReconstruction ? "on" : "off (DLAA)", ToString(mPreset));
+    }
+
     bool DlssRayReconstruction::CreateOutputImages(VkExtent2D extent)
     {
         for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
@@ -136,19 +155,39 @@ namespace mir::vk
         createParams.InEnableOutputSubrects = true;
 
         bool ok = false;
-        NVSDK_NGX_Parameter_SetUI(mParams, NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_DLAA,
-            NVSDK_NGX_RayReconstruction_Hint_Render_Preset_D);
+        if (mRayReconstruction)
+            NVSDK_NGX_Parameter_SetUI(mParams, NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_DLAA,
+            mPreset == DlssRrPreset::D ? NVSDK_NGX_RayReconstruction_Hint_Render_Preset_D :
+                NVSDK_NGX_RayReconstruction_Hint_Render_Preset_E);
         const bool submitted = SubmitAndWait(*mDevice, [&](VkCommandBuffer cmd)
             {
-                const NVSDK_NGX_Result result = NGX_VULKAN_CREATE_DLSSD_EXT1(
-                    mDevice->Handle(), cmd, 1, 1, &mHandle, mParams, &createParams);
+                NVSDK_NGX_Result result;
+                if (mRayReconstruction)
+                    result = NGX_VULKAN_CREATE_DLSSD_EXT1(
+                        mDevice->Handle(), cmd, 1, 1, &mHandle, mParams, &createParams);
+                else
+                {
+                    NVSDK_NGX_DLSS_Create_Params dlaa{};
+                    dlaa.Feature.InWidth = extent.width;
+                    dlaa.Feature.InHeight = extent.height;
+                    dlaa.Feature.InTargetWidth = extent.width;
+                    dlaa.Feature.InTargetHeight = extent.height;
+                    dlaa.Feature.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_DLAA;
+                    dlaa.InFeatureCreateFlags = createParams.InFeatureCreateFlags;
+                    dlaa.InEnableOutputSubrects = true;
+                    result = NGX_VULKAN_CREATE_DLSS_EXT1(
+                        mDevice->Handle(), cmd, 1, 1, &mHandle, mParams, &dlaa);
+                }
                 ok = NVSDK_NGX_SUCCEED(result);
                 if (!ok)
-                    MIR_LOG_ERROR("CreateFeature: NGX_VULKAN_CREATE_DLSSD_EXT1 failed: {:#x}",
-                        static_cast<unsigned>(result));
+                    MIR_LOG_ERROR("CreateFeature: NGX {} failed: {:#x}",
+                        mRayReconstruction ? "Ray Reconstruction" : "DLAA", static_cast<unsigned>(result));
             });
         mResetHistory = true;
         mFeatureExtent = extent;
+        if (submitted && ok)
+            MIR_LOG_INFO("DLSS: created {}x{} feature, Ray Reconstruction {}, RR preset {}",
+                extent.width, extent.height, mRayReconstruction ? "on" : "off (DLAA)", ToString(mPreset));
         return submitted && ok;
     }
 
@@ -160,6 +199,7 @@ namespace mir::vk
             mHandle = nullptr;
         }
         mFeatureExtent = {};
+        mLastEvaluationTime = {};
     }
 
     bool DlssRayReconstruction::Resize(VkExtent2D extent)
@@ -277,15 +317,50 @@ namespace mir::vk
         evalParams.InRoughnessSubrectBase = base;
         evalParams.InOutputSubrectBase = base;
 
-        const auto result = NGX_VULKAN_EVALUATE_DLSSD_EXT(cmd, mHandle, mParams, &evalParams);
+        // NGX consumes a rendered-frame interval, including time spent waiting
+        // for the previous frame. Restarts/cuts use a neutral first-frame interval.
+        const auto evaluationTime = std::chrono::steady_clock::now();
+        const double elapsedMilliseconds = mResetHistory || mLastEvaluationTime == std::chrono::steady_clock::time_point{}
+            ? 1000.0 / 60.0
+            : std::chrono::duration<double, std::milli>(evaluationTime - mLastEvaluationTime).count();
+        evalParams.InFrameTimeDeltaInMsec = static_cast<float>(std::clamp(elapsedMilliseconds, 0.1, 1000.0));
+
+        NVSDK_NGX_Result result;
+        if (mRayReconstruction)
+            result = NGX_VULKAN_EVALUATE_DLSSD_EXT(cmd, mHandle, mParams, &evalParams);
+        else
+        {
+            // Standard DLSS at native resolution provides DLAA without the RR denoiser.
+            // Preserve editor subrect addressing and the same motion/jitter convention.
+            NVSDK_NGX_VK_DLSS_Eval_Params dlaa{};
+            dlaa.Feature.pInColor = &colorRes;
+            dlaa.Feature.pInOutput = &outputRes;
+            dlaa.pInDepth = &depthRes;
+            dlaa.pInMotionVectors = &velocityRes;
+            dlaa.InJitterOffsetX = evalParams.InJitterOffsetX;
+            dlaa.InJitterOffsetY = evalParams.InJitterOffsetY;
+            dlaa.InMVScaleX = evalParams.InMVScaleX;
+            dlaa.InMVScaleY = evalParams.InMVScaleY;
+            dlaa.InReset = evalParams.InReset;
+            dlaa.InRenderSubrectDimensions = evalParams.InRenderSubrectDimensions;
+            dlaa.InColorSubrectBase = base;
+            dlaa.InDepthSubrectBase = base;
+            dlaa.InMVSubrectBase = base;
+            dlaa.InOutputSubrectBase = base;
+            dlaa.InFrameTimeDeltaInMsec = evalParams.InFrameTimeDeltaInMsec;
+            result = NGX_VULKAN_EVALUATE_DLSS_EXT(cmd, mHandle, mParams, &dlaa);
+        }
         const bool succeeded = NVSDK_NGX_SUCCEED(result);
         if (!succeeded)
-            MIR_LOG_ERROR("Record: NGX_VULKAN_EVALUATE_DLSSD_EXT failed: {:#x}", static_cast<unsigned>(result));
+            MIR_LOG_ERROR("Record: NGX {} evaluation failed: {:#x}",
+                mRayReconstruction ? "Ray Reconstruction" : "DLAA", static_cast<unsigned>(result));
         else
         {
             if (mResetHistory)
-                MIR_LOG_INFO("DLSS Ray Reconstruction: evaluation succeeded, history reset");
+                MIR_LOG_INFO("DLSS: {} evaluation succeeded, history reset",
+                    mRayReconstruction ? "Ray Reconstruction" : "DLAA");
             mResetHistory = false;
+            mLastEvaluationTime = evaluationTime;
         }
 
         ImageBarrier(cmd, mOutput[frame].image, VK_IMAGE_ASPECT_COLOR_BIT,

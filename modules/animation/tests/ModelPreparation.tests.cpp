@@ -49,7 +49,7 @@ namespace
         // Blob names carry a content hash like a cook's, a variant changes that blob alone. A second model names
         // the same mesh.
         void Write(bool withTexture = true, uint32_t meshVariant = 0, uint32_t textureVariant = 0,
-            bool secondModel = false)
+            bool secondModel = false, bool withMorph = false)
         {
             ModelAsset model;
             model.nodes.resize(1);
@@ -62,7 +62,14 @@ namespace
             primitive.indices = { 0, 1, 2 };
             primitive.material = kMaterial;
             primitive.baseColorTexture = kTexture;
+            if (withMorph)
+            {
+                model.nodes[0].weights = {0};
+                primitive.morphTargets.push_back({std::vector<glm::vec3>(3, glm::vec3(1, 0, 0)),
+                    std::vector<glm::vec3>(3), std::vector<glm::vec3>(3)});
+            }
             MeshAsset mesh;
+            if (withMorph) mesh.weights = {0};
             mesh.primitives.push_back(primitive);
             MaterialAsset material;
             material.baseColor = glm::vec4(0.25f, 0.5f, 0.75f, 1);
@@ -385,6 +392,73 @@ namespace
         test::FakeTextureUploader mTextures;
         ModelLibrary mLibrary;
     };
+}
+
+TEST_CASE("Model draws retain the preceding morph sample and discard history after a visibility gap",
+    "[animation][model-system][motion]")
+{
+    RegisterModelPlayer();
+    mir::RegisterCoreComponents();
+    LibraryFixture f;
+    f.Write(true, 0, 0, false, true);
+    const auto library = std::make_shared<ModelLibrary>(f.mHost, f.mTextures, kError);
+    AssetResolver resolver(f.mAssets, "game");
+    ModelSystem system(library, &f.mService, resolver);
+    World world;
+    CommandBuffer commands;
+    world.EmplaceResource<EngineModeState>();
+    auto &draws = world.EmplaceResource<ModelDrawItems>();
+    auto &overrides = world.EmplaceResource<ModelMorphOverrides>();
+    SystemContext context{world, commands, 0.016f, 0.0, 0};
+    const auto frame = [&]
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+        for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
+            f.mTextures.Complete(TextureHandle{index, 1});
+        for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
+            if (mesh.state != MeshUploadState::Ready)
+            {
+                if (mesh.state == MeshUploadState::Pending) f.mHost.uploader.Record(MeshHandle{index, 1});
+                f.mHost.uploader.Complete(MeshHandle{index, 1});
+            }
+    };
+    const auto weight = [](std::span<const glm::vec4> sample)
+    {
+        REQUIRE(sample.size() >= 3);
+        const auto offset = static_cast<uint32_t>(sample[1].z);
+        REQUIRE(offset < sample.size());
+        return sample[offset].x;
+    };
+    const Entity entity = world.CreateEntity();
+    mir::AddTransform(world, entity);
+    ModelPlayer player;
+    player.SetModelAsset(kModel);
+    world.AddComponent<ModelPlayer>(entity, player);
+    for (int step = 0; step < 40 && draws.items.empty(); ++step) frame();
+    REQUIRE(draws.items.size() == 1);
+    CHECK(draws.items[0].previousDeformation.empty());
+    CHECK(weight(draws.items[0].deformation) == 0.0f);
+
+    overrides.instances[PackEntity(entity)]["root"] = {1.0f};
+    frame();
+    REQUIRE(draws.items.size() == 1);
+    REQUIRE(draws.items[0].previousPose);
+    CHECK(draws.items[0].previousPose->linear == draws.items[0].pose.linear);
+    CHECK(weight(draws.items[0].deformation) == 1.0f);
+    CHECK(weight(draws.items[0].previousDeformation) == 0.0f);
+    overrides.instances[PackEntity(entity)]["root"] = {0.25f};
+    frame();
+    CHECK(weight(draws.items[0].deformation) == 0.25f);
+    CHECK(weight(draws.items[0].previousDeformation) == 1.0f);
+
+    world.RemoveComponent<ModelPlayer>(entity);
+    frame();
+    CHECK(draws.items.empty());
+    world.AddComponent<ModelPlayer>(entity, player);
+    for (int step = 0; step < 40 && draws.items.empty(); ++step) frame();
+    REQUIRE(draws.items.size() == 1);
+    CHECK(draws.items[0].previousDeformation.empty());
 }
 
 TEST_CASE("Worlds that ask for one model share one prepared model", "[animation][model-library]")

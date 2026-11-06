@@ -1,0 +1,63 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.3753320726536913,
+          1.79999975506216,
+          8.943608450703323
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.3753320726536913,
+          1.79999975506216,
+          8.943608450703323
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Camera | Automatic Showcase"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "active": true,
+        "aperture": 1.2,
+        "exposure": 1.0,
+        "farZ": 100.0,
+        "focusDistance": 10.0,
+        "fovYDegrees": 60.0,
+        "nearZ": 0.1,
+        "shutterStrength": 0.5
+      },
+      "type": "Camera"
+    },
+    {
+      "fields": {
+        "scriptName": "showcase"
+      },
+      "type": "ScriptRef"
+    }
+  ],
+  "id": 2,
+  "parent": 0,
+  "siblingIndex": 1
+}

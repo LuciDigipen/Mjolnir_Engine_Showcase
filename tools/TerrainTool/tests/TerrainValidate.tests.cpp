@@ -9,6 +9,7 @@
 #include "TerrainBakeTestSupport.h"
 
 #include <TerrainContinuity.h>
+#include <TerrainPublish.h>
 #include <TerrainValidate.h>
 
 #include <terrain/TerrainSurface.h>
@@ -86,6 +87,36 @@ TEST_CASE("A baked candidate passes every check, with and without its recipe", "
         REQUIRE(required.size() == 1);
         CHECK(required[0].field == "candidate.json");
     }
+}
+
+TEST_CASE("Validate still runs every content check on a published release", "[terraintool][validate][publish]")
+{
+    ScratchDir scratch("validate_published");
+    const fs::path candidate = scratch.path / "candidate";
+    const fs::path releases = scratch.path / "releases";
+    const TerrainReleaseId id = BakeCandidate(candidate);
+
+    TerrainPublishRequest request;
+    request.candidateDir = candidate;
+    request.releasesRoot = releases;
+    const TerrainReport published = RunTerrainPublish(request);
+    for (const TerrainDiagnostic &d : published.diagnostics)
+        UNSCOPED_INFO(FormatDiagnostic(d));
+    REQUIRE(published.Ok());
+
+    const fs::path releaseDir = TerrainReleaseDir(releases, MakeAssetId(ExampleAssetPath()), id);
+    const TerrainRecipe recipe = LoadExample();
+    const TerrainReport report = Validate(releaseDir, &recipe, false);
+    CHECK(FailedChecks(report).empty());
+    for (const TerrainCheck &c : report.checks)
+    {
+        INFO(c.name << ": " << c.detail);
+        CHECK(c.status == CheckStatus::Passed);
+    }
+    CHECK(report.Status(check::kCoverage) == CheckStatus::Passed);
+    CHECK(report.Status(check::kPayloads) == CheckStatus::Passed);
+    CHECK(report.Status(check::kFinite) == CheckStatus::Passed);
+    CHECK(report.Status(check::kRegions) == CheckStatus::Passed);
 }
 
 TEST_CASE("Mismatched shared edge samples fail the edge check with both tiles named", "[terraintool][validate]")

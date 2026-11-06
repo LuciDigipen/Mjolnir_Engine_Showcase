@@ -7,7 +7,7 @@ if(MIR_LARGE_WORLD)
 endif()
 
 project(Mjolnir
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "A modular 3D engine"
     # C is needed for volk.c
     LANGUAGES CXX C)
@@ -29,7 +29,7 @@ include(cmake/Shaders.cmake)
 include(cmake/Assets.cmake)
 include(cmake/Fonts.cmake)
 include(cmake/Branding.cmake)
-include(cmake/Player.cmake)
+include(cmake/GameBuild.cmake)
 
 option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 
@@ -166,6 +166,10 @@ engine_add_shaders(MjolnirEngine
     ENTRIES initMain:compute reduceMain:compute)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/rayDeform.slang
+    ENTRIES deformMain:compute)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/SsgiTrace.slang
     ENTRIES traceMain:compute)
 
@@ -238,6 +242,9 @@ if(BUILD_TESTING)
     add_subdirectory(tools/ParticleGpuCheck)
     add_subdirectory(tools/TextureGpuCheck)
     add_subdirectory(tools/ModelWorldsGpuCheck)
+    if(MIR_WITH_RTXGI)
+        add_subdirectory(tools/DdgiGpuCheck)
+    endif()
 endif()
 
 engine_add_shaders(MjolnirEngine
@@ -261,6 +268,8 @@ engine_add_shaders(MjolnirEngine
     ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit shadowMissMain:miss
             anyHitMain:anyhit shadowAnyHitMain:anyhit)
 
+include(cmake/GameContent.cmake)
+
 # Every games/*/ with a game.json is a game; its assetsRoot gets cooked
 file(GLOB game_manifests CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/games/*/game.json")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${game_manifests})
@@ -273,9 +282,21 @@ set(terrain_package_commands "")
 foreach(manifest IN LISTS game_manifests)
     get_filename_component(game_dir "${manifest}" DIRECTORY)
     get_filename_component(game_name "${game_dir}" NAME)
-    list(APPEND game_names "${game_name}")
 
     file(READ "${manifest}" game_json)
+
+    # A game whose large files were never fetched is not a game on this machine.
+    game_lfs_pointers("${game_dir}" game_pointers)
+    if(game_pointers)
+        list(LENGTH game_pointers pointer_count)
+        list(GET game_pointers 0 first_pointer)
+        message(WARNING "Skipping game ${game_name}: ${pointer_count} of its files are still Git LFS pointers "
+            "(first: games/${game_name}/${first_pointer}). Run `git lfs install` once, then `git lfs pull` from "
+            "the repository root; the next build reconfigures and includes the game.")
+        continue()
+    endif()
+    list(APPEND game_names "${game_name}")
+
     string(JSON game_json_length ERROR_VARIABLE game_json_error LENGTH "${game_json}")
     if(game_json_error)
         message(WARNING "${manifest} is not valid JSON (${game_json_error}), cooking its default assets root")
@@ -396,11 +417,11 @@ endif()
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
 # The master logo and the icon compiled into the exe aren't read at runtime
 engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE mjolnir-logo.png mjolnir.ico)
-engine_write_player_info(MjolnirEngine)
+engine_write_game_build_info(MjolnirEngine)
 
-# A build without the editor is the player; `cmake --install` turns it into a template
+# A build without the editor is the game build; `cmake --install` turns it into a template
 if(NOT MJOLNIR_WITH_EDITOR)
-    engine_install_player(MjolnirEngine)
+    engine_install_game_build(MjolnirEngine)
 endif()
 
 add_custom_target(MjolnirEngine_copy_games
@@ -415,7 +436,9 @@ if(MIR_WITH_DLSS)
     add_custom_target(MjolnirEngine_copy_ngx
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${NGX_DLSSD_DLL}" "$<TARGET_FILE_DIR:MjolnirEngine>/nvngx_dlssd.dll"
-        COMMENT "Copying NGX Ray Reconstruction runtime next to MjolnirEngine"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${NGX_DLSS_DLL}" "$<TARGET_FILE_DIR:MjolnirEngine>/nvngx_dlss.dll"
+        COMMENT "Copying NGX DLSS and Ray Reconstruction runtimes next to MjolnirEngine"
         VERBATIM)
     add_dependencies(MjolnirEngine MjolnirEngine_copy_ngx)
 endif()
@@ -427,7 +450,8 @@ if(terrain_sync_commands)
         ${terrain_package_commands}
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "Publishing terrain recipes whose current release is out of date"
-        VERBATIM)
+        VERBATIM
+        USES_TERMINAL)
     add_dependencies(MjolnirEngine_sync_terrain TerrainTool)
     add_dependencies(MjolnirEngine MjolnirEngine_sync_terrain)
 endif()
@@ -525,25 +549,25 @@ if(BUILD_TESTING)
             TIMEOUT 120)
     endif()
 
-    # A game build installs itself as a player template, packages every game with
+    # A game build installs itself as a game build template, packages every game with
     # MjolnirBuild, then starts each package as a double-click would: no --game.
     # The packages go outside this build folder, where MjolnirBuild refuses to write
     if(NOT MJOLNIR_WITH_EDITOR)
         get_filename_component(build_name "${CMAKE_BINARY_DIR}" NAME)
         set(package_dir "${CMAKE_SOURCE_DIR}/builds/smoke-build/${build_name}")
-        add_test(NAME build.player
-            COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DPREFIX=${package_dir}/player"
-                    -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/InstallPlayer.cmake")
-        set_tests_properties(build.player PROPERTIES
-            FIXTURES_SETUP build_player
+        add_test(NAME build.game_build
+            COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DPREFIX=${package_dir}/game-build"
+                    -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/InstallGameBuild.cmake")
+        set_tests_properties(build.game_build PROPERTIES
+            FIXTURES_SETUP build_game_build
             LABELS smoke
             TIMEOUT 300)
         foreach(game_name IN LISTS game_names)
             add_test(NAME build.package.${game_name}
-                COMMAND MjolnirBuild --game "${CMAKE_SOURCE_DIR}/games/${game_name}" --player "${package_dir}/player"
+                COMMAND MjolnirBuild --game "${CMAKE_SOURCE_DIR}/games/${game_name}" --game-build "${package_dir}/game-build"
                         --out "${package_dir}/${game_name}" --result "${package_dir}/${game_name}.json")
             set_tests_properties(build.package.${game_name} PROPERTIES
-                FIXTURES_REQUIRED build_player
+                FIXTURES_REQUIRED build_game_build
                 FIXTURES_SETUP build_${game_name}
                 LABELS smoke
                 TIMEOUT 600)

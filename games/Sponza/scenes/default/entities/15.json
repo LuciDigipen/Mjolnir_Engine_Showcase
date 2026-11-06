@@ -1,0 +1,57 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -0.88,
+          0.94,
+          3.23
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.8,
+          0.8,
+          0.8
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -0.88,
+          0.94,
+          3.23
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Matte | Roughness 0.68"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "materials/sponza_matte.material.json",
+        "meshName": "builtin:sphere",
+        "tint": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 15,
+  "parent": 11,
+  "siblingIndex": 2
+}

@@ -1,0 +1,50 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          1.2,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {},
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "materialShader": "CalderaDemo_OceanWaterMaterial_59952795",
+        "meshName": "meshes/ocean.mesh.json",
+        "tint": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "name": "Ocean"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 1143,
+  "parent": 0
+}

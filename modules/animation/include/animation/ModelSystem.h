@@ -60,9 +60,19 @@ namespace mir
         std::unordered_map<uint64_t, WorldModel> mModels;
         std::unordered_set<uint64_t> mFailed;
         std::unordered_map<uint64_t, uint64_t> mRequestedModels;
-        std::vector<std::vector<glm::vec4>> mDeformations;
-        // by PackEntity, then node
-        using NodePoses = std::unordered_map<uint32_t, WorldPose>;
+        struct PrimitiveHistory
+        {
+            MeshHandle mesh;
+            std::vector<glm::vec4> deformation;
+        };
+        struct NodeHistory
+        {
+            WorldPose pose;
+            std::vector<PrimitiveHistory> primitives;
+        };
+        // By PackEntity, then node. Both maps own their packed samples until
+        // the next update, so the submitted current/previous spans stay alive.
+        using NodePoses = std::unordered_map<uint32_t, NodeHistory>;
         std::unordered_map<uint64_t, NodePoses> mPreviousPoses;
         std::unordered_map<uint64_t, NodePoses> mCurrentPoses;
     };

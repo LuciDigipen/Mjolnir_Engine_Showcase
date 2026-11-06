@@ -1,0 +1,59 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          1.0,
+          2.15,
+          4.48
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          1.0,
+          2.15,
+          4.48
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Cool Fill | Point Light"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "areaSize": 0.5,
+        "color": [
+          0.72,
+          0.85,
+          1.0
+        ],
+        "intensity": 1.2,
+        "range": 3.3,
+        "spotAngleDegrees": 45.0,
+        "type": 1
+      },
+      "type": "Light"
+    }
+  ],
+  "id": 28,
+  "parent": 12,
+  "siblingIndex": 11
+}

@@ -255,6 +255,9 @@ TEST_CASE("The authoring and Play Worlds share one set of project resources", "[
     desc.mEnableEditorLayout = true;
     desc.mMaxFrames = 1;
 
+    SECTION("Editor creates Play on request") { desc.mEnableEditorLayout = true; }
+    SECTION("Standalone creates Play during startup") { desc.mEnableEditorLayout = false; }
+
     {
         mir::App app(desc);
         mir::World &authored = app.GetWorld();
@@ -262,6 +265,10 @@ TEST_CASE("The authoring and Play Worlds share one set of project resources", "[
         mir::World *runtime = app.RuntimeWorld();
         REQUIRE(runtime != nullptr);
 
+        runtime->Resource<mir::ControlsSettings>().mInvertMouseY =
+            !runtime->Resource<mir::ControlsSettings>().mInvertMouseY;
+        const bool inverted = runtime->Resource<mir::ControlsSettings>().mInvertMouseY;
+        CHECK(&runtime->Resource<mir::ControlsSettings>() == &authored.Resource<mir::ControlsSettings>());
         CHECK(&runtime->Resource<mir::InputMap>() == &authored.Resource<mir::InputMap>());
         CHECK(&runtime->Resource<mir::RenderSettings>() == &authored.Resource<mir::RenderSettings>());
         CHECK(&runtime->Resource<mir::PostProcessingSettings>() == &authored.Resource<mir::PostProcessingSettings>());
@@ -273,9 +280,34 @@ TEST_CASE("The authoring and Play Worlds share one set of project resources", "[
         const bool changed = runtime->Resource<mir::RenderSettings>().rayTracing;
         app.StopScene();
         CHECK(authored.Resource<mir::RenderSettings>().rayTracing == changed);
+        CHECK(authored.Resource<mir::ControlsSettings>().mInvertMouseY == inverted);
+        app.PlayScene();
+        REQUIRE(app.RuntimeWorld() != nullptr);
+        CHECK(app.RuntimeWorld()->Resource<mir::ControlsSettings>().mInvertMouseY == inverted);
+        app.StopScene();
     }
 
     mir::ShutdownLog();
     std::error_code ec;
     std::filesystem::remove(logPath, ec);
+}
+
+TEST_CASE("Controls menu edits and saves the shared player preferences", "[app][controls]")
+{
+    const auto path = std::filesystem::temp_directory_path() /
+        ("mjolnir_controls_adapter_" + std::to_string(mir::CurrentProcessId()) + ".json");
+    mir::ControlsSettings settings;
+    mir::GameControlsOptions options(settings, path);
+    options.SetInvertY(mir::LookDevice::Mouse, true);
+    CHECK(settings.mInvertMouseY);
+    CHECK(options.InvertY(mir::LookDevice::Mouse));
+    CHECK(mir::LoadControlsSettings(path).mInvertMouseY);
+    options.SetInvertY(mir::LookDevice::Gamepad, true);
+    CHECK(settings.mInvertMouseY);
+    CHECK(settings.mInvertGamepadY);
+    options.RestoreDefaults();
+    CHECK(settings == mir::ControlsSettings{});
+    CHECK(mir::LoadControlsSettings(path) == settings);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
 }

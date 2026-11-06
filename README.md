@@ -24,7 +24,7 @@ cmake/                build helpers
   Assets.cmake          asset cooking
   Fonts.cmake           font copying
   Branding.cmake        icon and splash copying
-  Player.cmake          player template install rules, player_info.json
+  GameBuild.cmake       game build template install rules, game_build_info.json
 
 modules/              one static library each, mir::<name>
   core/                 ECS, logging, paths, file IO, the surface contract
@@ -105,26 +105,36 @@ tracked with Git LFS:
 games/TerrainCheck/assets/textures/icelandic_sand_and_rocks/*.jpg
 ```
 
-Only that directory is in LFS; every other image in the repository stays a
-regular Git object. The six committed maps are BaseColor, Normal,
+Sponza mesh buffers (`games/Sponza/**/*.bin`) and textures
+(`games/Sponza/**/*.jpg` and `games/Sponza/**/*.png`) also use LFS, along with
+`games/CalderaDemo`'s large files (see below). Other images stay regular Git
+objects.
+
+The six committed TerrainCheck maps are BaseColor, Normal,
 Displacement, Roughness, Specular and AO. Bump, Cavity and Gloss are not used
 and are not included. The six JPEGs are byte-identical copies of the originals;
 nothing was re-encoded, cooked or migrated from history. `tcigfcgn.json` is the
 vendor metadata manifest and stays a normal text file. It describes the full
 source set, so it lists maps beyond the six committed here.
 
-Install the Git LFS client once, then fetch the objects after cloning or
-pulling:
+Install the Git LFS client and run `git lfs install` once per machine, before
+cloning. Clones and pulls then download every LFS file. A clone made before
+that, or with LFS skipped, holds pointers; fetch them from the repository root:
 
 ```
 git lfs install
 git lfs pull
 ```
 
-A JPEG that opens as small text beginning with `version https://git-lfs` is an
-unresolved pointer. Run `git lfs install`, then `git lfs pull` from the
-repository root, and check the result with `git lfs status` or `git lfs fsck`.
-Do not edit or commit pointer text by hand.
+A file that opens as small text beginning with `version https://git-lfs` is an
+unresolved pointer. Check the result with `git lfs ls-files`: `*` marks a
+downloaded file, `-` a pointer. Do not edit or commit pointer text by hand.
+
+CMake leaves out any game that still has pointers, with a warning naming the
+first one, since AssetCooker cannot cook them. The pointers are configure
+dependencies, so the first build after `git lfs pull` reconfigures and brings
+the game back. Running a game the build left out logs an error saying it was
+not cooked.
 
 ### Source and licensing
 
@@ -135,7 +145,13 @@ https://www.fab.com/eula?lang=en.
 
 The organization's Git LFS quota could not be read because the account lacks
 the `admin:org` scope, so available storage and bandwidth are unconfirmed. This
-is not a verified quota pass. No LFS objects have been uploaded.
+is not a verified quota pass.
+
+### Caldera demo
+
+`games/CalderaDemo` keeps about 1.5 GiB in LFS: its models, heights, ocean mesh
+and a copy of the sand textures. A clone downloads them like any other LFS
+file. Its first build bakes terrain; see `games/CalderaDemo/README.md`.
 
 ## Third-party notices
 

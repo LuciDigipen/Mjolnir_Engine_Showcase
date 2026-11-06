@@ -11,6 +11,7 @@
 
 #include "Prompt.h"
 #include <assets/AssetIdRoot.h>
+#include <assets/AssetManifest.h>
 #include <assets/AssetSettings.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/EngineMode.h>
@@ -29,6 +30,7 @@
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
 #include <serial/JsonFile.h>
+#include <terrain_runtime/TerrainRuntime.h>
 
 #include <imgui.h>
 
@@ -36,6 +38,7 @@
 #include <chrono>
 #include <exception>
 #include <filesystem>
+#include <format>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -64,6 +67,12 @@ namespace mir
             return files;
         }
 
+        // the player's own settings, audio and controls, one file per game
+        std::filesystem::path UserSettingsPath(const GameProject &project)
+        {
+            return UserDataDir() / project.mName / "settings.json";
+        }
+
         std::unique_ptr<AsyncAssetService> MakeAssetService(
             AssetsModule &assets, JobExecutor &jobs, const std::filesystem::path &projectSettingsPath)
         {
@@ -80,6 +89,38 @@ namespace mir
                     std::string(kPrefabDirectoryName);
             }
             return project.mRootDir / "assets" / std::string(kPrefabDirectoryName);
+        }
+
+        // A game the build left out, as CMake does while its LFS files are pointers, has
+        // source assets but none cooked: say so once, before each entity reports its own
+        void ReportUncookedGame(const GameProject &project, const AssetManifest &manifest)
+        {
+            const std::string prefix = project.mAssetIdRoot + "/";
+            for (const AssetManifestEntry &entry : manifest.Entries())
+                if (manifest.LogicalPathOf(entry).starts_with(prefix))
+                    return;
+
+            std::error_code ec;
+            std::filesystem::recursive_directory_iterator it(project.mAssetsDir, ec);
+            for (; !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+            {
+                std::error_code entryEc;
+                // SoundBanks are read in place, never cooked
+                if (it->is_directory(entryEc) && it->path().lexically_normal() == project.mSoundBankDir)
+                {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+                if (it->is_regular_file(entryEc))
+                {
+                    MIR_LOG_ERROR("Game '{}' was not cooked: '{}' holds source assets but the cooked manifest has none "
+                        "under '{}'. The build leaves out a game whose Git LFS files are still pointers; run "
+                        "`git lfs pull` from the repository root, then build again, and check the CMake output for "
+                        "'Skipping game {}'.", project.mDir, project.mAssetsDir.string(), project.mAssetIdRoot,
+                        std::filesystem::path(project.mDir).filename().string());
+                    return;
+                }
+            }
         }
     }
 
@@ -118,8 +159,7 @@ namespace mir
 
     App::StartupSplash::StartupSplash(const AppDesc &desc)
     {
-        if (!desc.mHidden) screen.Show({ .mEngineName = desc.mAppName,
-                      .mVersion = kEngineVersion,
+        if (!desc.mHidden) screen.Show({ .mVersion = kEngineVersion,
                       .mCopyright = kEngineCopyright,
                       .mStatus = "Creating window...",
                       .mProgress = 0.0f });
@@ -163,7 +203,7 @@ namespace mir
                                         .mResolver = &app.mResolver,
                                         .mAssetService = app.mAssetService.get(),
                                         .mAdvanceSharedFrame = false })),
-            input(state.Context(), app.mWindow.Get()),
+            input(state.Context(), app.mWindow.Get(), {}, &app.mControls),
             animation(state.Context(), app.mRenderer.Renderer(), app.mAssetService.get(), app.mResolver, &app.mJobs),
             camera(state.Context()),
         #if MIR_WITH_AUDIO
@@ -173,6 +213,7 @@ namespace mir
                 app.mParticlesGpu, rendering->Rendering()),
             terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
         {
+            state.gameShell.SetControlsOptions(&app.mControlsOptions);
         #if MIR_WITH_AUDIO
             state.gameShell.SetAudioOptions(&app.mAudioOptions);
         #endif
@@ -221,6 +262,8 @@ namespace mir
         mAssets(CookedAssetsDir()),
         mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
         mResolver(mAssets, mProject.mAssetIdRoot),
+        mControls(LoadControlsSettings(UserSettingsPath(mProject))),
+        mControlsOptions(mControls, UserSettingsPath(mProject)),
         mWorldState(mProjectResources, mProject, mAssets, mResolver,
             GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
         mWindow(MakeWindowDesc(mDesc)),
@@ -230,7 +273,7 @@ namespace mir
                                     .mResolver = &mResolver,
                                     .mAssetService = mAssetService.get() }),
         mParticlesGpu(mRenderer.Renderer()),
-        mInput(Context(), mWindow.Get()),
+        mInput(Context(), mWindow.Get(), {}, &mControls),
         mAnimation(Context(), mRenderer.Renderer(), mAssetService.get(), mResolver, &mJobs),
         mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
@@ -240,7 +283,7 @@ namespace mir
         mCamera(Context()),
     #if MIR_WITH_AUDIO
         mAudio(Context(), mProject.mSoundBankDir, mProjectResources.AudioDefaults(), mProject.mProjectSettingsPath,
-            UserDataDir() / mProject.mName / "settings.json"),
+            UserSettingsPath(mProject)),
     #endif
         mSimulation(Context(), mProject, mJobs, mAssets, mResolver, mWorldState.particles,
             mParticlesGpu, mRenderer.Rendering()),
@@ -248,6 +291,7 @@ namespace mir
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
+        mWorldState.gameShell.SetControlsOptions(&mControlsOptions);
     #if MIR_WITH_AUDIO
         mWorldState.gameShell.SetAudioOptions(&mAudioOptions);
     #if MIR_WITH_EDITOR
@@ -259,19 +303,29 @@ namespace mir
         mEditor.Get().SetSceneCatalog(mProject.mScenes, mProject.mStartupSceneId);
     #endif
 
+        ReportUncookedGame(mProject, mAssets.Manifest());
+
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 
-        //without the editor there is no Play button
+        // Build the runtime before waiting for the first view it will display.
         if (!mDesc.mEnableEditorLayout)
-        {
             PlayScene();
-        }
 
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
 
-        if (!mDesc.mHidden) mWindow.Get().Show();
+        // a bounded or hidden run counts frames from here, so nothing holds it back
+        if (mDesc.mHidden || mDesc.mMaxFrames != 0)
+            RevealWindow();
+        else
+        {
+            mSplash.screen.SetProgress("Loading scene assets...", 0.9f);
+            mFirstView.emplace();
+            if (mRuntime)
+                SetPlayState(mRuntime->state.world, PlayState::Paused);
+            mFirstViewStart = std::chrono::steady_clock::now();
+        }
     }
 
     // Systems stop while every module is alive; then members die in reverse, the
@@ -1037,6 +1091,45 @@ namespace mir
             "Restore those files from git, or open the scene in the editor and choose to load it without them.");
     }
 
+    void App::WaitForFirstView()
+    {
+        if (!mFirstView.has_value())
+            return;
+
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - mFirstViewStart).count();
+        const size_t before = mFirstView->Pending();
+        const StartupGate::Result result = mFirstView->Update((mRuntime ? mRuntime->terrain : mTerrain).Runtime().AreasLoading(), seconds);
+        if (result == StartupGate::Result::Waiting)
+        {
+            if (mFirstView->Pending() != before)
+            {
+                const std::string status = std::format("Loading scene assets ({} left)...", mFirstView->Pending());
+                mSplash.screen.SetProgress(status.c_str(), 0.9f + 0.1f * mFirstView->Progress());
+            }
+            return;
+        }
+
+        if (result == StartupGate::Result::Ready)
+            MIR_LOG_INFO("First view loaded after {:.2f} s and {} frames", seconds, mFrame);
+        else
+            MIR_LOG_WARN("Opening the window with {} areas still loading: {} after {:.2f} s", mFirstView->Pending(),
+                result == StartupGate::Result::Stalled ? "no progress" : "time limit reached", seconds);
+
+        RevealWindow();
+    }
+
+    void App::RevealWindow()
+    {
+        if (mFirstView && mRuntime)
+            SetPlayState(mRuntime->state.world, PlayState::Running);
+        mFirstView.reset();
+        // Only now is startup actually done - close explicitly rather than
+        // leaning on WS_EX_TOPMOST z-order to hide the swap.
+        if (!mDesc.mHidden) mWindow.Get().Show();
+        mSplash.screen.SetProgress("Ready", 1.0f);
+        mSplash.screen.Close();
+    }
+
     void App::RunSwitchHook()
     {
         if (mSwitchHookFired || mDesc.mSwitchProjectTo.empty() || mDesc.mMaxFrames == 0)
@@ -1139,6 +1232,8 @@ namespace mir
                 ToggleFullscreen();
 
             ++mFrame;
+
+            WaitForFirstView();
 
             RunSwitchHook();
 

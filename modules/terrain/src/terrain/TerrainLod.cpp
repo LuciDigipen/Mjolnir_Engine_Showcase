@@ -39,7 +39,7 @@ namespace mir
         }
         struct Polygon
         {
-            std::array<P, kTerrainOverlayPolygonCapacity> points{};
+            std::array<P, kTerrainOverlayPolygonCapacity> points;
             size_t count = 0;
             bool empty() const
             {
@@ -65,12 +65,12 @@ namespace mir
                 return true;
             }
         };
-        Polygon Clip(Polygon polygon, P a, P b, double &uncertainty)
+        void Clip(const Polygon &in, Polygon &out, P a, P b, double &uncertainty)
         {
-            if (polygon.empty())
-                return {};
-            Polygon out;
-            P prev = polygon.back();
+            out.count = 0;
+            if (in.empty())
+                return;
+            P prev = in.back();
             double dp = Cross(b - a, prev - a);
             auto uncertainSign = [&](P p, double cross)
             {
@@ -80,7 +80,7 @@ namespace mir
                     uncertainty = 1;
             };
             uncertainSign(prev, dp);
-            for (P point : polygon)
+            for (P point : in)
             {
                 double dc = Cross(b - a, point - a);
                 uncertainSign(point, dc);
@@ -90,18 +90,19 @@ namespace mir
                     if (denominator != 0 && !out.Push(prev + (point - prev) * (dp / denominator)))
                     {
                         uncertainty = 1;
-                        return {};
+                        out.count = 0;
+                        return;
                     }
                 }
                 if (dc >= 0 && !out.Push(point))
                 {
                     uncertainty = 1;
-                    return {};
+                    out.count = 0;
+                    return;
                 }
                 prev = point;
                 dp = dc;
             }
-            return out;
         }
         void Header(detail::LeWriter &out, uint32_t magic, const TerrainLodSurface &lod, uint32_t count)
         {
@@ -360,6 +361,7 @@ namespace mir
                 return {};
             maxHeight = std::max(maxHeight, std::abs(double(h)));
         }
+        Polygon polygon, clipped;
         for (size_t ti = 0; ti < indices.size(); ti += 3)
         {
             std::array<V, 3> a;
@@ -418,17 +420,24 @@ namespace mir
                     {
                         std::array<V, 3> b = k == 0 ? std::array<V, 3>{corners[0], corners[2], corners[3]}
                                                     : std::array<V, 3>{corners[0], corners[1], corners[2]};
-                        Polygon polygon;
+                        Polygon *in = &polygon, *out = &clipped;
+                        polygon.count = 0;
                         for (P p : {P(a[0].x, a[0].z), P(a[2].x, a[2].z), P(a[1].x, a[1].z)})
                             polygon.Push(p);
                         double uncertain = 0;
                         for (int e = 0; e < 3; ++e)
-                            polygon = Clip(std::move(polygon), P(b[e].x, b[e].z), P(b[(e + 1) % 3].x, b[(e + 1) % 3].z),
-                                           uncertain);
-                        polygon = Clip(std::move(polygon), P(minX, minZ), P(maxX, minZ), uncertain);
-                        polygon = Clip(std::move(polygon), P(maxX, minZ), P(maxX, maxZ), uncertain);
-                        polygon = Clip(std::move(polygon), P(maxX, maxZ), P(minX, maxZ), uncertain);
-                        polygon = Clip(std::move(polygon), P(minX, maxZ), P(minX, minZ), uncertain);
+                        {
+                            Clip(*in, *out, P(b[e].x, b[e].z), P(b[(e + 1) % 3].x, b[(e + 1) % 3].z), uncertain);
+                            std::swap(in, out);
+                        }
+                        Clip(*in, *out, P(minX, minZ), P(maxX, minZ), uncertain);
+                        std::swap(in, out);
+                        Clip(*in, *out, P(maxX, minZ), P(maxX, maxZ), uncertain);
+                        std::swap(in, out);
+                        Clip(*in, *out, P(maxX, maxZ), P(minX, maxZ), uncertain);
+                        std::swap(in, out);
+                        Clip(*in, *out, P(minX, maxZ), P(minX, minZ), uncertain);
+                        std::swap(in, out);
                         if (condition >
                             1 / (kTerrainOverlaySignRoundoffFactor * std::numeric_limits<double>::epsilon()))
                             uncertain = 1;
@@ -459,8 +468,8 @@ namespace mir
                             bound = std::max(bound,
                                              finite ? pairBound : std::max(std::abs(hiA - loB), std::abs(hiB - loA)));
                         }
-                        else if (!polygon.empty())
-                            for (P p : polygon)
+                        else if (!in->empty())
+                            for (P p : *in)
                             {
                                 const double difference = std::abs(Height(a, p) - Height(b, p));
                                 if (!std::isfinite(difference))

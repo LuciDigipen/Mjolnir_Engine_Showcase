@@ -98,6 +98,34 @@ namespace mir
         return uint64_t(probeCounts[0]) * uint64_t(probeCounts[1]) * uint64_t(probeCounts[2]);
     }
 
+    std::array<double, 3> DdgiSettings::Extent() const
+    {
+        return { double(probeCounts[0] - 1) * probeSpacing,
+            double(probeCounts[1] - 1) * probeSpacing, double(probeCounts[2] - 1) * probeSpacing };
+    }
+
+    const char *DdgiSettings::FitBounds(const std::array<double, 3> &minimum,
+        const std::array<double, 3> &maximum, double padding)
+    {
+        if (!std::isfinite(padding) || padding < 0 || !std::isfinite(probeSpacing) || probeSpacing <= 0)
+            return "GI fit requires finite nonnegative padding and positive spacing.";
+        auto draft = *this;
+        for (size_t i = 0; i < 3; ++i)
+        {
+            if (!std::isfinite(minimum[i]) || !std::isfinite(maximum[i]) || minimum[i] > maximum[i])
+                return "GI fit requires finite ordered bounds.";
+            const double count = std::max(2.0, std::ceil((maximum[i] - minimum[i] + 2 * padding) / probeSpacing) + 1);
+            if (!std::isfinite(count) || count > 128)
+                return "GI fit exceeds 128 probes on an axis; increase spacing.";
+            draft.probeCounts[i] = int(count);
+            draft.origin[i] = minimum[i] * 0.5 + maximum[i] * 0.5;
+        }
+        draft.probesPerFrame = int(std::min(uint64_t(std::max(1, probesPerFrame)), draft.ProbeCount()));
+        if (const char *error = draft.ValidationError()) return error;
+        *this = draft;
+        return nullptr;
+    }
+
     uint64_t DdgiSettings::EstimatedBytes() const
     {
         // Two copies of 16-byte ray/atlas texels: 8x8 irradiance/variability,
