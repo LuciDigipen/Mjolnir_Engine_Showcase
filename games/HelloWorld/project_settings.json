@@ -1,6 +1,6 @@
 {
   "build": {
-    "profile": "release"
+    "profile": "development"
   },
   "ide": {
     "args": "--new-window {project} {file}",

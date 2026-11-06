@@ -55,6 +55,8 @@ namespace mir
         // keyed by the game folder's absolute path, so each game builds into its own folder
         std::map<std::string, std::string> buildOutputs;
         bool buildRunAfter = false;
+        // Build compiles the game build into the template first, off uses the template as it is
+        bool buildCompileGameBuild = true;
 
         // defaults for a missing file and for any missing or unusable field
         static EditorPreferences LoadFile(const std::filesystem::path &path);

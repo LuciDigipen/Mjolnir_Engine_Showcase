@@ -29,12 +29,6 @@ namespace mir
             const std::filesystem::path path(text);
             return (path.is_absolute() ? path : sourceRoot / path).lexically_normal();
         }
-
-        std::string CommandPath(const std::filesystem::path &path, const std::filesystem::path &sourceRoot)
-        {
-            const std::string text = CheckoutPath(path, sourceRoot);
-            return text.find(' ') == std::string::npos ? text : "\"" + text + "\"";
-        }
     }
 
     std::string CheckoutPath(const std::filesystem::path &path, const std::filesystem::path &sourceRoot)
@@ -105,17 +99,6 @@ namespace mir
         const auto it = preferences.buildOutputs.find(BuildOutputKey(game));
         return FromCheckout(
             it != preferences.buildOutputs.end() ? it->second : std::string(), game.mSourceRoot, DefaultBuildOutput(game));
-    }
-
-    std::vector<std::string> GameBuildInstallCommands(
-        const std::filesystem::path &sourceRoot, const std::filesystem::path &templateDir, BuildProfile profile)
-    {
-        const std::string preset(GameBuildPreset(profile));
-        return {
-            "cmake --preset " + preset,
-            "cmake --build --preset " + preset,
-            "cmake --install builds/" + preset + " --prefix " + CommandPath(templateDir, sourceRoot),
-        };
     }
 
     GameBuildTemplateCheck CheckGameBuildTemplate(

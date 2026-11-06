@@ -1,7 +1,8 @@
 /**
  * @file BuildSettingsPanel.h
  * @author Quy Dong Ta
- * @brief The "Build Settings" window: profile, game build template, output folder, Run after build, and Build.
+ * @brief The "Build Settings" window: profile, game build template and whether Build compiles it, output folder,
+ *        Run after build, and Build.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -33,6 +34,8 @@ namespace mir
         // what Build packages with, resolved from the preferences
         std::filesystem::path mGameBuildDir;
         std::filesystem::path mOutDir;
+        // set when Compile the game build is on
+        std::string mGameBuildPreset;
     };
 
     struct BuildSettingsRequest
@@ -54,11 +57,10 @@ namespace mir
 
     private:
         void Load(EditorPreferences &preferences, const BuildGame &game);
-        void DrawTemplateStatus(const std::filesystem::path &dir, const BuildGame &game);
-        void DrawBuild(const BuildGame &game, const BuildJobView &build, BuildAction &action,
-            const std::filesystem::path &gameBuildDir, const std::filesystem::path &outDir);
-        void DrawSavePrompt(const BuildJobView &build, BuildAction &action, const std::filesystem::path &gameBuildDir,
-            const std::filesystem::path &outDir);
+        void DrawTemplateStatus(const std::filesystem::path &dir, const BuildGame &game, bool compile);
+        // @p target is the Build to request, without its command
+        void DrawBuild(const BuildGame &game, const BuildJobView &build, BuildAction &action, const BuildAction &target);
+        void DrawSavePrompt(const BuildJobView &build, BuildAction &action, const BuildAction &target);
         void DrawResult(const BuildResult &result, const BuildGame &game);
 
         bool mLoaded = false;
@@ -72,5 +74,7 @@ namespace mir
         BuildProfile mCheckedProfile = BuildProfile::Release;
         double mCheckedAt = 0.0;
         GameBuildTemplateCheck mCheck;
+        // missing or empty, so a compile has nothing to replace
+        bool mTemplateMissing = false;
     };
 }

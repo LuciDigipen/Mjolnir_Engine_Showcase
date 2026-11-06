@@ -67,10 +67,6 @@ namespace mir
         const EditorPreferences &preferences, const BuildGame &game, BuildProfile profile);
     std::filesystem::path BuildOutputDir(const EditorPreferences &preferences, const BuildGame &game);
 
-    // Run from the checkout, they build the profile's game build and install it into @p templateDir
-    std::vector<std::string> GameBuildInstallCommands(
-        const std::filesystem::path &sourceRoot, const std::filesystem::path &templateDir, BuildProfile profile);
-
     struct GameBuildTemplateCheck
     {
 

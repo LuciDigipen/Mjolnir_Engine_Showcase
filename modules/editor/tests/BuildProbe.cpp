@@ -2,7 +2,8 @@
  * @file BuildProbe.cpp
  * @author Quy Dong Ta
  * @brief Child process for BuildJob.tests.cpp: swaps a build into --out as MjolnirBuild does, stops where the
- *        --game folder's name says, and waits to be canceled without writing a report.
+ *        --game folder's name says, writes --progress as a compile would, and waits to be canceled without
+ *        writing a report.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -19,6 +20,7 @@ int main(int argc, char **argv)
 
     fs::path game;
     fs::path out;
+    fs::path progress;
     for (int i = 1; i + 1 < argc; i += 2)
     {
         const std::string_view flag = argv[i];
@@ -26,9 +28,19 @@ int main(int argc, char **argv)
             game = argv[i + 1];
         else if (flag == "--out")
             out = argv[i + 1];
+        else if (flag == "--progress")
+            progress = argv[i + 1];
     }
     if (game.empty() || out.empty())
         return 2;
+
+    if (!progress.empty())
+    {
+        fs::path temp = progress;
+        temp += ".tmp";
+        std::ofstream(temp) << R"({"version":1,"step":"game build","phase":"compile","done":2,"total":5})" << "\n";
+        fs::rename(temp, progress);
+    }
 
     fs::path staging = out;
     staging += ".tmp";

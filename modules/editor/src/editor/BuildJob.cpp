@@ -14,6 +14,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <fstream>
+#include <iterator>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -29,6 +31,9 @@ namespace mir
         // build to <out>.old while the new one moves in
         constexpr std::string_view kBuildMarkerFileName = "mjolnir_build.json";
         constexpr std::string_view kPreviousSuffix = ".old";
+
+        // MjolnirBuild reads its compile log every 250 ms, so reading more often shows nothing new
+        constexpr std::chrono::milliseconds kProgressReadInterval{ 250 };
 
         std::string PathText(const fs::path &path)
         {
@@ -99,8 +104,64 @@ namespace mir
 
     std::vector<std::string> BuildArguments(const BuildJobRequest &request)
     {
-        return { "--game", PathText(request.mGameDir), "--game-build", PathText(request.mGameBuildDir), "--out",
-            PathText(request.mOutDir), "--result", PathText(request.mResultFile) };
+        std::vector<std::string> args = { "--game", PathText(request.mGameDir), "--game-build",
+            PathText(request.mGameBuildDir), "--out", PathText(request.mOutDir), "--result",
+            PathText(request.mResultFile) };
+        if (!request.mGameBuildPreset.empty())
+            args.insert(args.end(), { "--game-build-preset", request.mGameBuildPreset });
+        if (!request.mProgressFile.empty())
+            args.insert(args.end(), { "--progress", PathText(request.mProgressFile) });
+        return args;
+    }
+
+    std::optional<BuildJobProgress> ReadBuildProgress(const fs::path &progressFile)
+    {
+        // Read without logging: it is read a few times a second, and a read that misses gets the next one
+        std::ifstream in(progressFile, std::ios::binary);
+        if (!in)
+            return std::nullopt;
+        const Json json = Json::parse(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>(), nullptr, false);
+        if (!json.is_object())
+            return std::nullopt;
+
+        BuildJobProgress progress{ Text(json, "step"), Text(json, "phase"), Number<std::size_t>(json, "done"),
+            Number<std::size_t>(json, "total") };
+        if (progress.mStep.empty())
+            return std::nullopt;
+        return progress;
+    }
+
+    std::string BuildProgressText(const BuildJobProgress &progress)
+    {
+        if (progress.mStep == "game build")
+        {
+            const std::string text = "Compiling the game build";
+            if (progress.mPhase == "environment")
+                return text + ": loading Visual Studio";
+            if (progress.mPhase == "configure")
+                return text + ": configuring";
+            if (progress.mPhase == "compile" && progress.mTotal > 0)
+                return text + ": " + std::to_string(progress.mDone) + " of " + std::to_string(progress.mTotal);
+            if (progress.mPhase == "install")
+                return text + ": installing";
+            return text;
+        }
+
+        constexpr std::pair<std::string_view, std::string_view> kSteps[] = {
+            { "check", "Checking the game and folders" },
+            { "template", "Copying the game build template" },
+            { "cook", "Cooking assets" },
+            { "game data", "Copying the game data" },
+            { "sound banks", "Copying SoundBanks" },
+            { "terrain", "Packaging terrain" },
+            { "finish", "Moving the build into place" },
+        };
+        for (const auto &[step, text] : kSteps)
+        {
+            if (progress.mStep == step)
+                return std::string(text);
+        }
+        return progress.mStep;
     }
 
     BuildResult ReadBuildResult(const fs::path &resultFile, int exitCode)
@@ -168,8 +229,14 @@ namespace mir
 
         mRequest = std::move(request);
         mStarted = std::chrono::steady_clock::now();
+        mProgressReadAt = {};
+        mProgress = {};
         std::error_code ec;
-        fs::remove(mRequest.mResultFile, ec);
+        for (const fs::path &file : { mRequest.mResultFile, mRequest.mProgressFile })
+        {
+            if (!file.empty())
+                fs::remove(file, ec);
+        }
         mPreviousMarker = MarkerTime(mRequest.mOutDir);
 
         if (mRequest.mTool.empty() || !mProcess.Start(mRequest.mTool, BuildArguments(mRequest)))
@@ -181,7 +248,9 @@ namespace mir
 
         mRunning = true;
         mResult.reset();
-        MIR_LOG_INFO("Build: packaging {} into {}", PathText(mRequest.mGameDir), PathText(mRequest.mOutDir));
+        MIR_LOG_INFO("Build: packaging {} into {}{}", PathText(mRequest.mGameDir), PathText(mRequest.mOutDir),
+            mRequest.mGameBuildPreset.empty() ? std::string()
+                                              : ", compiling the game build with " + mRequest.mGameBuildPreset + " first");
         return true;
     }
 
@@ -190,13 +259,18 @@ namespace mir
         if (!mRunning)
             return;
         const std::optional<int> exitCode = mProcess.Poll();
-        if (!exitCode)
+        if (exitCode)
+        {
+            Finish(ReadBuildResult(mRequest.mResultFile, *exitCode));
             return;
+        }
 
-        BuildResult result = ReadBuildResult(mRequest.mResultFile, *exitCode);
-        std::error_code ec;
-        fs::remove(mRequest.mResultFile, ec);
-        Finish(std::move(result));
+        const auto now = std::chrono::steady_clock::now();
+        if (mRequest.mProgressFile.empty() || now - mProgressReadAt < kProgressReadInterval)
+            return;
+        mProgressReadAt = now;
+        if (std::optional<BuildJobProgress> progress = ReadBuildProgress(mRequest.mProgressFile))
+            mProgress = std::move(*progress);
     }
 
     void BuildJob::Cancel()
@@ -251,6 +325,13 @@ namespace mir
     {
         result.mSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - mStarted).count();
         mRunning = false;
+        mProgress = {};
+        std::error_code ec;
+        for (const fs::path &file : { mRequest.mResultFile, mRequest.mProgressFile })
+        {
+            if (!file.empty())
+                fs::remove(file, ec);
+        }
         Log(result);
         mResult = std::move(result);
     }
