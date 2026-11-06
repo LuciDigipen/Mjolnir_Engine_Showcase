@@ -26,7 +26,7 @@ it belongs.
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until main closes it
 mCommands, mWorld, mScheduler
-CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), AssetResolver, ParticlesModule, SceneModule, PrefabModule
+CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), AssetResolver, ProjectResources, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
 WindowModule, RendererModule, ParticlesGpuModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
 CameraModule, AudioModule, PhysicsModule, TerrainModule
@@ -48,6 +48,7 @@ while true:
     dt = min(elapsed, mMaxDeltaSeconds)
     ApplyRequests                      last frame's transitions, and a game to switch to
     AsyncAssetService::DrainCompletions  background asset loads that finished become visible
+    ProjectResources::Refresh          edited terrain configuration is merged and validated
     RunFrameSlot(FrameBegin)           authoring tools and shared services, plus runtime frame slots during Play
     ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
@@ -88,6 +89,34 @@ next process: the ordinary startup path
 `main` holds `App` in a `std::optional` declared outside its `try`, so a failure
 in `Run` reports with `App` alive, and a failure while building it reports after
 what was built is torn down.
+
+### Project resources
+
+`ProjectResources` (`app/ProjectResources.h`) holds the configuration the project
+owns, as a member declared after `AssetResolver` and before the World state. Each
+value loads once, with the loader and the failure behavior its module used before:
+`InputMap` (with the engine's default actions added), `RenderSettings` and
+`PostProcessingSettings` fall back to defaults, `PhysicsLayerTable` throws a
+`SetupError` for a broken section, and `TerrainStreamingConfiguration` reads the
+game's `terrain_streaming.json` and the machine-local file beside the executable.
+The audio defaults load under `MIR_WITH_AUDIO` and go to `AudioModule` by
+reference, not into a World, because the module keeps the device and playback
+state and the defaults only seed it.
+
+`WorldState` shares the values into its World through a member declared right after
+`CoreModule`, so every module after it finds them with `Resource<T>()`, which
+asserts when injection is missing. `RuntimeSession` passes the same object, so the
+authoring World and the Play World return the same address for each value, and a
+change made during Play is still there after Stop. `World::ShareResource` stores a
+pointer without extending the value's lifetime, which is why `ProjectResources`
+outlives every World and why a writer edits a value in place.
+
+`Run` calls `ProjectResources::Refresh` after `ApplyRequests` and
+`DrainCompletions` and before the `FrameBegin` slots, so a configuration edit is
+merged once, ahead of every consumer that frame. Today it refreshes the terrain
+configuration, the one value whose effective form is computed from two sources.
+The other values are read as they are, and each consumer compares them with what
+it last applied.
 
 ### Transitions
 
@@ -146,6 +175,7 @@ included, is the same code.
 |---|---|---|
 | `AppDesc` | `app/App.h` | Window size, Vulkan app name and validation, editor-layout gate, `dt` clamp, frame limit, the game to open, a scripted game switch for tests |
 | `App` | `app/App.h` | Builds the modules, runs the loop, runs the transitions, takes a request to open another game |
+| `ProjectResources` | `app/ProjectResources.h` | The project's configuration, loaded once and shared into every World: `Input()`, `Render()`, `PostProcessing()`, `PhysicsLayers()`, `Terrain()` and, with audio, `AudioDefaults()`, plus `ShareInto(World &)` and `Refresh()` |
 
 `app/ErrorReport.h` declares `ReportFatal`, which logs a `SetupError`, writes
 `logs/last-error.json`, starts `MjolnirErrorReporter` and returns the exit code.
@@ -305,6 +335,18 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
    cheap for a large scene.
 
 ## Changed
+
+*2026-11-05*, **`App` owns a `ProjectResources`.** Was: `InputModule`, the renderer's
+world binding, `PhysicsModule`, `TerrainRuntime` and `AudioModule` each read their
+settings from disk in their constructors, and `RuntimeSession` shared three of the
+values from the authoring World by hand. Now: one `ProjectResources` loads them,
+`WorldState` shares them into its World before any module member is built,
+`RuntimeSession` passes the same object, and `Run` refreshes the terrain
+configuration once a frame before the `FrameBegin` slots. The modules read the shared
+values with `Resource<T>()`, and `mProjectSettingsPath` left `RendererModuleSettings`
+and the input, physics and audio constructors. Because: a value loaded in two places
+could differ between the authoring and Play Worlds, and a panel's edit could not
+reach a running system without a hand-written share.
 
 *2026-10-31* — **`App` owns an `AssetResolver`.** Was: `App` passed `mAssetIdRoot` to
 the particles, animation, script and renderer modules. Now: it builds one

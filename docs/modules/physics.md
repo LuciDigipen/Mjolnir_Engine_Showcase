@@ -14,7 +14,7 @@ A body has a shape, a box, a sphere or a capsule that stands along an axis, and 
 
 A body can be a trigger, which reports contacts and never blocks. Jolt calls it a sensor, and by default it reports dynamic and kinematic bodies and not static ones (Sensors).
 
-A body is on one of 32 layers. The project's layer table, read by the `physics_layers` library, says which pairs of layers collide, and a table saved in the editor is taken when Play begins, and a pair of static bodies never collides. Jolt keeps this as an object layer per body (Collision Filtering), here the layer and whether the body moves, and the broad phase keeps its two layers, static and moving (Broad Phase).
+A body is on one of 32 layers. The project's layer table, read by the `physics_layers` library, says which pairs of layers collide, and a pair of static bodies never collides. The table is a project resource that `App` shares into every World. `PhysicsSystem` compares it with the `PhysicsWorld`'s applied copy in `OnUpdate`, before the check for a live simulation, so an edit is taken between steps in Edit and while paused, and again in `OnPlayBegin` before bodies are built. A table `CheckPhysicsLayers` rejects leaves the applied one and logs `Physics layers not applied` once per distinct table. Jolt keeps this as an object layer per body (Collision Filtering), here the layer and whether the body moves, and the broad phase keeps its two layers, static and moving (Broad Phase).
 
 **The step.** `PhysicsSystem` runs in `FixedUpdate` at order `kNormal`, once per fixed substep. A script's `OnFixedUpdate` runs before it, at `kEarly`, so a force or a pose a script sets acts on the same step. Each step applies edits to the live bodies, pushes Transform changes to Jolt, runs the step gates, steps Jolt and writes the poses back. `PhysicsInterpolationSystem` runs in `PostUpdate` and draws interpolating bodies between their last two steps.
 
@@ -53,7 +53,7 @@ are per pool, not an aggregate thread cap.
 | `PhysicsInterpolationSystem` | `physics/PhysicsInterpolationSystem.h` | The blend between the last two steps |
 | `PhysicsStepGate`, `PhysicsStepGates` | `physics/PhysicsStepGate.h` | Lets another module act on bodies between the sync and the step |
 | `CollisionEvents`, `CollisionEventSystem` | `physics/CollisionEvents.h` | The per-frame event list and its drain |
-| `PhysicsLayerTable`, `PhysicsLayerUpdate`, `ReadPhysicsLayers` | `physics_layers/PhysicsLayers.h`, `physics_layers/PhysicsLayerSettings.h` | The 32 layers, the resource the editor leaves a saved table in, and the `physicsLayers` section of `project_settings.json`. A plain library with no Jolt, which the editor links on its own |
+| `PhysicsLayerTable`, `ReadPhysicsLayers`, `CheckPhysicsLayers` | `physics_layers/PhysicsLayers.h`, `physics_layers/PhysicsLayerSettings.h` | The 32 layers, comparable with `==`, the `physicsLayers` section of `project_settings.json`, and the check a table passes before it is applied or saved. A plain library with no Jolt, which the editor links on its own |
 | `PhysicsMotion`, `PhysicsShape`, `PhysicsAxis`, `BodyHandle` | `physics/PhysicsTypes.h` | The enums and the handle, free of Jolt |
 | `HeightFieldDesc`, `SharedHeightField` | `physics/HeightField.h` | Static height field bodies, built by terrain |
 
@@ -113,6 +113,8 @@ Cited from the Jolt documentation at https://jrouwe.github.io/JoltPhysics/ by se
 - **Shapes** (`BodyInterface::SetShape`): replaces a body's shape in place, and with the mass properties updated it returns the shape's own volume mass, so the authored mass is put on again.
 
 ## Changed
+
+*2026-11-05*, **Layers are applied between steps, and `PhysicsLayerUpdate` is gone.** Was: the editor left a saved table in a `PhysicsLayerUpdate` resource that physics took only when Play began, and `PhysicsModule` read the file itself. Now: the table is a shared project resource, `PhysicsModule` copies it into the `PhysicsWorld` at construction, and `PhysicsSystem` compares the two at each safe point and applies a valid change. Because: an edit made while paused, or by a script, never reached the running world, and a second resource carried the same table.
 
 *2026-10-25*, **Bodies at add time, and `OnFixedUpdate`.** Was: a body was built on the first fixed step, so anything a script did in `OnStart` was lost, and scripts had no callback on the step. Now: a body exists the moment its `RigidBody` is added or Play begins, and `OnFixedUpdate` runs before each step. Because: a body should exist before any script runs.
 

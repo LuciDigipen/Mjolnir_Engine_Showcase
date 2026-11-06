@@ -22,7 +22,7 @@ heights on this module's grid, encode a candidate release with this module's
 writer, validate it with its reader and publish it as an immutable release
 (see [TerrainTool CLI](#terraintool-cli)); the engine never links them.
 
-`mir::terrain` · depends `mir::assets`, `mir::core` (public), `mir::serial` (private, streaming settings) · API `modules/terrain/include/terrain/` · maintainer Jackey Cen · reviewed 2026-10-10
+`mir::terrain` · depends `mir::assets`, `mir::core` (public), `nlohmann_json` (public, the configuration's JSON), `mir::serial` (private, streaming settings) · API `modules/terrain/include/terrain/` · maintainer Jackey Cen · reviewed 2026-10-10
 
 ## Model
 
@@ -496,6 +496,38 @@ section), the `gpu` section #127's and the `collision` section #128's (see
 [Collision residency](#collision-residency-issue-128)); the 16 MiB budget
 (256 MiB in #126) keeps TerrainCheck's 2 x 2 map Eager while its larger map
 streams by interest.
+
+**Configuration layers.** `LoadTerrainStreamingSettings` is two steps composed.
+`ReadTerrainStreamingFiles` returns the found flags, both JSON objects and the
+missing or not-an-object problems, and `ParseTerrainStreamingSettings` merges the
+local object over the project one, reads it and validates it. `TerrainStreamingConfiguration`
+(`terrain/TerrainStreamingConfiguration.h`) keeps the pieces apart. `Project()` is
+the editable project JSON, the local overrides are private and read only from
+their file, and `Effective()` is the only value a consumer reads. `Refresh()`
+returns false when `Project()` equals the last attempted input. Otherwise it records
+that input, merges and validates, publishes the result when it is valid, and when it
+is not keeps the previous `Effective()`, keeps the problems for a panel and logs them
+once. An invalid input is not retried until the project JSON changes again. The first
+merge, at construction, logs nothing, because `TerrainRuntime` reports a startup
+problem as it always has. A local file that is found but not a JSON object keeps
+failing every attempt, so a broken override is never silently dropped.
+
+Each field applies in one way. `TerrainRuntime` applies a change to a running
+streamer (see [terrain_runtime.md](terrain_runtime.md)), and `TerrainStreamer`,
+`TerrainMeshResidency`, `TerrainCollisionResidency` and `TerrainViewSelector` each
+take an `ApplySettings` for the fields that apply.
+
+| Setting | Behavior |
+|---|---|
+| `cpu.budgetBytes`, `gpu.budgetBytes`, `collision.budgetBytes` | Apply, and a lower budget evicts on the next step |
+| `view.*` | Apply |
+| `io.maxInstallsPerFrame`, `retry.*`, `residency.queryLeaseSeconds` | Apply |
+| `gpu.meshRetainSeconds`, `collision.retainSeconds`, `loadLatencySeconds`, `latencyMarginSeconds`, `prefetchSeconds`, `bodyToleranceMeters` | Apply |
+| `collision.spacingsMeters`, `maxErrorMeters` | Apply, since `Collide` passes them to `SetPolicy` every step |
+| `residency.mode` | Applies on next registration: later registrations use it, registered releases keep their resolved mode, and `Auto` resolves against the CPU budget at each new registration |
+| `collision.pieceTiles`, `seamOverlapMeters` | Rebuild, because they set the piece layout that release layouts cache, so the change takes effect at the next Play |
+| `gpu.stagingBytes` | Increase: next Play. Decrease: restart. |
+| `io.workerThreads` | Restart |
 
 **No wait at load (#128).** The engine resolves with `TerrainEagerLoad::Async`:
 an Eager release's payloads are requested as `Required` and arrive like any
@@ -1247,7 +1279,8 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainReleaseUsage` | `terrain/TerrainStreamer.h` | one release's share of a residency (waiting, in flight, ready, failed, bytes, first failure); `Usage(release)` on the streamer, the mesh residency and the collision residency |
 | `TerrainPayloadKey`, `TerrainPayloadWant`, `TerrainDemand`, `TerrainPayloadState`, `TerrainPayloadStatus`, `TerrainStreamingStats` | `terrain/TerrainStreamer.h` | the key (asset, release, kind, level, layer, tile or Region), a want with demand and rank, the states, budget and counters; `TerrainPayloadKeyOf`, `TerrainPayloadFootprint`, `DescribeTerrainPayloadKey` |
 | `TerrainExecutor`, `TerrainWorkerPool`, `TerrainManualExecutor` | `terrain/TerrainExecutor.h` | where background jobs run: a pool of `std::jthread`s, or a queue a test runs by hand |
-| `TerrainStreamingSettings`, `TerrainResidencyMode`, `LoadTerrainStreamingSettings`, `ValidateTerrainStreamingSettings` | `terrain/TerrainStreamingSettings.h` | the CPU budget, IO, retry, residency, per-viewport detail (`view`), GPU mesh (`gpu`) and collision piece (`collision`) settings with no code defaults; the game file plus the machine-local override, every problem by path and file; `kTerrainSeamMarginCells` |
+| `TerrainStreamingConfiguration` | `terrain/TerrainStreamingConfiguration.h` | the editable project JSON, the local overrides, the effective settings and `Refresh()`, with copy and move deleted |
+| `TerrainStreamingSettings`, `TerrainResidencyMode`, `ReadTerrainStreamingFiles`, `ParseTerrainStreamingSettings`, `LoadTerrainStreamingSettings`, `ValidateTerrainStreamingSettings` | `terrain/TerrainStreamingSettings.h` | the CPU budget, IO, retry, residency, per-viewport detail (`view`), GPU mesh (`gpu`) and collision piece (`collision`) settings with no code defaults; the game file plus the machine-local override, every problem by path and file; `kTerrainSeamMarginCells` |
 | `TerrainCollisionPolicy`, `ValidTerrainCollisionPolicy`, `TerrainUniformSamples`, `TerrainCollisionError` | `terrain/TerrainCollision.h` | P2's collision spacings and error (from the `collision` settings; a World resource overrides them); a uniform block with its deviation, slope and height bound; the error sum |
 | `BuildTerrainUniformSamples`, `TerrainSourceTileLookup`, `TerrainCollisionErrorBudget`, `TerrainCollisionCovers` | `terrain/TerrainCollision.h` | a uniform block over the whole map from a height query, or over any bounds from a source lookup (any thread); its error for a placement and decoded shape; whether the decoded shape covers it |
 | `TerrainCollisionResidency` | `terrain/TerrainCollisionResidency.h` | height field pieces collision sources need: `SetInstances` (active, and staged ones built ahead but never placed), `SetPolicy`, `Install` (finished builds placed, unused retired; between fixed steps), `Update` (needs, reads, builds, answers), `Answer`, `StagedStatus`, `ForEachCollider`, `Clear`, `PredictionSeconds`, `TakeEvents`, `Stats`, `Usage` |
@@ -1819,6 +1852,16 @@ physics side are in `tests/TerrainResidencyTestSupport.h`).
     out of P3).
 
 ## Changed
+
+*2026-11-05*, **Streaming settings have a project layer and an effective value.** Was:
+`LoadTerrainStreamingSettings` read both files once at setup, and the streamer, the mesh
+residency and the collision residency each kept a copy that nothing could change. Now:
+the load is split into `ReadTerrainStreamingFiles` and `ParseTerrainStreamingSettings`,
+`TerrainStreamingConfiguration` holds the editable project JSON and publishes a
+validated effective value on `Refresh()`, and every setting is classified as apply,
+applies on next registration, rebuild or restart. Because: an edit to a budget or a
+detail bound could not reach a running World, and nothing said which settings could
+ever be applied.
 
 *2026-10-31* — **Terrain follows the renderer's upload budget (#359).** Was:
 `gpu.uploadMiBPerFrame` in `terrain_streaming.json` set the renderer's per-frame

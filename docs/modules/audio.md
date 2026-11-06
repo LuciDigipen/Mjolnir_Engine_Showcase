@@ -108,12 +108,25 @@ never `project_settings.json`, which is the game's and goes into source control.
 { "audio": { "music": { "volume": 0.3, "muted": true }, "sfx": { "volume": 0.7, "muted": false } } }
 ```
 
-Until that file exists, the game's own defaults apply. `AudioModule` first reads
-an `audio` section of the same shape from `project_settings.json`, keeps it as
-`Defaults()`, and starts from it wherever the per-user file is missing or holds a
-bad value. Without that section the defaults are full volume, unmuted. The
+Until that file exists, the game's own defaults apply. An `audio` section of the
+same shape in `project_settings.json` is the project's defaults. `ProjectResources`
+loads it once and hands `AudioModule` a reference to it, `AudioModule` keeps it as
+`Defaults()`, and the module starts from it wherever the per-user file is missing or
+holds a bad value. Without that section the defaults are full volume, unmuted. The
 per-user file is only written once a value changes, so a player who never touches
 a volume keeps getting the project's.
+
+A change to the defaults while the game runs follows one rule, that the player's file
+wins. `AudioSettingsSystem` compares `Defaults()` with the defaults it last applied each
+frame. On a difference, `ApplyChangedDefaults` applies the new levels at once when the
+player has no settings file, and the system then takes them as its saved baseline, so
+the autosave does not turn the change into a player file. When the file exists,
+nothing audible changes, because the file masks every default. A defaults change never
+writes the player file. The editor's Save writes only `project_settings.json`, so its
+levels are heard on a machine with no player file, and a developer who has played with
+the pause menu's volume sees no change. `SetDefaults` changes the defaults in memory and
+writes nothing, and `ReloadDefaults` reads the saved section back, assigning only when
+`ReadAudioDefaults` succeeds.
 
 ## API
 
@@ -128,8 +141,10 @@ a volume keeps getting the project's.
 | `SetObjectVolume`, `SetSoundtrackVolume` | `audio/AudioSystem.h` | One emitter's or the soundtrack's own volume, 0 to 1 on the channels' curve, on top of its channel's |
 | `IsIdle` | `audio/AudioSystem.h` | Whether both channels are silent, so Wwise is suspended and posts are refused |
 | `LoadAudioSettings`, `SaveAudioSettings` | `audio/AudioSettings.h` | A file's `audio` section, per-user or `project_settings.json`, read over the defaults given and written keeping the other sections |
+| `ReadAudioDefaults`, `ApplyChangedDefaults` | `audio/AudioSettings.h` | The `audio` section of a file with the reason when it cannot be used, and nothing logged, and the apply of changed defaults when the player has no file, which writes nothing |
 | `AudioModule::SaveDefaults` | `audio/AudioModule.h` | Writes the `audio` section of `project_settings.json`, keeping its other sections, and makes it `Defaults()`; the editor's Project Settings saves through it |
-| `AudioModule::Defaults` | `audio/AudioModule.h` | The `audio` section of `project_settings.json` as read at startup, which a missing per-user file falls back to |
+| `AudioModule::SetDefaults`, `ReloadDefaults` | `audio/AudioModule.h` | Change `Defaults()` in memory without a write, and read the saved section back, keeping the old value with a problem when the file is unusable |
+| `AudioModule::Defaults` | `audio/AudioModule.h` | The `audio` section of `project_settings.json` as loaded or last saved, which a missing per-user file falls back to |
 | `ListBankEvents` | `audio/BankEvents.h` | Each bank in a SoundBank directory, but `Init`, with the event names from the `<bank>.json` beside it |
 | `Soundtrack` | `audio/components/Soundtrack.h` | A scene's music: `eventName`, `bankName`, `fadeOutMs` |
 | `SoundtrackSystem` | `audio/SoundtrackSystem.h` | Requests the bank, starts the music on Play and cuts it on Stop |
@@ -421,6 +436,15 @@ exercised.
    process; a Wwise line needs a route to the editor that does not link audio.
 
 ## Changed
+
+*2026-11-05*, **The project's audio defaults are editable and applied.** Was:
+`AudioModule` loaded the defaults itself, the editor edited a copy and Save also
+set the live levels, and nothing reacted to a changed default. Now: `ProjectResources`
+loads them and `AudioModule` holds a reference, `SetDefaults` and `ReloadDefaults`
+edit and reload them, Save writes only `project_settings.json`, and
+`AudioSettingsSystem` applies a changed default when the player has no settings file.
+Because: setting the live levels on Save made a developer's own volume look like the
+project's, and a player's file must never be rewritten by a defaults change.
 
 *2026-10-27* — **Music and SFX volumes, an idle Wwise, and saved settings.**
 Was: only the music had a volume and mute, Wwise mixed silence when it was muted,

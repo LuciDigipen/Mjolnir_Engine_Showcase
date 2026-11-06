@@ -49,10 +49,11 @@ real renderer, and everything else in the bridge, are covered only by the
 `terrain` tests and the smoke runs. GPU and visual checks remain supervisor work.
 
 ```
-constructor    -> TerrainRuntime::Bind      streaming settings -> TerrainStreamingSettings, TerrainStreamer resources;
-                                            renderer mesh streaming; collision residency; registers itself in the
+constructor    -> TerrainRuntime::Bind      effective streaming settings from the shared TerrainStreamingConfiguration
+                                            -> TerrainStreamer resource; renderer mesh streaming; collision residency; registers itself in the
                                             ViewDrawSources and PhysicsStepGates resources
-FrameBegin     -> TerrainRuntime::Update    TerrainStreamer::Update, TerrainReleaseSwitch::Update,
+FrameBegin     -> TerrainRuntime::Update    a changed effective configuration applied first; TerrainStreamer::Update,
+                                            TerrainReleaseSwitch::Update,
                                             TerrainMeshResidency::Install, TerrainCollisionResidency::Install: the
                                             install point; outside Play the bodies' collision needs too; each staged
                                             release's prewarm reported to the switch
@@ -70,10 +71,11 @@ Render         -> TerrainRuntime::Prepare   per viewport: select, SetInterest; t
                   AppendVolumeDraws         shadow casters at viewport 0's detail
 ```
 
-`Bind` reads the game's `terrain_streaming.json` with the machine-local
-`terrain_streaming.local.json` beside the executable layered over it (see
-[terrain.md](terrain.md#streaming-and-cpu-residency-issue-126)). Valid settings
-become the `TerrainStreamingSettings` and `TerrainStreamer` World resources, the
+`Bind` reads `Effective()` from the shared `TerrainStreamingConfiguration`, which
+`ProjectResources` built from the game's `terrain_streaming.json` with the
+machine-local `terrain_streaming.local.json` beside the executable layered over it
+(see [terrain.md](terrain.md#streaming-and-cpu-residency-issue-126)). Valid settings
+become the `TerrainStreamer` World resource, the
 streamer with a `TerrainJobExecutor` background lane on the app-owned executor,
 also used for mesh/collision builds and release checks. `io.workerThreads` caps
 terrain's share of the engine workers; `--workers 0` runs inline. The adapter
@@ -87,6 +89,17 @@ asks the renderer for (`gpu.stagingMiB`). Terrain follows the renderer's per-fra
 upload budget, the game's `rendering.uploadMiBPerFrame`. Invalid settings, or missing ones in
 a scene with terrain, are one error, and no terrain loads; a game without
 terrain needs no file.
+
+`Update` compares `Effective()` with the settings it last saw, and on a difference
+applies them to the streamer, to `TerrainMeshResidency` and
+`TerrainCollisionResidency`, and to the view selector of every viewport and of every
+staged release, because each selector holds its own copy of the `view` bounds.
+Four fields are never applied to a running terrain, and a change to one is logged
+once, naming the field: `gpu.stagingBytes` with "Increase: next Play. Decrease:
+restart.", `collision.pieceTiles` and `collision.seamOverlapMeters` with "takes
+effect at the next Play", and `io.workerThreads` with "takes effect after a
+restart". `residency.mode` applies on next registration. The full table is in
+[terrain.md](terrain.md).
 
 Releases resolve through the streamer with `TerrainEagerLoad::Async`, so
 nothing waits at load, on Play entry or at an Edit switch, and with
@@ -222,6 +235,14 @@ the whole spec. Tested through `terrain` (`TerrainScene`, `TerrainCollider`,
    without the other. No headless target needs that today.
 
 ## Changed
+
+*2026-11-05*, **`TerrainRuntime` applies a changed configuration.** Was: `Bind` loaded
+the two files itself, kept a `TerrainStreamingSettings` World resource nobody read, and
+never looked at the settings again. Now: it reads the shared `TerrainStreamingConfiguration`,
+drops the resource, and `Update` applies a changed effective value to the streamer, both
+residencies and every view selector, with a warning for the four fields that need a
+Play or a restart. Because: the settings were fixed at setup, and the second copy inside
+a World was project configuration with a second owner.
 
 *2026-10-31* — **`TerrainGpuUploader` adapts terrain's uploader onto the
 renderer's `IMeshUploader` (#361).** Was: it held a `VulkanRenderer`. Now: it

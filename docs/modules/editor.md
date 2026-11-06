@@ -390,15 +390,36 @@ JSON are pick-only. A current event no bank lists, typed earlier or into an
 unknown bank, still shows at the top as "(not listed)".
 
 **Audio in Project Settings.** With `IEditorAudio` set, the panel has an Audio
-section between Physics layers and External Tools. In Edit it edits a draft of
-the project's default music and SFX volume and mute; Save writes the `audio`
-section of `project_settings.json`, makes it what the pause menu's Restore
-defaults goes back to, and applies it, so Play sounds as a new player's game
-does. In Play the defaults are greyed out and a "While playing" group changes
+section between Physics layers and External Tools. In Edit its sliders change the
+project's default music and SFX volume and mute in memory through `SetDefaults`.
+Save writes the `audio` section of `project_settings.json` and makes it what the
+pause menu's Restore defaults goes back to, and it changes nothing that is heard
+now. The defaults are heard on a machine with no per-user settings file, through the
+audio module's apply path, and never rewrite a player file. "Reload Saved Audio
+Defaults" reads the saved section back and shows the problem when the file is
+unusable. In Play the defaults are greyed out and a "While playing" group changes
 what is heard at once. `EditorModule` takes the volumes at `PlayBegin` and puts
 them back at `PlayEnd`, so neither that group nor the pause menu's Audio screen
 changes anything for good, and the defaults are never written from them. With
 `--no-editor` the volumes are not put back, as in a game build.
+
+**Project Settings, Post Processing and Input Settings edit the project's own
+values.** Their widgets change the shared `RenderSettings`, `PostProcessingSettings`,
+`InputMap` and `PhysicsLayerTable` directly, so a change is live at once, a script's
+write shows in the panel, and Save writes the current value to disk and changes
+nothing in memory. No panel keeps a whole-settings draft. A widget whose value needs
+validation edits a short-lived buffer and commits only a valid value. The SSGI
+widgets edit `mSsgiEdit` and the DDGI widgets `mDdgiEdit`, each kept while one of its
+widgets is active, shown with its `ValidationError()`, assigned into the shared value
+only when valid and dropped when no widget is active, so the renderer never sees a
+value it rejects. A layer name edits a buffer for its slot, and the name reaches the
+shared table only when `CheckPhysicsLayers` passes on a copy that has it, with the
+reason shown under the field otherwise. The collision grid edits the table directly.
+A new action's name is held in `mNewActionName` and committed when it is non-empty and
+unused. The only other copies are those Save takes to clear its status message on the
+next edit. "Reload Saved Physics Layers" and "Reload Saved Audio Defaults" read the
+saved section into a temporary and assign only on success, and the physics layers stay
+greyed out in Play.
 
 Component edits go to `History` as commands, like entity actions, so each one
 can be undone. They change no `LoadedScene` entry, so `App` has nothing to do
@@ -622,6 +643,8 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
+*2026-11-05*, **The settings panels edit the project's values.** Was: `ProjectSettingsPanel`, `PostProcessingPanel` and `InputSettingsPanel` copied the live value into a whole-settings draft, assigned it back on Save, and so hid a script's later write and overwrote it. Now: the widgets edit the shared value, Save only writes it, SSGI, DDGI and a layer name edit a buffer until valid, the audio defaults edit through `SetDefaults`, Save no longer sets the live levels, and "Revert" became "Reload Saved Audio Defaults" and "Reload Saved Physics Layers". Because: a draft is a second owner of project configuration, and an invalid value in the renderer or the physics table would otherwise be applied or logged for every keystroke.
+
 *2026-10-28* — **A reflected Material window with per-asset drafts.** Was:
 shared surface materials could only be changed by editing `.material.json` by
 hand. Now: Project > Material follows the Content Browser's material selection
@@ -689,8 +712,8 @@ External Tools, and every body collided with every other. Now: it edits the `phy
 `project_settings.json` (up to 32 layer names and a collision grid), which the physics module reads, and a saved
 table is applied to the running `PhysicsWorld` while editing. Because: a game needs to say which layers pass
 through each other, and the settings window is where the other project-wide choices live. The table type and its
-file are in the plain `physics_layers` library, which the editor links instead of `physics`; a saved table is left
-in a `PhysicsLayerUpdate` resource for physics to take when Play begins.
+file are in the plain `physics_layers` library, which the editor links instead of `physics`; the panel edits the
+shared `PhysicsLayerTable`, which physics compares with its applied copy between steps.
 
 *2026-10-24* — **`EditorModule`; the import, content browser, scene ops, Prefab
 documents and project creation moved in from `app`.** Was: `App` held the

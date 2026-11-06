@@ -254,6 +254,27 @@ everything else depends on.
 A module above those two decides what a document means, and names no stream
 type. The flow is in [A file](#a-file).
 
+**`ProjectResources` owns configuration, and Worlds own the runtime state built from it.**
+
+`App` loads the project's configuration once, in `ProjectResources`, and every
+World borrows it before that World's modules are built. An edit and the running
+game therefore read one value, and a script write survives Stop.
+
+| Scope | Owner | Examples | Lifetime |
+|---|---|---|---|
+| Project | `App`'s `ProjectResources` | input bindings, render settings, post-processing defaults, terrain configuration, physics layers, editable audio configuration | until the project closes, which is the process, since a project switch relaunches |
+| World | each World | input state, physics simulation, collision events | until the World is destroyed |
+| Scene instance | the World, keyed by scene ID (`EmplaceSceneResource`) | state belonging to one additive scene | until that scene unloads |
+
+Editing configuration and applying it to a running system are separate
+operations. A writer, whether a panel, a script or a reload, changes the project
+value in place and never replaces its storage, because Worlds hold references to
+it. Each consumer then applies the value at its own safe boundary, and each
+setting's behavior is one of live, apply, applies on next registration, or
+rebuild and restart, classified per field in the owning module's doc. A widget
+whose value needs validation edits a short-lived buffer, and only a valid value
+reaches the project value. See [app.md](modules/app.md#project-resources).
+
 ## Flows
 
 ### A frame
@@ -371,7 +392,9 @@ every path is built from `ExecutableDir()`.
              |
         GameProject
              |
-             +-- mProjectSettingsPath --> InputMap, RenderSettings
+             +-- mProjectSettingsPath --> ProjectResources: InputMap, RenderSettings, PostProcessingSettings,
+             |                            PhysicsLayerTable, the audio defaults
+             +-- mRootDir             --> ProjectResources: terrain_streaming.json
              +-- mSceneDir            --> SceneManifestPath(), EntityFilePath()
              +-- mSoundBankDir        --> audio::Init, after which Wwise opens banks itself
              +-- mAssetIdRoot         --> an id prefix, not a disk path
@@ -553,6 +576,17 @@ table. See [script.md](modules/script.md).
    [modules/assets.md](modules/assets.md)).
 
 ## Changed
+
+*2026-11-05*, **Project configuration has one owner.** Was: each module loaded
+its own settings in its constructor, the editor's panels edited whole-settings
+drafts and copied them back on Save, and a saved physics layer table travelled to
+the running World through a `PhysicsLayerUpdate` resource. Now: `App` loads the
+configuration once in `ProjectResources`, shares it into every World before the
+World's modules are built, and each consumer applies a change at its own safe
+boundary, while panels edit the shared value directly. Because: a script's write
+was hidden by a panel's draft and then overwritten on Save, the authoring and Play
+Worlds each held a copy, and no setting said whether an edit reached a running
+system. See [app.md](modules/app.md#project-resources).
 
 *2026-10-24* — **App builds modules instead of wiring subsystems.** Was: `App`
 held fixed subsystem members, registered every library's components, resources

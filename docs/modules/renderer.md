@@ -104,12 +104,31 @@ barriers, and frame pacing is one timeline semaphore rather than a fence pool.
 ### The module
 
 `RendererModule` starts the renderer, registers the renderer's components,
-entity types and post effects, the `ViewDrawSources`, `RenderSettings` and
-`PostProcessingSettings` resources, `MeshResolveSystem` in `LateUpdate` and
-`RenderSystem` in `Render`. It takes the window as an `ISurfaceProvider`, so
+entity types and post effects, the `ViewDrawSources` resource,
+`MeshResolveSystem` in `LateUpdate` and `RenderSystem` in `Render`. The
+`RenderSettings` and `PostProcessingSettings` it reads are project resources that
+`App` shares into every World (see [app.md](app.md#project-resources)), so the
+module loads neither. It takes the window as an `ISurfaceProvider`, so
 `renderer` still never links `window`. Its stage functions free the scene's GPU
 resources at `SceneUnload` and reset the temporal history at `SceneLoad` and
 `PlayBegin`; a Stop keeps every cache.
+
+### Project settings and how they apply
+
+Each field of the shared settings has one behavior, because a panel, a script or a
+reload edits the value in place and the renderer decides when it takes effect.
+`rayTracing`, `ddgi.*` and `ssgi.*` are live, since `RenderSystem` reads them every
+frame, and `rayTracing` keeps its capability check and the terrain rebuild path.
+The post-processing effects are live the same way. `uploadMiBPerFrame` and
+`residencyMiB` apply at a frame boundary, once for the shared renderer: the main
+binding sets them at construction, and its `FrameBegin` slot compares them with the
+last applied pair every frame. A difference calls `SetUploadFrameBudget` or
+`SharedResidency()->SetTotalTarget`, a refused upload budget keeps its old applied
+value and is tried again the next frame, and the other bindings never touch either.
+
+A Prefab preview World is a `RenderSystem` source, and it uses the main World's
+rendering settings, because `RenderSystem::SetSourceWorld` keeps them. No preview
+World holds a settings resource of its own.
 
 ### Resolving mesh and material names
 
@@ -348,7 +367,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
 | `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame`, `residencyMiB` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame`, `residencyMiB` and `ddgi`); `LoadFile`/`SaveFile`, a project resource `App` shares into each World |
 
 ## Rules
 
@@ -757,7 +776,7 @@ one clobbering the other.
 the file cannot be read as a JSON object at all. A readable file whose
 `"rendering"` key is absent, or holds something other than an object, loads as
 defaults instead — a file from before sections existed has no `"rendering"` key
-and is the ordinary case. `RendererModule` turns the `nullopt` into defaults
+and is the ordinary case. `ProjectResources` turns the `nullopt` into defaults
 with `value_or`, so no system has to check.
 
 The key is read with `find` rather than nlohmann's `value`. `value` hands back
@@ -1297,6 +1316,15 @@ shutdown. Run it through `ctest -R smoke.texture-gpu`, it is built only with
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-11-05*, **`RenderSettings` and `PostProcessingSettings` are shared project
+resources.** Was: each world binding loaded both from `project_settings.json` and
+applied the upload budget and residency target on every binding. Now: `App` shares one
+copy into every World, the main binding applies the budgets at construction and
+compares them with the shared values in its `FrameBegin` slot, and
+`RendererModuleSettings::mProjectSettingsPath` is gone. Because: a Play World's
+copy diverged from the one the panels edit, and an edited budget never reached
+the renderer. See [app.md](app.md#project-resources).
 
 *2026-10-31* — **Mesh assets load in the background, and the upload is an
 interface (#361).** Was: `MeshResolveSystem` read the blob, parsed the JSON and
