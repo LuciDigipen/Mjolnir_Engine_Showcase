@@ -163,4 +163,14 @@ namespace mir
         audio::SetSfxVolume(settings.mSfx.mVolume);
         audio::SetSfxMuted(settings.mSfx.mMuted);
     }
+
+    bool ApplyChangedDefaults(const AudioSettings &defaults, const std::filesystem::path &playerFile)
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(playerFile, ec))
+            return false;
+
+        ApplyAudioSettings(defaults);
+        return true;
+    }
 }

@@ -836,3 +836,71 @@ TEST_CASE("Moving through a map keeps residency within the budget and reads only
     CHECK(heights > 0);
     CHECK_FALSE(opened.source->ReaderThreads().contains(std::this_thread::get_id()));
 }
+
+TEST_CASE("An applied lower CPU budget evicts down to it on the next step", "[terrain][streaming][configuration]")
+{
+    const auto layout = TerrainLayout::CreateFromTileSize(64.0, 4.0, {0.0, 0.0, 256.0, 256.0});
+    REQUIRE(layout);
+    Streamed s(0x1261, *layout, false);
+    const uint64_t each = TerrainPayloadFootprint(s.Record(s.Tile({0, 0})));
+    Manual m(StreamingSettings(6 * each, Mode::Interest));
+    m.streamer.Add(s.opened.release);
+
+    const TerrainInterestId prefetch = m.streamer.AddInterest();
+    std::vector<TerrainPayloadWant> wants;
+    for (int i = 0; i < 6; ++i)
+        wants.push_back({s.Tile({i % 4, i / 4}), Demand::Prefetch, float(i)});
+    Want(m.streamer, prefetch, wants);
+    m.Settle();
+    CHECK(m.streamer.Stats().residentBytes == 6 * each);
+
+    TerrainStreamingSettings lower = m.streamer.Settings();
+    lower.cpu.budgetBytes = 3 * each;
+    m.streamer.ApplySettings(lower);
+    CHECK(m.streamer.Settings().cpu.budgetBytes == 3 * each);
+    m.Settle();
+    CHECK(m.streamer.Stats().budgetBytes == 3 * each);
+    CHECK(m.streamer.Stats().residentBytes + m.streamer.Stats().loadingBytes <= 3 * each);
+}
+
+TEST_CASE("Applied settings never change the fields that need a restart or a new Play", "[terrain][streaming][configuration]")
+{
+    Streamed s(0x1262);
+    Manual m(StreamingSettings(uint64_t(1) << 30, Mode::Interest));
+    const TerrainStreamingSettings before = m.streamer.Settings();
+
+    TerrainStreamingSettings next = before;
+    next.io.workerThreads += 1;
+    next.io.maxInstallsPerFrame += 1;
+    next.gpu.stagingBytes += 1;
+    next.gpu.budgetBytes += 1;
+    next.collision.pieceTiles += 1;
+    next.collision.seamOverlapMeters += 1.0;
+    next.collision.maxErrorMeters += 0.5;
+    m.streamer.ApplySettings(next);
+
+    const TerrainStreamingSettings &after = m.streamer.Settings();
+    CHECK(after.io.workerThreads == before.io.workerThreads);
+    CHECK(after.gpu.stagingBytes == before.gpu.stagingBytes);
+    CHECK(after.collision.pieceTiles == before.collision.pieceTiles);
+    CHECK(after.collision.seamOverlapMeters == before.collision.seamOverlapMeters);
+    CHECK(after.io.maxInstallsPerFrame == next.io.maxInstallsPerFrame);
+    CHECK(after.gpu.budgetBytes == next.gpu.budgetBytes);
+    CHECK(after.collision.maxErrorMeters == next.collision.maxErrorMeters);
+}
+
+TEST_CASE("A changed residency mode resolves only releases added after it", "[terrain][streaming][configuration]")
+{
+    Streamed a(0xA127);
+    Streamed b(0xB127);
+    Manual m(StreamingSettings(uint64_t(1) << 30, Mode::Interest));
+    CHECK(m.streamer.Add(a.opened.release) == Mode::Interest);
+
+    TerrainStreamingSettings eager = m.streamer.Settings();
+    eager.residency.mode = Mode::Eager;
+    m.streamer.ApplySettings(eager);
+
+    CHECK(m.streamer.ModeOf(a.info) == Mode::Interest);
+    CHECK(m.streamer.Add(b.opened.release) == Mode::Eager);
+    CHECK(m.streamer.ModeOf(b.info) == Mode::Eager);
+}

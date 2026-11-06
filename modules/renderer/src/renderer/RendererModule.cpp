@@ -85,6 +85,8 @@ namespace mir
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
             mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
             mRenderer.SharedResidency()->SetTotalTarget(renderSettings.ResidencyBytes());
+            mAppliedUploadMiB = renderSettings.uploadMiBPerFrame;
+            mAppliedResidencyMiB = renderSettings.residencyMiB;
         }
 
         MIR_ASSERT(settings.mResolver != nullptr, "RendererModule: settings.mResolver is required");
@@ -131,9 +133,21 @@ namespace mir
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mActiveCamera->Reset(); });
 
         if (settings.mAdvanceSharedFrame)
-            mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &)
+            mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &frame)
                 {
                     mSurfaceMaterials.Advance();
+
+                    // Edits are made in place, so a difference from what was applied is applied here. A refused
+                    // upload budget keeps its old applied value and is tried again next frame.
+                    const RenderSettings &shared = frame.world.Resource<RenderSettings>();
+                    if (shared.uploadMiBPerFrame != mAppliedUploadMiB &&
+                        mRenderer.SetUploadFrameBudget(shared.UploadFrameBytes()))
+                        mAppliedUploadMiB = shared.uploadMiBPerFrame;
+                    if (shared.residencyMiB != mAppliedResidencyMiB)
+                    {
+                        mRenderer.SharedResidency()->SetTotalTarget(shared.ResidencyBytes());
+                        mAppliedResidencyMiB = shared.residencyMiB;
+                    }
                 });
 
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)

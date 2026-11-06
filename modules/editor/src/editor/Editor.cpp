@@ -1619,7 +1619,7 @@ namespace mir
             {
                 if (ImGui::Begin("Project Settings", &mShowProjectSettings))
                     mProjectSettingsPanel.Draw(renderSettings, mProjectSettingsPath, mShowInputSettings,
-                        sceneWorld.TryResource<PhysicsLayerUpdate>(), mAudio, mode.mMode == EngineMode::Edit);
+                        sceneWorld.TryResource<PhysicsLayerTable>(), mAudio, mode.mMode == EngineMode::Edit);
                 ImGui::End();
             }
             else

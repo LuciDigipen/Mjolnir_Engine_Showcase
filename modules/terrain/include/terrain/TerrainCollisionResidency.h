@@ -231,6 +231,10 @@ namespace mir
         TerrainCollisionResidency(const TerrainCollisionResidency &) = delete;
         TerrainCollisionResidency &operator=(const TerrainCollisionResidency &) = delete;
 
+        // The fields that apply to a running residency. pieceTiles and seamOverlapMeters shape the pieces the
+        // release layouts cache, so they are not taken here.
+        void ApplySettings(const TerrainStreamingSettings::Collision &collision);
+
         // The TerrainWorld's instances. At a safe point: colliders of placements and releases no longer here go now.
         // Staged instances are those of a release a switch prepares: their pieces are built ahead, as prefetch, for
         // what the sources would need there, and placed only once a later call sets them active.

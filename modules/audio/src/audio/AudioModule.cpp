@@ -38,13 +38,21 @@ namespace mir
         class AudioSettingsSystem final : public ISystem
         {
         public:
-            AudioSettingsSystem(std::filesystem::path path, const AudioSettings &saved)
-                : mPath(std::move(path)), mSaved(saved)
+            // defaults is the project's loaded section, which outlives this system and is edited in place.
+            AudioSettingsSystem(std::filesystem::path path, const AudioSettings &saved, const AudioSettings &defaults)
+                : mPath(std::move(path)), mSaved(saved), mDefaults(defaults), mAppliedDefaults(defaults)
             {
             }
 
             void OnUpdate(SystemContext &context) override
             {
+                if (mDefaults != mAppliedDefaults)
+                {
+                    // Applied levels that equal the defaults are not a player choice, so they are not saved.
+                    if (ApplyChangedDefaults(mDefaults, mPath))
+                        mSaved = mDefaults;
+                    mAppliedDefaults = mDefaults;
+                }
                 if (context.elapsed - mLastSave >= kMinSaveIntervalSeconds)
                     Save(context.elapsed);
             }
@@ -72,6 +80,8 @@ namespace mir
 
             std::filesystem::path mPath;
             AudioSettings mSaved;
+            const AudioSettings &mDefaults;
+            AudioSettings mAppliedDefaults;
             double mLastSave = -kMinSaveIntervalSeconds;
         };
     }
@@ -93,7 +103,7 @@ namespace mir
         context.scheduler.AddSystem<SoundtrackSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate});
         context.scheduler.AddSystem<AudioSettingsSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate},
-            settingsPath, settings);
+            settingsPath, settings, mDefaults);
 
         mHooks = context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
         mSoundtrackHooks =

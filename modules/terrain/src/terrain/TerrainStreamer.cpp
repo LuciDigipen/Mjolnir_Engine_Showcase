@@ -802,6 +802,29 @@ namespace mir
         return mImpl->settings;
     }
 
+    void TerrainStreamer::ApplySettings(const TerrainStreamingSettings &settings)
+    {
+        TerrainStreamingSettings &mine = mImpl->settings;
+        mine.cpu = settings.cpu;
+        mine.io.maxInstallsPerFrame = settings.io.maxInstallsPerFrame;
+        mine.retry = settings.retry;
+        mine.residency = settings.residency;
+        mine.view = settings.view;
+        mine.gpu.budgetBytes = settings.gpu.budgetBytes;
+        mine.gpu.meshRetainSeconds = settings.gpu.meshRetainSeconds;
+
+        TerrainStreamingSettings::Collision &collision = mine.collision;
+        const TerrainStreamingSettings::Collision &next = settings.collision;
+        collision.spacingsMeters = next.spacingsMeters;
+        collision.maxErrorMeters = next.maxErrorMeters;
+        collision.bodyToleranceMeters = next.bodyToleranceMeters;
+        collision.loadLatencySeconds = next.loadLatencySeconds;
+        collision.latencyMarginSeconds = next.latencyMarginSeconds;
+        collision.prefetchSeconds = next.prefetchSeconds;
+        collision.budgetBytes = next.budgetBytes;
+        collision.retainSeconds = next.retainSeconds;
+    }
+
     TerrainResidencyMode TerrainStreamer::Add(const std::shared_ptr<TerrainResidentRelease> &release, bool staged)
     {
         MIR_ASSERT(release != nullptr, "TerrainStreamer::Add: no release");

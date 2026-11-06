@@ -242,7 +242,7 @@ namespace mir
         }
 
         const TerrainStreamingSettings &settings = *configuration.Effective();
-        world.EmplaceResource<TerrainStreamingSettings>(settings);
+        mSeenSettings = settings;
         mPool = std::make_shared<TerrainJobExecutor>(jobs, settings.io.workerThreads);
         world.EmplaceResource<TerrainStreamer>(settings, mPool);
         MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} shared slots ({} engine workers), {} residency{}",
@@ -298,9 +298,53 @@ namespace mir
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - mStart).count();
     }
 
+    // The project configuration is edited in place, so each frame compares its effective value with the last seen.
+    void TerrainRuntime::ApplyConfiguration(TerrainStreamer &streamer)
+    {
+        const TerrainStreamingConfiguration *configuration = mWorld->TryResource<TerrainStreamingConfiguration>();
+        if (configuration == nullptr || !configuration->Effective() || !mSeenSettings ||
+            *configuration->Effective() == *mSeenSettings)
+            return;
+
+        const TerrainStreamingSettings &next = *configuration->Effective();
+        const TerrainStreamingSettings &applied = streamer.Settings();
+        const TerrainStreamingSettings &seen = *mSeenSettings;
+        if (next.gpu.stagingBytes != seen.gpu.stagingBytes && next.gpu.stagingBytes != applied.gpu.stagingBytes)
+            MIR_LOG_WARN("Terrain setting gpu.stagingBytes changed to {:.1f} MiB. Increase: next Play. Decrease: restart.",
+                         MiB(next.gpu.stagingBytes));
+        if (next.collision.pieceTiles != seen.collision.pieceTiles &&
+            next.collision.pieceTiles != applied.collision.pieceTiles)
+            MIR_LOG_WARN("Terrain setting collision.pieceTiles changed to {}, which takes effect at the next Play",
+                         next.collision.pieceTiles);
+        if (next.collision.seamOverlapMeters != seen.collision.seamOverlapMeters &&
+            next.collision.seamOverlapMeters != applied.collision.seamOverlapMeters)
+            MIR_LOG_WARN("Terrain setting collision.seamOverlapMeters changed to {} m, which takes effect at the next Play",
+                         next.collision.seamOverlapMeters);
+        if (next.io.workerThreads != seen.io.workerThreads && next.io.workerThreads != applied.io.workerThreads)
+            MIR_LOG_WARN("Terrain setting io.workerThreads changed to {}, which takes effect after a restart",
+                         next.io.workerThreads);
+
+        streamer.ApplySettings(next);
+        // Each viewport and each staged release holds its own copy of the view bounds.
+        for (ViewState &view : mViews)
+        {
+            if (view.selector)
+                view.selector->ApplySettings(next.view);
+            for (auto &[asset, staged] : view.staged)
+                staged->ApplySettings(next.view);
+        }
+        if (mMeshes)
+            mMeshes->ApplySettings(next.gpu);
+        if (mCollision)
+            mCollision->ApplySettings(next.collision);
+        mSeenSettings = next;
+    }
+
     void TerrainRuntime::Update()
     {
         TerrainStreamer *streamer = Streamer();
+        if (streamer && mWorld)
+            ApplyConfiguration(*streamer);
         if (streamer)
             streamer->Update();
         if (mSwitch && streamer)

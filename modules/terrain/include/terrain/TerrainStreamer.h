@@ -158,6 +158,11 @@ namespace mir
 
         const TerrainStreamingSettings &Settings() const;
 
+        // Takes the fields that apply to a running streamer. io.workerThreads, gpu.stagingBytes,
+        // collision.pieceTiles and collision.seamOverlapMeters are not copied, since they are fixed when the
+        // pool, the staging ring and the piece layout are built. residency.mode affects later Add calls only.
+        void ApplySettings(const TerrainStreamingSettings &settings);
+
         // Held weakly: once nobody else holds a release, its payloads go at the next Update. Returns the
         // mode chosen when the release was first added. A staged release is one a release switch prepares: its
         // mode is chosen as if the other releases of its asset were gone, and an Eager one's payloads are only

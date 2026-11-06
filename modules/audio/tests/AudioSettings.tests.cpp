@@ -171,3 +171,33 @@ TEST_CASE("audio settings applied are the audio settings read back, without a so
     mir::ApplyAudioSettings(AudioSettings{});
     CHECK_FALSE(mir::audio::IsIdle());
 }
+
+TEST_CASE("changed defaults apply when there is no player file and never create one", "[audio][defaults]")
+{
+    const TempDir dir("changed_defaults");
+    const std::filesystem::path playerFile = dir.path / "settings.json";
+    mir::ApplyAudioSettings(AudioSettings{});
+
+    CHECK(mir::ApplyChangedDefaults(Sample(), playerFile));
+    CHECK(mir::CurrentAudioSettings() == Sample());
+    CHECK_FALSE(std::filesystem::exists(playerFile));
+
+    mir::ApplyAudioSettings(AudioSettings{});
+}
+
+TEST_CASE("changed defaults change nothing when a player file exists and leave it untouched", "[audio][defaults]")
+{
+    const TempDir dir("changed_defaults_player");
+    const std::filesystem::path playerFile = dir.path / "settings.json";
+    AudioSettings player;
+    player.mMusic = {0.5f, false};
+    REQUIRE(mir::SaveAudioSettings(playerFile, player));
+    const std::string before = ReadFile(playerFile);
+    mir::ApplyAudioSettings(player);
+
+    CHECK_FALSE(mir::ApplyChangedDefaults(Sample(), playerFile));
+    CHECK(mir::CurrentAudioSettings() == player);
+    CHECK(ReadFile(playerFile) == before);
+
+    mir::ApplyAudioSettings(AudioSettings{});
+}

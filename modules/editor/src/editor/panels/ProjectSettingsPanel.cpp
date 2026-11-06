@@ -257,7 +257,7 @@ namespace mir
     }
 
     void ProjectSettingsPanel::DrawPhysicsLayers(
-        const std::filesystem::path &savePath, PhysicsLayerUpdate *layerUpdate, bool editing)
+        const std::filesystem::path &savePath, PhysicsLayerTable *sharedLayers, bool editing)
     {
         if (!mLayersLoaded)
             LoadLayers(savePath);
@@ -336,8 +336,8 @@ namespace mir
                 mLayersStatus = "Save failed - see log.";
             else
             {
-                if (layerUpdate != nullptr)
-                    layerUpdate->mPending = mDraftLayers;
+                if (sharedLayers != nullptr)
+                    *sharedLayers = mDraftLayers;
                 mLayersStatus = "Saved.";
             }
         }
@@ -356,7 +356,7 @@ namespace mir
     }
 
     void ProjectSettingsPanel::Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath,
-        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing)
+        bool &showInputSettings, PhysicsLayerTable *sharedLayers, IEditorAudio *audio, bool editing)
     {
         if (!mDraftLoaded)
         {
@@ -370,7 +370,7 @@ namespace mir
             showInputSettings = true;
 
         DrawRendering(renderSettings, mDraftRenderSettings, savePath);
-        DrawPhysicsLayers(savePath, layerUpdate, editing);
+        DrawPhysicsLayers(savePath, sharedLayers, editing);
         if (audio != nullptr)
             DrawAudio(*audio, editing);
         DrawExternalTools(savePath);

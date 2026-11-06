@@ -56,10 +56,4 @@ namespace mir
             return std::nullopt;
         }
     };
-
-    // A World resource the editor writes a saved table into and physics takes, so neither links the other.
-    struct PhysicsLayerUpdate
-    {
-        std::optional<PhysicsLayerTable> mPending;
-    };
 }

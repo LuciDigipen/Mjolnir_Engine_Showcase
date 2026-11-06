@@ -136,6 +136,9 @@ namespace mir
         TerrainMeshResidency(const TerrainMeshResidency &) = delete;
         TerrainMeshResidency &operator=(const TerrainMeshResidency &) = delete;
 
+        // The budget and the retain time apply from the next step. gpu.stagingBytes belongs to the renderer.
+        void ApplySettings(const TerrainStreamingSettings::Gpu &gpu);
+
         // The one install point per frame: finished builds, and uploads the GPU finished.
         void Install();
 

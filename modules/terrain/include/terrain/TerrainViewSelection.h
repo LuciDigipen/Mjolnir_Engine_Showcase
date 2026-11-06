@@ -103,6 +103,9 @@ namespace mir
         TerrainViewSelector(const TerrainViewSelector &) = delete;
         TerrainViewSelector &operator=(const TerrainViewSelector &) = delete;
 
+        // The bounds for the next Update. The selection made so far is kept, so hysteresis still holds.
+        void ApplySettings(const TerrainStreamingSettings::View &view);
+
         void Update(std::span<const TerrainSelectionInstance> instances, const TerrainView &view,
                     const TerrainUnitReady &ready);
 

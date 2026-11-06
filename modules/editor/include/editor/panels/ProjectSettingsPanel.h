@@ -23,7 +23,7 @@ namespace mir
     public:
 
         void Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath, bool &showInputSettings,
-            PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing);
+            PhysicsLayerTable *sharedLayers, IEditorAudio *audio, bool editing);
 
         void OnHidden()
         {
@@ -42,7 +42,7 @@ namespace mir
             const std::filesystem::path &savePath);
         void DrawAudio(IEditorAudio &audio, bool editing);
         void DrawExternalTools(const std::filesystem::path &savePath);
-        void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsLayerUpdate *layerUpdate, bool editing);
+        void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsLayerTable *sharedLayers, bool editing);
         void LoadLayers(const std::filesystem::path &savePath);
 
         std::string mRenderingStatusMessage;

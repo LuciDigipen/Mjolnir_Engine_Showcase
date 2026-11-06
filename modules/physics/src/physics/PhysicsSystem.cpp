@@ -12,6 +12,7 @@
 
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
+#include <physics_layers/PhysicsLayerSettings.h>
 
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/TransformHierarchy.h>
@@ -19,6 +20,7 @@
 #include <core/log/Log.h>
 
 #include <algorithm>
+#include <string>
 
 namespace mir
 {
@@ -75,15 +77,33 @@ namespace mir
             detail::Stamp(rigidBody, pose);
         }
 
-        // The editor leaves a saved layer table for physics to take, which it does before bodies are built.
-        void TakeLayerUpdate(World &world, PhysicsWorld &physics)
+        // The project's layer table is edited in place, so physics compares it with its applied copy at each safe
+        // point. An invalid table is not applied, and rejected remembers it so it is logged once.
+        void ApplyLayerTable(World &world, PhysicsWorld &physics, std::optional<PhysicsLayerTable> *rejected)
         {
-            PhysicsLayerUpdate *update = world.TryResource<PhysicsLayerUpdate>();
-            if (update == nullptr || !update->mPending)
+            const PhysicsLayerTable *shared = world.TryResource<PhysicsLayerTable>();
+            if (shared == nullptr)
+                return;
+            if (*shared == physics.LayerTable())
+            {
+                if (rejected != nullptr)
+                    rejected->reset();
+                return;
+            }
+            if (rejected != nullptr && *rejected == *shared)
                 return;
 
-            physics.SetLayerTable(*update->mPending);
-            update->mPending.reset();
+            const std::string problem = CheckPhysicsLayers(*shared);
+            if (problem.empty())
+            {
+                physics.SetLayerTable(*shared);
+                if (rejected != nullptr)
+                    rejected->reset();
+                return;
+            }
+            MIR_LOG_ERROR("Physics layers not applied: {}", problem);
+            if (rejected != nullptr)
+                *rejected = *shared;
         }
 
         // Spawns and teleports are already in the world, so they pass the gates like any move.
@@ -102,11 +122,12 @@ namespace mir
 
     void PhysicsSystem::OnUpdate(SystemContext &context)
     {
-        if (!IsSimulating(context.world))
-            return;
-
         PhysicsWorld *physics = context.world.TryResource<PhysicsWorld>();
         if (physics == nullptr)
+            return;
+
+        ApplyLayerTable(context.world, *physics, &mRejectedLayers);
+        if (!IsSimulating(context.world))
             return;
 
         ApplyEdits(context.world, *physics);
@@ -332,7 +353,7 @@ namespace mir
 
         MIR_ASSERT(!physics->IsSimulationLive(), "PhysicsSystem: PlayBegin ran twice without a PlayEnd");
 
-        TakeLayerUpdate(world, *physics);
+        ApplyLayerTable(world, *physics, nullptr);
 
         world.ForEach<Transform, RigidBody>(
             [&](Entity entity, Transform &, RigidBody &rigidBody)

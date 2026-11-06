@@ -37,4 +37,6 @@ namespace mir
     AudioSettings CurrentAudioSettings();
 
     void ApplyAudioSettings(const AudioSettings &settings);
+
+    bool ApplyChangedDefaults(const AudioSettings &defaults, const std::filesystem::path &playerFile);
 }

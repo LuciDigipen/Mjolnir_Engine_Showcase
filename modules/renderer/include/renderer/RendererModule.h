@@ -83,6 +83,10 @@ namespace mir
             ActiveCameraSystem *mActiveCamera = nullptr;
             RenderSystem *mRenderSystem = nullptr;
 
+            // The shared budgets last applied to the renderer, by the main binding only.
+            double mAppliedUploadMiB = 0.0;
+            double mAppliedResidencyMiB = 0.0;
+
             // last: they unregister before the renderer above shuts down
             Registration mHooks;
             Registration mSceneUnload;
