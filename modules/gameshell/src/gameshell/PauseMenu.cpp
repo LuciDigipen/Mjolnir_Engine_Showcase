@@ -147,8 +147,7 @@ namespace mir
     {
         if (!canOpen)
         {
-            mOpen = false;
-            mOpenRequested = false;
+            Close();
             return PauseMenuAction::None;
         }
 

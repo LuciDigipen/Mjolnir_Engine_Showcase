@@ -37,6 +37,13 @@ namespace mir
 
         void Open() { mOpenRequested = true; }
 
+        // shut without a Resumed action, as leaving Play does
+        void Close()
+        {
+            mOpen = false;
+            mOpenRequested = false;
+        }
+
         bool IsOpen() const { return mOpen; }
 
         // null: no Audio entry

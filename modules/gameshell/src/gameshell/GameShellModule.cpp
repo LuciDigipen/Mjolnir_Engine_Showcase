@@ -1,7 +1,8 @@
 /**
  * @file GameShellModule.cpp
  * @author sumin.park
- * @brief Registers the HUD and pause menu, or the widget demo, as the game UI's screen.
+ * @brief Registers the HUD and pause menu, or the widget demo while GameUIDemo asks for it,
+ *        as the game UI's screen.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -12,26 +13,54 @@
 #include <assets/AssetsModule.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
+#include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
+#include <gameui/GameUIDemo.h>
 #include <gameui/GameUIModule.h>
 
 namespace mir
 {
     GameShellModule::GameShellModule(ModuleContext context, GameUIModule &gameUI, AssetsModule &assets,
         const AssetResolver &resolver, const GameShellSettings &settings)
-        : mWorld(context.world), mSettings(settings)
+        : mWorld(context.world), mAssets(assets), mResolver(resolver), mSettings(settings)
     {
-        if (mSettings.mUIDemo)
+        if (GameUIDemo *demo = mWorld.TryResource<GameUIDemo>())
+            demo->mShow = mSettings.mUIDemo;
+
+        // here rather than in Draw, which does not run while the demo shows
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &) { mShell.Reset(); });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mShell.Reset(); });
+
+        mScreen = gameUI.AddScreen([this](UIContext &ui, float dt) { Draw(ui, dt); });
+    }
+
+    void GameShellModule::Draw(UIContext &ui, float dt)
+    {
+        const GameUIDemo *demo = mWorld.TryResource<GameUIDemo>();
+        const bool showDemo = demo != nullptr && demo->mShow;
+
+        if (showDemo != mDemoShown)
         {
-            mDemo.Load(gameUI.Context(), &assets.Cache(), resolver);
-            mScreen = gameUI.AddScreen([this](UIContext &ui, float) { mDemo.Draw(ui); });
+            if (showDemo)
+                mShellStyle = ui.Style();
+            else
+                ui.Style() = mShellStyle;
+            mDemoShown = showDemo;
+        }
+
+        if (!showDemo)
+        {
+            Apply(mShell.Draw(ui, IsPlaying(mWorld), dt));
             return;
         }
 
-        mScreen = gameUI.AddScreen([this](UIContext &ui, float dt)
-            {
-                Apply(mShell.Draw(ui, IsPlaying(mWorld), dt));
-            });
+        // loaded on first show, so a run that never asks for it never reads its art
+        if (!mDemoLoaded)
+        {
+            mDemo.Load(ui, &mAssets.Cache(), mResolver);
+            mDemoLoaded = true;
+        }
+        mDemo.Draw(ui);
     }
 
     void GameShellModule::Apply(GameShellAction action)

@@ -33,6 +33,9 @@ namespace mir
 
         GameShellAction Draw(UIContext &ui, bool playing, float dt);
 
+        // Play began or ended: the menu shuts and the clock starts over, whether or not Draw ran in between
+        void Reset();
+
         bool MenuOpen() const { return mMenu.IsOpen(); }
 
         bool AudioScreenOpen() const { return mMenu.AudioScreenOpen(); }

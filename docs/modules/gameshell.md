@@ -85,7 +85,12 @@ Each device does the whole round trip alone:
 ### The module
 
 `GameShellModule` registers one screen with `GameUIModule`: the HUD and the
-pause menu, or `UIDemoScreen` under `--ui-demo`. It turns a `GameShellAction`
+pause menu, or `UIDemoScreen` while the `GameUIDemo` resource asks for it. `--ui-demo`
+sets it at startup and the editor's **Debug > Game UI Widget Demo** switches it
+at any time; the demo's art loads the first time it shows, and the style it
+swaps is put back when the menus return. The PlayBegin and PlayEnd stages call
+`GameShell::Reset`, which shuts the menu and zeroes the clock, so a Stop or Play
+while the demo shows leaves no stale menu behind. It turns a `GameShellAction`
 into requests on the `RequestQueue`: Pause, Resume, Restart as Stop then Play,
 and Quit as Stop in the editor or Quit in a game build.
 
@@ -122,7 +127,7 @@ the input, so the press that closed it never reaches the game as well.
 
 ## State
 
-*As of 2026-10-24.* Its module draws it every frame unless `--ui-demo` is given. It
+*As of 2026-11-05.* Its module draws it every frame unless the widget demo is on. It
 works in the editor's scene viewport, in Play, and in a game build, which with
 `--no-editor`, or in a build without the editor at all, starts in Play.
 
@@ -156,6 +161,10 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
    before it opens. A game that binds those keys for itself sees them once.
 
 ## Changed
+
+*2026-11-05* — **The widget demo switches at runtime.** Was: `--ui-demo`
+picked the demo or the menus once at startup. Now: `GameUIDemo` picks it each
+frame, set from `--ui-demo` and toggled from the editor's Debug menu.
 
 *2026-11-04* — **The Controls screen and the hidden cursor.** Was: the menu
 had no controls options, and the OS cursor showed over the game in Play. Now: a

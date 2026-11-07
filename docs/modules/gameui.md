@@ -294,7 +294,8 @@ wrap or grid, and no measuring pass.
 | `UINavInput`, `UINavDirection` | `gameui/UINavInput.h` | The UI actions for a frame, read from `InputState` by name; `UINavStepper` turns `UINavigate` into steps, one per direction per press |
 | `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing |
 | `UIAnchor`, `UIAxis`, `UIStack`; `Inset`, `Anchor` | `gameui/UILayout.h` | Layout over rects: insets, anchoring to a point of a container, rows and columns cut from either end; `kUITopLeft` to `kUIBottomRight` |
-| `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by `App` under `--ui-demo`; `Layout(safeArea)` places it without drawing |
+| `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
+| `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
 | `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
@@ -449,9 +450,10 @@ with the editor layout and fullscreen with `--no-editor` or in a build without
 the editor (`windows-msvc-game-*`), where it draws with no editor present: no
 theme, docking or DPI scale on the ImGui side, and the same submit. It draws the game
 shell from [gameshell.md](gameshell.md): a HUD and a pause menu, built on this
-module's public API alone, which show only in Play. Under `--ui-demo` it draws
-`UIDemoScreen` in their place. `App` calls
-`UIDemoScreen::Load` at startup under the same flag, which loads the art in
+module's public API alone, which show only in Play. While `GameUIDemo` is on,
+from `--ui-demo` or the editor's **Debug > Game UI Widget Demo**, it draws
+`UIDemoScreen` in their place. The shell calls
+`UIDemoScreen::Load` the first time the demo shows, which loads the art in
 `assets/ui/`. It lays itself out with the layout helpers: a menu anchored to
 the left of the safe area, as tall as its rows and 30% as wide within 320 to
 480 pixels, over a strip of prompts cut from the bottom, at any aspect ratio.
@@ -581,6 +583,10 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-11-05* — **`GameUIDemo`.** Was: the widget demo was chosen by
+`--ui-demo` at startup only. Now: a World resource the game shell reads each
+frame, so the editor's Debug menu turns the demo on and off.
 
 *2026-11-04* — **Text is measured, and the UI scales up with the display.**
 Was: `UIStyle::mFontSize` was 0, so text drew at ImGui's font size, which
