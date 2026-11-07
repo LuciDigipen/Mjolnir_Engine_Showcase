@@ -13,6 +13,7 @@
 #include <assets/AssetsModule.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
+#include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <gameui/GameUIDemo.h>
 #include <gameui/GameUIModule.h>
@@ -25,6 +26,10 @@ namespace mir
     {
         if (GameUIDemo *demo = mWorld.TryResource<GameUIDemo>())
             demo->mShow = mSettings.mUIDemo;
+
+        // here rather than in Draw, which does not run while the demo shows
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &) { mShell.Reset(); });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mShell.Reset(); });
 
         mScreen = gameUI.AddScreen([this](UIContext &ui, float dt) { Draw(ui, dt); });
     }

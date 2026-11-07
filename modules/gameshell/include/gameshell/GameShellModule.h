@@ -61,7 +61,9 @@ namespace mir
         // the demo swaps the style's sprites; restored when the menus come back
         UIStyle mShellStyle;
 
-        // last: unregisters before the screens above are destroyed
+        // last: unregister before the shell and screens above are destroyed
+        Registration mPlayBegin;
+        Registration mPlayEnd;
         Registration mScreen;
     };
 }

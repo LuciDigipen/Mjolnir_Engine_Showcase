@@ -23,10 +23,7 @@ namespace mir
         }
 
         if (!mWasPlaying)
-        {
-            mPlaySeconds = 0.0f;
-            mCursorIdleSeconds = kCursorIdleSeconds;
-        }
+            Reset();
         mWasPlaying = true;
         if (!mMenu.IsOpen())
             mPlaySeconds += dt;
@@ -52,6 +49,14 @@ namespace mir
             break;
         }
         return GameShellAction::None;
+    }
+
+    void GameShell::Reset()
+    {
+        mMenu.Close();
+        mPlaySeconds = 0.0f;
+        mCursorIdleSeconds = kCursorIdleSeconds;
+        mWasPlaying = false;
     }
 
     // Shown in the menu, and in play while the mouse is moving, so the HUD's Pause button can be found;

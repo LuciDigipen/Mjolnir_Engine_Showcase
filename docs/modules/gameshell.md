@@ -88,7 +88,9 @@ Each device does the whole round trip alone:
 pause menu, or `UIDemoScreen` while the `GameUIDemo` resource asks for it. `--ui-demo`
 sets it at startup and the editor's **Debug > Game UI Widget Demo** switches it
 at any time; the demo's art loads the first time it shows, and the style it
-swaps is put back when the menus return. It turns a `GameShellAction`
+swaps is put back when the menus return. The PlayBegin and PlayEnd stages call
+`GameShell::Reset`, which shuts the menu and zeroes the clock, so a Stop or Play
+while the demo shows leaves no stale menu behind. It turns a `GameShellAction`
 into requests on the `RequestQueue`: Pause, Resume, Restart as Stop then Play,
 and Quit as Stop in the editor or Quit in a game build.
 

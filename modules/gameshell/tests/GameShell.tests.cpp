@@ -502,6 +502,29 @@ TEST_CASE("The HUD's clock counts play, stops in the menu and starts again on Re
     CHECK(f.Shell().PlaySeconds() == Catch::Approx(1.0f));
 }
 
+TEST_CASE("Stop and Play reset the shell even when it was not drawn in between, as while the widget demo shows",
+          "[gameshell]")
+{
+    Fixture f;
+    f.Frame(true, 1.0f);
+    f.Frame(true, 1.0f);
+    f.SetKey(Key::Escape, true);
+    CHECK(f.Frame(true, 1.0f) == GameShellAction::Pause);
+    f.SetKey(Key::Escape, false);
+    REQUIRE(f.Shell().MenuOpen());
+
+    // the demo is on: Stop then Play run their stages, and no shell frame is drawn
+    f.Shell().Reset();
+    f.Shell().Reset();
+
+    // the demo is off again: the new Play has no menu over it and its own clock
+    CHECK_FALSE(f.Shell().MenuOpen());
+    CHECK(f.Frame(true, 1.0f) == GameShellAction::None);
+    CHECK_FALSE(f.Shell().MenuOpen());
+    CHECK(f.Shell().PlaySeconds() == Catch::Approx(1.0f));
+    CHECK_FALSE(f.TextAt("Paused").has_value());
+}
+
 TEST_CASE("Without audio options the menu has no Audio entry; with them it does", "[gameshell]")
 {
     Fixture f;
