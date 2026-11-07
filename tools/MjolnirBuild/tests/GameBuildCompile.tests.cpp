@@ -404,8 +404,104 @@ TEST_CASE("The game build is configured with the editor's options", "[game-build
         { "rtxgi", true } };
     CHECK(FeatureDefines(editor) == std::vector<std::string>{ "-DMIR_LARGE_WORLD=ON", "-DMIR_WITH_AUDIO=OFF",
                                         "-DMIR_WITH_DLSS=OFF", "-DMIR_WITH_RTXGI=ON" });
+    // an option the editor does not name is unset, for the preset's default
     CHECK(FeatureDefines(nlohmann::json{ { "audio", true }, { "dlss", "yes" } }) ==
-        std::vector<std::string>{ "-DMIR_WITH_AUDIO=ON" });
+        std::vector<std::string>{ "-UMIR_LARGE_WORLD", "-DMIR_WITH_AUDIO=ON", "-UMIR_WITH_DLSS", "-UMIR_WITH_RTXGI" });
+}
+
+TEST_CASE("The game's choices replace the editor's options, and the rest follow the editor", "[game-build-compile]")
+{
+    const nlohmann::json editor = { { "editor", true }, { "largeWorld", true }, { "audio", false }, { "dlss", false },
+        { "rtxgi", true } };
+    GameBuildChoices choices;
+    choices.mOn = { { "dlss", true }, { "largeWorld", false } };
+    CHECK(FeatureDefines(editor, choices) == std::vector<std::string>{ "-DMIR_LARGE_WORLD=OFF", "-DMIR_WITH_AUDIO=OFF",
+                                                 "-DMIR_WITH_DLSS=ON", "-DMIR_WITH_RTXGI=ON" });
+
+    // without the editor's, what the game chose is set and the rest unset, except what the preset sets every configure
+    CHECK(FeatureDefines(nlohmann::json(), choices) == std::vector<std::string>{ "-DMIR_LARGE_WORLD=OFF",
+                                                           "-UMIR_WITH_AUDIO", "-DMIR_WITH_DLSS=ON", "-UMIR_WITH_RTXGI" });
+    CHECK(FeatureDefines(nlohmann::json(), choices, { "MIR_WITH_AUDIO" }) ==
+        std::vector<std::string>{ "-DMIR_LARGE_WORLD=OFF", "-DMIR_WITH_DLSS=ON", "-UMIR_WITH_RTXGI" });
+}
+
+TEST_CASE("The options a preset sets are found through what it inherits, as CMake reads them", "[game-build-compile]")
+{
+    Sandbox sandbox;
+    Touch(sandbox.mRoot / "CMakePresets.json", R"({
+  "version": 6,
+  "configurePresets": [
+    { "name": "base", "hidden": true, "cacheVariables": { "MIR_WITH_DLSS": "OFF", "MIR_WITH_AUDIO": false } },
+    { "name": "other", "hidden": true,
+      "cacheVariables": { "MIR_WITH_DLSS": null, "MIR_WITH_RTXGI": { "type": "BOOL", "value": "ON" } } },
+    { "name": "game", "inherits": [ "base", "other" ], "cacheVariables": { "MIR_WITH_AUDIO": null } },
+    { "name": "plain" }
+  ]
+})");
+
+    // its own null unsets audio, and the first parent's DLSS wins over the second's null
+    CHECK(PresetCacheOptions(sandbox.mRoot, "game") == std::vector<std::string>{ "MIR_WITH_DLSS", "MIR_WITH_RTXGI" });
+    CHECK(PresetCacheOptions(sandbox.mRoot, "base") == std::vector<std::string>{ "MIR_WITH_AUDIO", "MIR_WITH_DLSS" });
+    CHECK(PresetCacheOptions(sandbox.mRoot, "plain").empty());
+    CHECK(PresetCacheOptions(sandbox.mRoot, "missing").empty());
+}
+
+TEST_CASE("An option neither the game nor the editor names is unset, so an earlier build's choice is not kept",
+    "[game-build-compile]")
+{
+    CompileFixture fixture;
+    BuildRequest request = fixture.Request();
+    request.mEditorInfo = fixture.mSandbox.mRoot / "no-editor-info.json";
+    const fs::path settings = fixture.mCheckout / "games" / "Demo" / "project_settings.json";
+
+    Touch(settings, R"({ "build": { "gameBuildOptions": { "dlss": true } } })");
+    const BuildReport chosen = RunGameBuild(request);
+    INFO(chosen.mError);
+    REQUIRE(chosen.mOk);
+    CHECK(fixture.Calls("--preset game-release -UMIR_LARGE_WORLD -UMIR_WITH_AUDIO -DMIR_WITH_DLSS=ON -UMIR_WITH_RTXGI") ==
+        1);
+    CHECK(ReadJson(fixture.mGameBuildDir / "game_build_info.json").at("dlss") == true);
+
+    // fake cmake keeps its cache as CMake does, and has no option defaults, so an unset option is left out
+    Touch(settings, "{}");
+    const BuildReport unchosen = RunGameBuild(request);
+    INFO(unchosen.mError);
+    REQUIRE(unchosen.mOk);
+    CHECK(fixture.Calls("--preset game-release -UMIR_LARGE_WORLD -UMIR_WITH_AUDIO -UMIR_WITH_DLSS -UMIR_WITH_RTXGI") ==
+        1);
+    CHECK_FALSE(ReadJson(fixture.mGameBuildDir / "game_build_info.json").contains("dlss"));
+}
+
+TEST_CASE("A game's chosen options configure the game build, and the template is not warned about them",
+    "[game-build-compile]")
+{
+    CompileFixture fixture;
+    Touch(fixture.mCheckout / "games" / "Demo" / "project_settings.json",
+        R"({ "rendering": { "rayTracing": true },
+             "build": { "gameBuildOptions": { "dlss": true, "rtxgi": false, "DLSS": false } } })");
+
+    const BuildReport report = RunGameBuild(fixture.Request());
+    INFO(report.mError);
+    REQUIRE(report.mOk);
+    CHECK(fixture.Calls("--preset game-release -DMIR_LARGE_WORLD=OFF -DMIR_WITH_AUDIO=ON -DMIR_WITH_DLSS=ON "
+                        "-DMIR_WITH_RTXGI=OFF") == 1);
+    const nlohmann::json info = ReadJson(fixture.mGameBuildDir / "game_build_info.json");
+    CHECK(info.at("dlss") == true);
+    CHECK(info.at("rtxgi") == false);
+
+    // the template differs from the editor only where the game chose, so the one warning is the bad entry
+    REQUIRE(report.mWarnings.size() == 1);
+    CHECK(Has(report.mWarnings[0], "build.gameBuildOptions.DLSS is not a build option (largeWorld, audio, dlss, rtxgi)"));
+
+    // Reset to the editor's, the next build configures with the editor's again
+    Touch(fixture.mCheckout / "games" / "Demo" / "project_settings.json", R"({ "rendering": { "rayTracing": true } })");
+    const BuildReport reset = RunGameBuild(fixture.Request());
+    INFO(reset.mError);
+    REQUIRE(reset.mOk);
+    CHECK(reset.mWarnings.empty());
+    CHECK(fixture.Calls("--preset game-release -DMIR_LARGE_WORLD=OFF -DMIR_WITH_AUDIO=ON -DMIR_WITH_DLSS=OFF "
+                        "-DMIR_WITH_RTXGI=ON") == 1);
+    CHECK(ReadJson(fixture.mGameBuildDir / "game_build_info.json").at("dlss") == false);
 }
 
 TEST_CASE("The batch file configures, then compiles the game build's two targets and installs", "[game-build-compile]")

@@ -201,6 +201,34 @@ namespace mir::build
             return nullptr;
         }
 
+        // What the preset, or the first it inherits from depth first, gives a cache variable: null when it unsets it,
+        // nullptr when none names it
+        const Json* FindCacheVariable(const Presets &presets, std::string_view name, std::string_view variable, int depth)
+        {
+            const auto it = presets.mByName.find(name);
+            if (depth > 16 || it == presets.mByName.end())
+                return nullptr;
+            const Json &json = it->second.mJson;
+            if (const auto variables = json.find("cacheVariables"); variables != json.end() && variables->is_object())
+            {
+                if (const auto value = variables->find(std::string(variable)); value != variables->end())
+                    return &*value;
+            }
+
+            const auto inherits = json.find("inherits");
+            if (inherits == json.end())
+                return nullptr;
+            const Json parents = inherits->is_array() ? *inherits : Json::array({ *inherits });
+            for (const Json &parent : parents)
+            {
+                if (!parent.is_string())
+                    continue;
+                if (const Json *found = FindCacheVariable(presets, parent.get_ref<const std::string &>(), variable, depth + 1))
+                    return found;
+            }
+            return nullptr;
+        }
+
         struct BuildDirResult
         {
             fs::path mDir;
@@ -453,13 +481,30 @@ namespace mir::build
         return std::nullopt;
     }
 
-    std::vector<std::string> FeatureDefines(const Json &editorInfo)
+    std::vector<std::string> PresetCacheOptions(const fs::path &sourceRoot, std::string_view preset)
+    {
+        const Presets presets = LoadPresets(sourceRoot);
+        std::vector<std::string> options;
+        for (const GameBuildFeature &feature : kGameBuildFeatures)
+        {
+            const Json *value = FindCacheVariable(presets, preset, feature.mOption, 0);
+            if (value != nullptr && !value->is_null())
+                options.emplace_back(feature.mOption);
+        }
+        return options;
+    }
+
+    std::vector<std::string> FeatureDefines(
+        const Json &editorInfo, const GameBuildChoices &choices, const std::vector<std::string> &presetOptions)
     {
         std::vector<std::string> defines;
         for (const GameBuildFeature &feature : kGameBuildFeatures)
         {
-            if (const std::optional<bool> on = GameBuildInfoFlag(editorInfo, feature.mKey))
+            if (const std::optional<bool> on = WantedGameBuildFlag(feature, choices, editorInfo))
                 defines.push_back("-D" + std::string(feature.mOption) + "=" + (*on ? "ON" : "OFF"));
+            // the shared cache would keep what an earlier build set, where a fresh configure takes the option's default
+            else if (std::ranges::find(presetOptions, feature.mOption) == presetOptions.end())
+                defines.push_back("-U" + std::string(feature.mOption));
         }
         return defines;
     }
@@ -545,12 +590,15 @@ namespace mir::build
 
         try
         {
-            std::vector<std::string> defines;
+            // the game's choices apply even when the editor's options cannot be read
+            Json editorInfo;
             if (!compile.mEditorInfo.empty())
             {
-                if (const std::optional<Json> info = ReadJsonFile(compile.mEditorInfo); info && info->is_object())
-                    defines = FeatureDefines(*info);
+                if (std::optional<Json> info = ReadJsonFile(compile.mEditorInfo); info && info->is_object())
+                    editorInfo = std::move(*info);
             }
+            const std::vector<std::string> defines =
+                FeatureDefines(editorInfo, compile.mChoices, PresetCacheOptions(compile.mSourceRoot, compile.mPreset));
 
             const GameBuildScript script{ compile.mSourceRoot, compile.mPreset, buildDir, staging, defines, *visualStudio };
 

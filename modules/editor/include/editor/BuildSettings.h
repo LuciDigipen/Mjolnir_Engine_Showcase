@@ -10,10 +10,12 @@
 #pragma once
 
 #include <editor/EditorPreferences.h>
+#include <project/GameBuildInfo.h>
 
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,6 +40,14 @@ namespace mir
     // writes build.profile only, so the checked-in file never gets a path
     bool WriteBuildProfile(const std::filesystem::path &projectSettings, BuildProfile profile);
 
+    // writes build.gameBuildOptions.<key> only, nullopt removes the choice, so the option follows the editor again
+    bool WriteGameBuildChoice(const std::filesystem::path &projectSettings, std::string_view key, std::optional<bool> on);
+
+    // The labels of the options @p templateInfo was built with other than the game's choices and the editor's, which a
+    // compile changes
+    std::vector<std::string> ChangedGameBuildOptions(
+        const nlohmann::json &templateInfo, const GameBuildChoices &choices, const nlohmann::json &editor);
+
     // The game a build packages and the checkout it is in
     struct BuildGame
     {
@@ -49,6 +59,8 @@ namespace mir
         std::filesystem::path mProjectSettingsPath;
         // the editor's game_build_info.json, which a template is compared with
         std::filesystem::path mEditorInfo;
+        // game.json's soundBanksRoot, which plays nothing without audio
+        std::filesystem::path mSoundBankDir;
     };
 
     // <checkout>/builds/game-build/debug or release
@@ -77,6 +89,7 @@ namespace mir
         std::vector<std::string> mWarnings;
     };
 
-    GameBuildTemplateCheck CheckGameBuildTemplate(
-        const std::filesystem::path &templateDir, BuildProfile profile, const std::filesystem::path &editorInfo);
+    // Compared with the game's @p choices, and with the editor for the options it did not choose
+    GameBuildTemplateCheck CheckGameBuildTemplate(const std::filesystem::path &templateDir, BuildProfile profile,
+        const std::filesystem::path &editorInfo, const GameBuildChoices &choices = {});
 }

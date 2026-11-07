@@ -1,8 +1,8 @@
 /**
  * @file BuildSettingsPanel.h
  * @author Quy Dong Ta
- * @brief The "Build Settings" window: profile, game build template and whether Build compiles it, output folder,
- *        Run after build, and Build.
+ * @brief The "Build Settings" window: profile, build options, game build template and whether Build compiles it,
+ *        output folder, Run after build, and Build.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -14,7 +14,9 @@
 #include <editor/EditorPreferences.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace mir
@@ -57,6 +59,9 @@ namespace mir
 
     private:
         void Load(EditorPreferences &preferences, const BuildGame &game);
+        // nullopt follows the editor again
+        void SaveChoice(const BuildGame &game, std::string_view key, std::optional<bool> on);
+        void DrawOptions(const BuildGame &game, bool compile);
         void DrawTemplateStatus(const std::filesystem::path &dir, const BuildGame &game, bool compile);
         // @p target is the Build to request, without its command
         void DrawBuild(const BuildGame &game, const BuildJobView &build, BuildAction &action, const BuildAction &target);
@@ -68,6 +73,12 @@ namespace mir
         std::string mStatusMessage;
         char mTemplatePath[512]{};
         char mOutputPath[512]{};
+
+        GameBuildChoices mChoices;
+        double mChoicesReadAt = 0.0;
+        // the editor's game_build_info.json, null when it cannot be read
+        nlohmann::json mEditorInfo;
+        bool mHasSoundBanks = false;
 
         // checked again when the folder changes and every few seconds, so an install shows up
         std::filesystem::path mCheckedDir;

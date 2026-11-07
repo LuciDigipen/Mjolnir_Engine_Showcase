@@ -74,6 +74,48 @@ namespace mir
         });
     }
 
+    bool WriteGameBuildChoice(const std::filesystem::path &projectSettings, std::string_view key, std::optional<bool> on)
+    {
+        return UpdateJsonFile(projectSettings, [key, on](json &root) {
+            const std::string options(kGameBuildOptionsKey);
+            if (!on)
+            {
+                // nothing to remove, and no empty build section to add
+                const auto build = root.find("build");
+                if (build == root.end() || !build->is_object() || !build->contains(options))
+                    return;
+                json &chosen = (*build)[options];
+                if (chosen.is_object())
+                    chosen.erase(std::string(key));
+                if (!chosen.is_object() || chosen.empty())
+                    build->erase(options);
+                return;
+            }
+
+            json &build = root["build"];
+            if (!build.is_object())
+                build = json::object();
+            json &chosen = build[options];
+            if (!chosen.is_object())
+                chosen = json::object();
+            chosen[std::string(key)] = *on;
+        });
+    }
+
+    std::vector<std::string> ChangedGameBuildOptions(
+        const json &templateInfo, const GameBuildChoices &choices, const json &editor)
+    {
+        std::vector<std::string> changed;
+        for (const GameBuildFeature &feature : kGameBuildFeatures)
+        {
+            const std::optional<bool> built = GameBuildInfoFlag(templateInfo, feature.mKey);
+            const std::optional<bool> wanted = WantedGameBuildFlag(feature, choices, editor);
+            if (built && wanted && *built != *wanted)
+                changed.emplace_back(feature.mLabel);
+        }
+        return changed;
+    }
+
     std::filesystem::path DefaultGameBuildTemplate(const std::filesystem::path &sourceRoot, BuildProfile profile)
     {
         return sourceRoot / "builds" / "game-build" / (profile == BuildProfile::Development ? "debug" : "release");
@@ -101,8 +143,8 @@ namespace mir
             it != preferences.buildOutputs.end() ? it->second : std::string(), game.mSourceRoot, DefaultBuildOutput(game));
     }
 
-    GameBuildTemplateCheck CheckGameBuildTemplate(
-        const std::filesystem::path &templateDir, BuildProfile profile, const std::filesystem::path &editorInfo)
+    GameBuildTemplateCheck CheckGameBuildTemplate(const std::filesystem::path &templateDir, BuildProfile profile,
+        const std::filesystem::path &editorInfo, const GameBuildChoices &choices)
     {
         GameBuildTemplateCheck check;
         if (std::optional<std::string> problem = GameBuildTemplateProblem(templateDir, &check.mInfo))
@@ -118,14 +160,15 @@ namespace mir
                 (profile == BuildProfile::Development ? "Development" : "Release") + " profile packages a " + expected +
                 " one");
 
-        const std::optional<json> editor = ReadJsonFile(editorInfo);
+        // the choices are compared even without the editor's
+        std::optional<json> editor = ReadJsonFile(editorInfo);
         if (!editor || !editor->is_object())
         {
             check.mWarnings.push_back("could not read the editor's " + editorInfo.string() +
                 ", so the game build template was not compared with it");
-            return check;
+            editor = json();
         }
-        for (const GameBuildInfoMismatch &mismatch : CompareGameBuildInfo(check.mInfo, *editor))
+        for (const GameBuildInfoMismatch &mismatch : CompareGameBuildInfo(check.mInfo, *editor, choices))
             check.mWarnings.push_back(mismatch.mMessage);
         return check;
     }
