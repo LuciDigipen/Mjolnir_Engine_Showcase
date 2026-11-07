@@ -15,11 +15,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace mir;
@@ -62,7 +65,8 @@ namespace
 
         BuildJobRequest Request() const
         {
-            return BuildJobRequest{ MIR_EDITOR_BUILD_TOOL, Game(), GameBuildDir(), Out(), mRoot / "result.json" };
+            return BuildJobRequest{ MIR_EDITOR_BUILD_TOOL, Game(), GameBuildDir(), Out(), mRoot / "result.json", {},
+                mRoot / "progress.json" };
         }
 
         static void Write(const fs::path &file, const std::string &text)
@@ -141,6 +145,99 @@ TEST_CASE("A build runs in the background and its report is read", "[build-job]"
     CHECK(std::ranges::any_of(result.mSteps,
         [](const BuildStepResult &step) { return step.mName == "cook" && step.mStatus == "succeeded"; }));
     CHECK_FALSE(fs::exists(sandbox.Request().mResultFile));
+    CHECK_FALSE(fs::exists(sandbox.Request().mProgressFile));
+    CHECK(job.Progress().mStep.empty());
+}
+
+TEST_CASE("A build that compiles the game build passes the preset on, and MjolnirBuild's check stops a bad one",
+    "[build-job]")
+{
+    BuildSandbox sandbox;
+    BuildJobRequest request = sandbox.Request();
+    request.mGameBuildPreset = "windows-msvc-game-release";
+
+    BuildJob job;
+    REQUIRE(job.Start(request));
+    RunToEnd(job);
+
+    // the sandbox checkout has no CMakePresets.json, so nothing compiles and the template is untouched
+    const BuildResult &result = *job.Result();
+    CHECK(result.mOutcome == BuildOutcome::Failed);
+    CHECK(result.mError.find("has no readable CMakePresets.json") != std::string::npos);
+    CHECK(ReadText(sandbox.GameBuildDir() / "MjolnirEngine.exe") == "game-build");
+    CHECK_FALSE(fs::exists(request.mProgressFile));
+}
+
+TEST_CASE("Progress is read while the build runs, and cleared with its file when it ends", "[build-job]")
+{
+    BuildSandbox sandbox;
+    const BuildJobRequest request = ProbeRequest(sandbox, "progress");
+
+    BuildJob job;
+    REQUIRE(job.Start(request));
+    CHECK(job.Progress().mStep.empty());
+    WaitUntil([&] {
+        job.Update();
+        return job.Progress().mDone == 2;
+    });
+    CHECK(job.Progress().mStep == "game build");
+    CHECK(job.Progress().mPhase == "compile");
+    CHECK(job.Progress().mTotal == 5);
+
+    job.Cancel();
+    CHECK(job.Progress().mStep.empty());
+    CHECK_FALSE(fs::exists(request.mProgressFile));
+}
+
+TEST_CASE("The progress file gives the step, phase and count, and nothing until it names a step", "[build-job]")
+{
+    BuildSandbox sandbox;
+    const fs::path file = sandbox.mRoot / "progress.json";
+    CHECK_FALSE(ReadBuildProgress(file));
+
+    BuildSandbox::Write(file, R"({"version":1,"step":"game build","phase":"compile","done":412,"total":1310})");
+    const std::optional<BuildJobProgress> compiling = ReadBuildProgress(file);
+    REQUIRE(compiling);
+    CHECK(compiling->mStep == "game build");
+    CHECK(compiling->mPhase == "compile");
+    CHECK(compiling->mDone == 412);
+    CHECK(compiling->mTotal == 1310);
+
+    BuildSandbox::Write(file, R"({"version":1,"step":"cook"})");
+    const std::optional<BuildJobProgress> cooking = ReadBuildProgress(file);
+    REQUIRE(cooking);
+    CHECK(cooking->mStep == "cook");
+    CHECK(cooking->mPhase.empty());
+    CHECK(cooking->mTotal == 0);
+
+    for (const std::string text : { std::string(), std::string(R"({"version":1,"st)"), std::string("[ 1 ]"),
+             std::string(R"({"version":1})") })
+    {
+        INFO(text);
+        BuildSandbox::Write(file, text);
+        CHECK_FALSE(ReadBuildProgress(file));
+    }
+}
+
+TEST_CASE("The running line names each step, and the compile's phase and count", "[build-job]")
+{
+    const auto text = [](std::string step, std::string phase = {}, std::size_t done = 0, std::size_t total = 0) {
+        return BuildProgressText({ std::move(step), std::move(phase), done, total });
+    };
+    CHECK(text("check") == "Checking the game and folders");
+    CHECK(text("game build") == "Compiling the game build");
+    CHECK(text("game build", "environment") == "Compiling the game build: loading Visual Studio");
+    CHECK(text("game build", "configure") == "Compiling the game build: configuring");
+    CHECK(text("game build", "compile") == "Compiling the game build");
+    CHECK(text("game build", "compile", 412, 1310) == "Compiling the game build: 412 of 1310");
+    CHECK(text("game build", "install") == "Compiling the game build: installing");
+    CHECK(text("template") == "Copying the game build template");
+    CHECK(text("cook") == "Cooking assets");
+    CHECK(text("game data") == "Copying the game data");
+    CHECK(text("sound banks") == "Copying SoundBanks");
+    CHECK(text("terrain") == "Packaging terrain");
+    CHECK(text("finish") == "Moving the build into place");
+    CHECK(text("a later step") == "a later step");
 }
 
 TEST_CASE("Cancel stops the build and keeps the previous one", "[build-job]")
@@ -212,6 +309,45 @@ TEST_CASE("Cancel mid-swap puts the previous build back, or says it could not", 
     }
 }
 
+TEST_CASE("Cancel while a compile replaces the template puts the previous one back, or says where it is",
+    "[build-job]")
+{
+    BuildSandbox sandbox;
+    const fs::path gameBuildDir = sandbox.GameBuildDir();
+    fs::path previous = gameBuildDir;
+    previous += ".old";
+    BuildJobRequest request = ProbeRequest(sandbox, "template-mid-swap");
+    request.mGameBuildPreset = "windows-msvc-game-release";
+
+    BuildJob job;
+    REQUIRE(job.Start(request));
+    WaitUntil([&] { return fs::exists(previous / "mjolnir_game_build_previous") && !fs::exists(gameBuildDir); });
+
+    SECTION("put back")
+    {
+        job.Cancel();
+        REQUIRE(job.Result());
+        CHECK(job.Result()->mOutcome == BuildOutcome::Canceled);
+        CHECK(ReadText(gameBuildDir / "MjolnirEngine.exe") == "game-build");
+        CHECK_FALSE(fs::exists(gameBuildDir / "mjolnir_game_build_previous"));
+        CHECK_FALSE(fs::exists(previous));
+    }
+    SECTION("held open, so it cannot move")
+    {
+        std::ifstream held(previous / "MjolnirEngine.exe");
+        REQUIRE(held);
+        job.Cancel();
+        REQUIRE(job.Result());
+        CHECK(job.Result()->mOutcome == BuildOutcome::Failed);
+        const std::string &error = job.Result()->mError;
+        INFO(error);
+        CHECK(error.find("replaced the game build template") != std::string::npos);
+        CHECK(error.find("could not be moved back") != std::string::npos);
+        CHECK(error.find(previous.filename().string()) != std::string::npos);
+        CHECK_FALSE(fs::exists(gameBuildDir));
+    }
+}
+
 TEST_CASE("A build that cannot start says why", "[build-job]")
 {
     BuildSandbox sandbox;
@@ -230,12 +366,20 @@ TEST_CASE("A build that cannot start says why", "[build-job]")
     CHECK(job.Result()->mError.find("could not start MjolnirBuild") != std::string::npos);
 }
 
-TEST_CASE("MjolnirBuild gets the game, template, output and report paths", "[build-job]")
+TEST_CASE("MjolnirBuild gets the paths, and the preset and progress file when there are any", "[build-job]")
 {
-    const BuildJobRequest request{ "C:/tools/MjolnirBuild.exe", "C:/game/games/Demo", "C:/game-build", "C:/My Builds/Demo",
+    BuildJobRequest request{ "C:/tools/MjolnirBuild.exe", "C:/game/games/Demo", "C:/game-build", "C:/My Builds/Demo",
         "C:/temp/result.json" };
-    CHECK(BuildArguments(request) == std::vector<std::string>{ "--game", "C:/game/games/Demo", "--game-build",
-        "C:/game-build", "--out", "C:/My Builds/Demo", "--result", "C:/temp/result.json" });
+    const std::vector<std::string> paths = { "--game", "C:/game/games/Demo", "--game-build", "C:/game-build", "--out",
+        "C:/My Builds/Demo", "--result", "C:/temp/result.json" };
+    CHECK(BuildArguments(request) == paths);
+
+    request.mGameBuildPreset = "windows-msvc-game-release";
+    request.mProgressFile = "C:/temp/progress.json";
+    std::vector<std::string> compiling = paths;
+    compiling.insert(compiling.end(),
+        { "--game-build-preset", "windows-msvc-game-release", "--progress", "C:/temp/progress.json" });
+    CHECK(BuildArguments(request) == compiling);
 }
 
 TEST_CASE("The report decides the outcome, and a missing one says how MjolnirBuild exited", "[build-job]")
@@ -299,4 +443,38 @@ TEST_CASE("A build stopped mid-swap gets the previous build back", "[build-job]"
     RestorePreviousBuild(out);
     CHECK_FALSE(fs::exists(out));
     CHECK(fs::exists(previous));
+}
+
+TEST_CASE("A game build template stopped mid-swap is moved back, and nothing else is", "[build-job]")
+{
+    BuildSandbox sandbox;
+    const fs::path dir = sandbox.GameBuildDir();
+    fs::path previous = dir;
+    previous += ".old";
+
+    // moved aside and marked
+    fs::rename(dir, previous);
+    BuildSandbox::Write(previous / "mjolnir_game_build_previous", "");
+    CHECK_FALSE(RestorePreviousGameBuild(dir / ""));
+    CHECK(ReadText(dir / "MjolnirEngine.exe") == "game-build");
+    CHECK_FALSE(fs::exists(dir / "mjolnir_game_build_previous"));
+    CHECK_FALSE(fs::exists(previous));
+
+    // stopped before the marker was written, so known by being a template
+    fs::rename(dir, previous);
+    CHECK_FALSE(RestorePreviousGameBuild(dir));
+    CHECK(fs::exists(dir / "MjolnirEngine.exe"));
+
+    // with the template in place, a leftover .old is not touched
+    BuildSandbox::Write(previous / "mjolnir_game_build_previous", "");
+    CHECK_FALSE(RestorePreviousGameBuild(dir));
+    CHECK(fs::exists(previous));
+
+    // nor is a folder that is neither marked nor a template
+    fs::remove_all(dir);
+    fs::remove(previous / "mjolnir_game_build_previous");
+    BuildSandbox::Write(previous / "notes.txt", "x");
+    CHECK_FALSE(RestorePreviousGameBuild(dir));
+    CHECK_FALSE(fs::exists(dir));
+    CHECK(fs::exists(previous / "notes.txt"));
 }

@@ -1,7 +1,8 @@
 /**
  * @file BuildSettingsPanel.cpp
  * @author Quy Dong Ta
- * @brief The "Build Settings" window: profile, game build template, output folder, Run after build, and Build.
+ * @brief The "Build Settings" window: profile, game build template and whether Build compiles it, output folder,
+ *        Run after build, and Build.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -13,6 +14,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cfloat>
 #include <cstdio>
@@ -65,15 +67,29 @@ namespace mir
         mLoaded = true;
     }
 
-    void BuildSettingsPanel::DrawTemplateStatus(const std::filesystem::path &dir, const BuildGame &game)
+    void BuildSettingsPanel::DrawTemplateStatus(const std::filesystem::path &dir, const BuildGame &game, bool compile)
     {
         const double now = ImGui::GetTime();
         if (dir != mCheckedDir || mProfile != mCheckedProfile || now - mCheckedAt > kRecheckSeconds)
         {
             mCheck = CheckGameBuildTemplate(dir, mProfile, game.mEditorInfo);
+            std::error_code ec;
+            mTemplateMissing = !std::filesystem::exists(dir, ec) || std::filesystem::is_empty(dir, ec);
             mCheckedDir = dir;
             mCheckedProfile = mProfile;
             mCheckedAt = now;
+        }
+
+        if (compile && mTemplateMissing)
+        {
+            ImGui::TextDisabled("Not compiled yet; the first Build compiles it.");
+            return;
+        }
+        if (compile && !mCheck.mProblem.empty())
+        {
+            Line(mCheck.mProblem + "; Build replaces the folder only when it holds a game build template",
+                EditorTheme::Color(StatusColor::Warning));
+            return;
         }
 
         if (mCheck.mProblem.empty())
@@ -91,6 +107,12 @@ namespace mir
             }
             ImGui::TextWrapped("%s", features.c_str());
 
+            // the compile makes it match, so a mismatch now does not matter
+            if (compile)
+            {
+                ImGui::TextDisabled("Build compiles it again from the checkout first.");
+                return;
+            }
             if (mCheck.mWarnings.empty())
                 Line("it matches the editor", EditorTheme::Color(ThemeColor::Success));
         }
@@ -100,33 +122,10 @@ namespace mir
         }
         for (const std::string &warning : mCheck.mWarnings)
             Line(warning, EditorTheme::Color(StatusColor::Warning));
-
-        if (mCheck.mProblem.empty() && mCheck.mWarnings.empty())
-            return;
-
-        // compiling the game build needs the MSVC environment, so the editor only shows how
-        ImGui::Spacing();
-        ImGui::TextWrapped("To make it, run these from a Developer Command Prompt for VS in %s:",
-            game.mSourceRoot.string().c_str());
-        std::string commands;
-        for (const std::string &command : GameBuildInstallCommands(game.mSourceRoot, dir, mProfile))
-            commands += (commands.empty() ? "" : "\n") + command;
-        const ImGuiStyle &style = ImGui::GetStyle();
-        const float wrap = ImGui::GetContentRegionAvail().x - style.FramePadding.x * 2.0f;
-        const float height = ImGui::CalcTextSize(commands.c_str(), nullptr, false, wrap).y +
-            ImGui::GetTextLineHeight() + style.FramePadding.y * 2.0f;
-        ImGui::InputTextMultiline("##install", commands.data(), commands.size() + 1, ImVec2(-FLT_MIN, height),
-            ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_WordWrap);
-        if (ImGui::Button("Copy commands"))
-            ImGui::SetClipboardText(commands.c_str());
-
-        std::error_code ec;
-        if (std::filesystem::exists(dir, ec))
-            ImGui::TextDisabled("cmake --install adds to what the folder holds, so delete it first.");
     }
 
     void BuildSettingsPanel::DrawBuild(const BuildGame &game, const BuildJobView &build, BuildAction &action,
-        const std::filesystem::path &gameBuildDir, const std::filesystem::path &outDir)
+        const BuildAction &target)
     {
         ImGui::SeparatorText("Build");
         if (build.mRunning)
@@ -135,7 +134,16 @@ namespace mir
             ImGui::SameLine();
             if (ImGui::Button("Cancel"))
                 action.mCommand = BuildCommand::Cancel;
-            ImGui::SetItemTooltip("Stops the build; the previous build stays as it was");
+            ImGui::SetItemTooltip("Stops the build; the previous template and build stay as they were");
+
+            const BuildJobProgress &progress = build.mProgress;
+            if (!progress.mStep.empty())
+                ImGui::TextUnformatted(BuildProgressText(progress).c_str());
+            if (progress.mTotal > 0)
+            {
+                const float done = static_cast<float>(progress.mDone) / static_cast<float>(progress.mTotal);
+                ImGui::ProgressBar(std::min(done, 1.0f), ImVec2(-FLT_MIN, 0.0f));
+            }
             return;
         }
         if (build.mSaving)
@@ -144,16 +152,23 @@ namespace mir
             return;
         }
 
+        const bool compile = !target.mGameBuildPreset.empty();
         const std::string blocked = !build.mBlocked.empty() ? build.mBlocked
-            : !mCheck.mProblem.empty()                       ? "Make the game build template first"
-                                                             : std::string();
+            : !compile && !mCheck.mProblem.empty()
+            ? "Pick a usable game build template, or turn on Compile the game build"
+            : std::string();
         ImGui::BeginDisabled(!blocked.empty());
         if (ImGui::Button("Build"))
-            action = { BuildCommand::Build, gameBuildDir, outDir };
+        {
+            action = target;
+            action.mCommand = BuildCommand::Build;
+        }
         ImGui::EndDisabled();
         if (blocked.empty())
         {
-            ImGui::SetItemTooltip("Packages %s into the output folder", game.mName.c_str());
+            ImGui::SetItemTooltip(compile ? "Compiles the game build, then packages %s into the output folder"
+                                          : "Packages %s into the output folder",
+                game.mName.c_str());
         }
         else
         {
@@ -163,13 +178,12 @@ namespace mir
             ImGui::TextDisabled("%s", blocked.c_str());
         }
 
-        DrawSavePrompt(build, action, gameBuildDir, outDir);
+        DrawSavePrompt(build, action, target);
         if (build.mResult != nullptr)
             DrawResult(*build.mResult, game);
     }
 
-    void BuildSettingsPanel::DrawSavePrompt(const BuildJobView &build, BuildAction &action,
-        const std::filesystem::path &gameBuildDir, const std::filesystem::path &outDir)
+    void BuildSettingsPanel::DrawSavePrompt(const BuildJobView &build, BuildAction &action, const BuildAction &target)
     {
         constexpr const char *kPopupId = "Save before building?";
         if (!build.mAskSave.empty() && !ImGui::IsPopupOpen(kPopupId))
@@ -185,7 +199,8 @@ namespace mir
         ImGui::Spacing();
         if (ImGui::Button("Save and Build"))
         {
-            action = { BuildCommand::SaveThenBuild, gameBuildDir, outDir };
+            action = target;
+            action.mCommand = BuildCommand::SaveThenBuild;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -274,6 +289,14 @@ namespace mir
         ImGui::TextDisabled("Saved in project_settings.json, so the whole team builds the same way.");
 
         ImGui::SeparatorText("Game build template");
+        const std::string preset(GameBuildPreset(mProfile));
+        request.mSavePreferences |= ImGui::Checkbox("Compile the game build", &preferences.buildCompileGameBuild);
+        ImGui::SetItemTooltip("Build compiles the game build from this checkout with the %s preset and installs it "
+                              "into the template folder first. Saved for this user only",
+            preset.c_str());
+        const bool compile = preferences.buildCompileGameBuild;
+        ImGui::TextWrapped(compile ? "Build installs the game build into this folder, then packages the game."
+                                   : "Build uses a game build already in this folder, as it is.");
         ImGui::TextWrapped("Paths are saved for this user only. Empty is the default; a relative path is from the "
                            "checkout.");
         const std::string templateHint =
@@ -285,7 +308,7 @@ namespace mir
             request.mSavePreferences = true;
         }
         const std::filesystem::path gameBuildDir = GameBuildTemplateDir(preferences, game, mProfile);
-        DrawTemplateStatus(gameBuildDir, game);
+        DrawTemplateStatus(gameBuildDir, game, compile);
 
         ImGui::SeparatorText("Output");
         const std::string outputHint = CheckoutPath(DefaultBuildOutput(game), game.mSourceRoot);
@@ -308,7 +331,8 @@ namespace mir
         if (!mStatusMessage.empty())
             ImGui::TextColored(EditorTheme::Color(StatusColor::Danger), "%s", mStatusMessage.c_str());
 
-        DrawBuild(game, build, request.mBuild, gameBuildDir, outDir);
+        DrawBuild(game, build, request.mBuild,
+            BuildAction{ BuildCommand::None, gameBuildDir, outDir, compile ? preset : std::string() });
         return request;
     }
 }

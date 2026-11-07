@@ -60,6 +60,21 @@ namespace mir
         std::filesystem::path mOutDir;
         // where MjolnirBuild writes its report, outside mOutDir
         std::filesystem::path mResultFile;
+        // compiles the game build into mGameBuildDir with this CMake preset first, empty uses the template as it is
+        std::string mGameBuildPreset;
+        // MjolnirBuild rewrites it as each step starts, beside mResultFile
+        std::filesystem::path mProgressFile;
+    };
+
+    // What MjolnirBuild's --progress file says
+    struct BuildJobProgress
+    {
+        std::string mStep;
+        // in the game build step: environment, configure, compile or install
+        std::string mPhase;
+        // Ninja's count, once it has printed one
+        std::size_t mDone = 0;
+        std::size_t mTotal = 0;
     };
 
     // What the Build Settings window shows of the build, made each frame by EditorModule
@@ -74,6 +89,7 @@ namespace mir
         // set while the Save or Cancel prompt is up
         std::string mAskSave;
         const BuildResult *mResult = nullptr;
+        BuildJobProgress mProgress;
     };
 
     // MjolnirBuild beside the editor, from asset_workspace.json; empty when it names none
@@ -84,8 +100,18 @@ namespace mir
     // What MjolnirBuild reported in @p resultFile, or why there is no report when it exited with @p exitCode
     BuildResult ReadBuildResult(const std::filesystem::path &resultFile, int exitCode);
 
+    // nullopt while there is no file, or none with a step
+    std::optional<BuildJobProgress> ReadBuildProgress(const std::filesystem::path &progressFile);
+
+    // The running line's text, such as "Compiling the game build: 412 of 1310"
+    std::string BuildProgressText(const BuildJobProgress &progress);
+
     // After MjolnirBuild was stopped while it swapped the new build in: moves the previous one back
     void RestorePreviousBuild(const std::filesystem::path &outDir);
+
+    // After MjolnirBuild was stopped while a compile replaced the game build template: moves the previous one back.
+    // Why it could not, or nullopt
+    std::optional<std::string> RestorePreviousGameBuild(const std::filesystem::path &gameBuildDir);
 
     // One build at a time, checked each frame; nothing here waits for MjolnirBuild
     class BuildJob
@@ -115,12 +141,17 @@ namespace mir
         // the last build, empty before the first
         const std::optional<BuildResult> &Result() const { return mResult; }
 
+        // the running build's, read from its progress file a few times a second
+        const BuildJobProgress &Progress() const { return mProgress; }
+
     private:
         void Finish(BuildResult result);
 
         ChildProcess mProcess;
         BuildJobRequest mRequest;
         std::chrono::steady_clock::time_point mStarted;
+        std::chrono::steady_clock::time_point mProgressReadAt;
+        BuildJobProgress mProgress;
         // the output's marker before the build, so Cancel can tell whether the new build moved in
         std::optional<std::filesystem::file_time_type> mPreviousMarker;
         bool mRunning = false;

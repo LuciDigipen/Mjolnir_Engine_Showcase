@@ -1,8 +1,9 @@
 /**
  * @file BuildProbe.cpp
  * @author Quy Dong Ta
- * @brief Child process for BuildJob.tests.cpp: swaps a build into --out as MjolnirBuild does, stops where the
- *        --game folder's name says, and waits to be canceled without writing a report.
+ * @brief Child process for BuildJob.tests.cpp: swaps a build into --out, or a template into --game-build, as
+ *        MjolnirBuild does, stops where the --game folder's name says, writes --progress as a compile would, and
+ *        waits to be canceled without writing a report.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -18,17 +19,42 @@ int main(int argc, char **argv)
     namespace fs = std::filesystem;
 
     fs::path game;
+    fs::path gameBuild;
     fs::path out;
+    fs::path progress;
     for (int i = 1; i + 1 < argc; i += 2)
     {
         const std::string_view flag = argv[i];
         if (flag == "--game")
             game = argv[i + 1];
+        else if (flag == "--game-build")
+            gameBuild = argv[i + 1];
         else if (flag == "--out")
             out = argv[i + 1];
+        else if (flag == "--progress")
+            progress = argv[i + 1];
     }
     if (game.empty() || out.empty())
         return 2;
+
+    if (!progress.empty())
+    {
+        fs::path temp = progress;
+        temp += ".tmp";
+        std::ofstream(temp) << R"({"version":1,"step":"game build","phase":"compile","done":2,"total":5})" << "\n";
+        fs::rename(temp, progress);
+    }
+
+    // A compile's order: the previous template moves aside and is marked, then the new one moves in
+    if (game.filename() == "template-mid-swap")
+    {
+        fs::path previousTemplate = gameBuild;
+        previousTemplate += ".old";
+        fs::rename(gameBuild, previousTemplate);
+        std::ofstream(previousTemplate / "mjolnir_game_build_previous");
+        std::this_thread::sleep_for(std::chrono::minutes(5));
+        return 1;
+    }
 
     fs::path staging = out;
     staging += ".tmp";

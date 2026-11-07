@@ -626,9 +626,11 @@ namespace mir
 
         std::error_code ec;
         const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
-        const std::filesystem::path result =
-            (ec ? ExecutableDir() : temp) / ("mjolnir-editor-build-" + std::to_string(CurrentProcessId()) + ".json");
-        mBuild.Start(BuildJobRequest{ mBuildTool, mProject.mRootDir, action.mGameBuildDir, action.mOutDir, result });
+        const std::filesystem::path stem =
+            (ec ? ExecutableDir() : temp) / ("mjolnir-editor-build-" + std::to_string(CurrentProcessId()));
+        mBuild.Start(BuildJobRequest{ mBuildTool, mProject.mRootDir, action.mGameBuildDir, action.mOutDir,
+            std::filesystem::path(stem).concat(".json"), action.mGameBuildPreset,
+            std::filesystem::path(stem).concat(".progress.json") });
     }
 
     std::string EditorModule::BuildBlockedReason() const
@@ -687,6 +689,7 @@ namespace mir
         view.mBlocked = BuildBlockedReason();
         view.mAskSave = mBuildAskSave;
         view.mResult = mBuild.Result() ? &*mBuild.Result() : nullptr;
+        view.mProgress = mBuild.Progress();
         return view;
     }
 

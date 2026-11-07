@@ -64,8 +64,12 @@ namespace mir
                         prefs.buildOutputs[game] = output.get<std::string>();
                 }
             }
-            if (const auto it = build->find("runAfterBuild"); it != build->end() && it->is_boolean())
-                prefs.buildRunAfter = it->get<bool>();
+            for (const auto &[key, value] : { std::pair{ "runAfterBuild", &prefs.buildRunAfter },
+                     std::pair{ "compileGameBuild", &prefs.buildCompileGameBuild } })
+            {
+                if (const auto it = build->find(key); it != build->end() && it->is_boolean())
+                    *value = it->get<bool>();
+            }
         }
     }
 
@@ -136,7 +140,8 @@ namespace mir
                          {{"developmentTemplate", buildDevelopmentTemplate},
                           {"releaseTemplate", buildReleaseTemplate},
                           {"outputs", buildOutputs},
-                          {"runAfterBuild", buildRunAfter}}}};
+                          {"runAfterBuild", buildRunAfter},
+                          {"compileGameBuild", buildCompileGameBuild}}}};
         return WriteJsonFile(path, root);
     }
 

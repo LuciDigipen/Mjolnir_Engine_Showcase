@@ -151,6 +151,8 @@ TEST_CASE("Build preferences survive a save and a load", "[build-settings]")
     saved.buildReleaseTemplate = "builds/game-build/shipping";
     saved.buildOutputs[BuildOutputKey(checkout.Game())] = "D:/Builds/Demo";
     saved.buildRunAfter = true;
+    CHECK(saved.buildCompileGameBuild);
+    saved.buildCompileGameBuild = false;
     REQUIRE(saved.SaveFile(path));
 
     const EditorPreferences loaded = EditorPreferences::LoadFile(path);
@@ -158,15 +160,18 @@ TEST_CASE("Build preferences survive a save and a load", "[build-settings]")
     CHECK(loaded.buildReleaseTemplate == saved.buildReleaseTemplate);
     CHECK(loaded.buildOutputs == saved.buildOutputs);
     CHECK(loaded.buildRunAfter);
+    CHECK_FALSE(loaded.buildCompileGameBuild);
 
-    checkout.Write(path, R"({ "build": { "releaseTemplate": 4, "outputs": [ "x" ], "runAfterBuild": "yes" } })");
+    checkout.Write(path, R"({ "build": { "releaseTemplate": 4, "outputs": [ "x" ], "runAfterBuild": "yes",
+        "compileGameBuild": "no" } })");
     const EditorPreferences broken = EditorPreferences::LoadFile(path);
     CHECK(broken.buildReleaseTemplate.empty());
     CHECK(broken.buildOutputs.empty());
     CHECK_FALSE(broken.buildRunAfter);
+    CHECK(broken.buildCompileGameBuild);
 }
 
-TEST_CASE("A template that cannot be used says why, with the commands that make it", "[build-settings]")
+TEST_CASE("A template that cannot be used says why", "[build-settings]")
 {
     TempCheckout checkout;
     const std::filesystem::path dir = checkout.root / "builds" / "game-build" / "debug";
@@ -178,16 +183,6 @@ TEST_CASE("A template that cannot be used says why, with the commands that make 
     checkout.Write(dir / "game_build_info.json", Info(true, "1111111111aa", "Debug", true).dump());
     CHECK(CheckGameBuildTemplate(dir, BuildProfile::Development, checkout.Game().mEditorInfo).mProblem.find(
               "editor build") != std::string::npos);
-
-    CHECK(GameBuildInstallCommands(checkout.root, dir, BuildProfile::Development) ==
-        std::vector<std::string>{ "cmake --preset windows-msvc-game-debug",
-            "cmake --build --preset windows-msvc-game-debug",
-            "cmake --install builds/windows-msvc-game-debug --prefix builds/game-build/debug" });
-
-    // outside the checkout the path is absolute, and quoted for its space
-    const std::filesystem::path outside = checkout.root.parent_path() / "My Templates" / "release";
-    CHECK(GameBuildInstallCommands(checkout.root, outside, BuildProfile::Release).back() ==
-        "cmake --install builds/windows-msvc-game-release --prefix \"" + outside.generic_string() + "\"");
 }
 
 TEST_CASE("A template is compared with the editor and the profile", "[build-settings]")

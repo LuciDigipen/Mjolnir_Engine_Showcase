@@ -199,6 +199,10 @@ install rules.
 Install into an empty folder: `cmake --install` never removes what an earlier
 install left there.
 
+Build in the editor and MjolnirBuild's `--game-build-preset` do all of this
+for you (see [Compiling the game build](#compiling-the-game-build)), so these
+commands are only for a template made by hand.
+
 DLLs are found from the executables' imports rather than
 `$<TARGET_RUNTIME_DLLS>`, because LuaJIT is linked through pkg-config and its
 target names no DLL. Windows system DLLs and the MSVC runtime are left out, so a
@@ -384,19 +388,32 @@ File > Build Settings... holds what a build from the editor uses:
   `project_settings.json`. Left empty, the template is
   `builds/game-build/debug` or `builds/game-build/release` and the output is
   `builds/game-build-out/<game>`; a relative path is from the checkout.
-- **Run after build**, also per machine.
+- **Compile the game build**, on by default, and **Run after build**, also per
+  machine (`compileGameBuild` and `runAfterBuild` in the preferences' `build`).
 
-The panel shows the selected template's `game_build_info.json` and whether it
-matches the editor, with the same checks MjolnirBuild warns about
-(`modules/project/include/project/GameBuildInfo.h`), plus a template built for the
-other profile. A missing, broken or mismatched template shows the
-`cmake --preset`, `cmake --build` and `cmake --install` commands that make it.
-The editor does not run them: compiling the game build needs the MSVC environment.
+With **Compile the game build** on, Build passes MjolnirBuild
+`--game-build-preset` for the profile (`windows-msvc-game-debug` or
+`windows-msvc-game-release`), so it compiles the game build from the checkout
+and installs it into the template folder before packaging; see
+[Compiling the game build](#compiling-the-game-build). It works with the editor
+started from Explorer, and never touches the editor's own build folder. A
+missing template never disables Build: the panel says "Not compiled yet; the
+first Build compiles it", or shows the template's engine version and options.
+
+With it off, Build uses the template folder as it is. The panel shows its
+`game_build_info.json` and whether it matches the editor, with the same checks
+MjolnirBuild warns about (`modules/project/include/project/GameBuildInfo.h`),
+plus a template built for the other profile, and a missing or broken one
+disables Build. The panel never shows commands to run by hand; to make a
+template without the editor, see [A game build template](#a-game-build-template).
 
 **Build**, at the bottom of the window, runs MjolnirBuild (the `buildTool` in
 `asset_workspace.json`) with the template and output above. It runs in the
-background: the editor stays usable, the window shows the time so far and a
-Cancel button, and the result replaces it when the build ends. The result is
+background: the editor stays usable, and the window shows the time so far, a
+Cancel button and the step MjolnirBuild is on, read from its `--progress` file
+four times a second. While the game build compiles that is Ninja's count, such
+as `Compiling the game build: 412 of 1310`, with a progress bar. The result
+replaces them when the build ends. The result is
 the exe that starts the game, or MjolnirBuild's error, then its warnings and a
 Log of the steps and their times. The same lines go to the Output log. Build
 only packages; it does not start the game.
@@ -407,9 +424,16 @@ The build reads the game from disk, so:
   Save writes every unsaved Prefab and the scene, and the build starts the frame
   after, once the scene is written. If the save fails, nothing is built.
   `--non-interactive` answers Cancel.
-- **Play, a running asset import, or an unusable template** disable Build; the
-  reason shows beside the button and in its tooltip.
-- **Cancel** stops MjolnirBuild and the AssetCooker or TerrainTool it runs. The
+- **Play, a running asset import, or an unusable template** with Compile the
+  game build off disable Build; the reason shows beside the button and in its
+  tooltip.
+- **Cancel** stops MjolnirBuild and everything it runs: the AssetCooker,
+  TerrainTool, or the compile's cmd, CMake, Ninja and every `cl.exe`. The
+  previous template stays as it was, since the new one replaces it only after
+  the compile, and is put back from `<template>.old` if the stop came while
+  MjolnirBuild was swapping it; if it cannot be put back, the result is a
+  failure that says where it is, before the next compile deletes it. The next
+  compile also removes a half-made `<template>.tmp`. The
   previous build stays where it was, put back if the stop came while
   MjolnirBuild was swapping it out; if it cannot be put back, the result is a
   failure that says so. A Cancel that comes after the new build moved in, but
