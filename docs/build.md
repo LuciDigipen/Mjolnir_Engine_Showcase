@@ -430,7 +430,10 @@ The build reads the game from disk, so:
 - **Cancel** stops MjolnirBuild and everything it runs: the AssetCooker,
   TerrainTool, or the compile's cmd, CMake, Ninja and every `cl.exe`. The
   previous template stays as it was, since the new one replaces it only after
-  the compile; the next compile removes a half-made `<template>.tmp`. The
+  the compile, and is put back from `<template>.old` if the stop came while
+  MjolnirBuild was swapping it; if it cannot be put back, the result is a
+  failure that says where it is, before the next compile deletes it. The next
+  compile also removes a half-made `<template>.tmp`. The
   previous build stays where it was, put back if the stop came while
   MjolnirBuild was swapping it out; if it cannot be put back, the result is a
   failure that says so. A Cancel that comes after the new build moved in, but

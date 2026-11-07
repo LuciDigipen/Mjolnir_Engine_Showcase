@@ -309,6 +309,45 @@ TEST_CASE("Cancel mid-swap puts the previous build back, or says it could not", 
     }
 }
 
+TEST_CASE("Cancel while a compile replaces the template puts the previous one back, or says where it is",
+    "[build-job]")
+{
+    BuildSandbox sandbox;
+    const fs::path gameBuildDir = sandbox.GameBuildDir();
+    fs::path previous = gameBuildDir;
+    previous += ".old";
+    BuildJobRequest request = ProbeRequest(sandbox, "template-mid-swap");
+    request.mGameBuildPreset = "windows-msvc-game-release";
+
+    BuildJob job;
+    REQUIRE(job.Start(request));
+    WaitUntil([&] { return fs::exists(previous / "mjolnir_game_build_previous") && !fs::exists(gameBuildDir); });
+
+    SECTION("put back")
+    {
+        job.Cancel();
+        REQUIRE(job.Result());
+        CHECK(job.Result()->mOutcome == BuildOutcome::Canceled);
+        CHECK(ReadText(gameBuildDir / "MjolnirEngine.exe") == "game-build");
+        CHECK_FALSE(fs::exists(gameBuildDir / "mjolnir_game_build_previous"));
+        CHECK_FALSE(fs::exists(previous));
+    }
+    SECTION("held open, so it cannot move")
+    {
+        std::ifstream held(previous / "MjolnirEngine.exe");
+        REQUIRE(held);
+        job.Cancel();
+        REQUIRE(job.Result());
+        CHECK(job.Result()->mOutcome == BuildOutcome::Failed);
+        const std::string &error = job.Result()->mError;
+        INFO(error);
+        CHECK(error.find("replaced the game build template") != std::string::npos);
+        CHECK(error.find("could not be moved back") != std::string::npos);
+        CHECK(error.find(previous.filename().string()) != std::string::npos);
+        CHECK_FALSE(fs::exists(gameBuildDir));
+    }
+}
+
 TEST_CASE("A build that cannot start says why", "[build-job]")
 {
     BuildSandbox sandbox;
@@ -404,4 +443,38 @@ TEST_CASE("A build stopped mid-swap gets the previous build back", "[build-job]"
     RestorePreviousBuild(out);
     CHECK_FALSE(fs::exists(out));
     CHECK(fs::exists(previous));
+}
+
+TEST_CASE("A game build template stopped mid-swap is moved back, and nothing else is", "[build-job]")
+{
+    BuildSandbox sandbox;
+    const fs::path dir = sandbox.GameBuildDir();
+    fs::path previous = dir;
+    previous += ".old";
+
+    // moved aside and marked
+    fs::rename(dir, previous);
+    BuildSandbox::Write(previous / "mjolnir_game_build_previous", "");
+    CHECK_FALSE(RestorePreviousGameBuild(dir / ""));
+    CHECK(ReadText(dir / "MjolnirEngine.exe") == "game-build");
+    CHECK_FALSE(fs::exists(dir / "mjolnir_game_build_previous"));
+    CHECK_FALSE(fs::exists(previous));
+
+    // stopped before the marker was written, so known by being a template
+    fs::rename(dir, previous);
+    CHECK_FALSE(RestorePreviousGameBuild(dir));
+    CHECK(fs::exists(dir / "MjolnirEngine.exe"));
+
+    // with the template in place, a leftover .old is not touched
+    BuildSandbox::Write(previous / "mjolnir_game_build_previous", "");
+    CHECK_FALSE(RestorePreviousGameBuild(dir));
+    CHECK(fs::exists(previous));
+
+    // nor is a folder that is neither marked nor a template
+    fs::remove_all(dir);
+    fs::remove(previous / "mjolnir_game_build_previous");
+    BuildSandbox::Write(previous / "notes.txt", "x");
+    CHECK_FALSE(RestorePreviousGameBuild(dir));
+    CHECK_FALSE(fs::exists(dir));
+    CHECK(fs::exists(previous / "notes.txt"));
 }

@@ -109,6 +109,10 @@ namespace mir
     // After MjolnirBuild was stopped while it swapped the new build in: moves the previous one back
     void RestorePreviousBuild(const std::filesystem::path &outDir);
 
+    // After MjolnirBuild was stopped while a compile replaced the game build template: moves the previous one back.
+    // Why it could not, or nullopt
+    std::optional<std::string> RestorePreviousGameBuild(const std::filesystem::path &gameBuildDir);
+
     // One build at a time, checked each frame; nothing here waits for MjolnirBuild
     class BuildJob
     {

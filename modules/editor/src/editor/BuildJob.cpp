@@ -10,6 +10,7 @@
 
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <project/GameBuildInfo.h>
 #include <serial/JsonFile.h>
 
 #include <nlohmann/json.hpp>
@@ -31,6 +32,8 @@ namespace mir
         // build to <out>.old while the new one moves in
         constexpr std::string_view kBuildMarkerFileName = "mjolnir_build.json";
         constexpr std::string_view kPreviousSuffix = ".old";
+        // and a compile moves the previous game build template to <template>.old, marked with this file
+        constexpr std::string_view kPreviousGameBuildMarkerFileName = "mjolnir_game_build_previous";
 
         // MjolnirBuild reads its compile log every 250 ms, so reading more often shows nothing new
         constexpr std::chrono::milliseconds kProgressReadInterval{ 250 };
@@ -220,6 +223,34 @@ namespace mir
                 PathText(out), ec.message());
     }
 
+    std::optional<std::string> RestorePreviousGameBuild(const fs::path &gameBuildDir)
+    {
+        fs::path dir = gameBuildDir;
+        if (!dir.has_filename())
+            dir = dir.parent_path();
+        fs::path previous = dir;
+        previous += kPreviousSuffix;
+
+        // unmarked when it was stopped between moving the template and marking it
+        std::error_code ec;
+        if (fs::exists(dir, ec) ||
+            (!fs::is_regular_file(previous / kPreviousGameBuildMarkerFileName, ec) && GameBuildTemplateProblem(previous)))
+            return std::nullopt;
+
+        fs::rename(previous, dir, ec);
+        if (ec)
+            return "the previous game build template could not be moved back into " + PathText(dir) + " (" +
+                ec.message() + "); it is in " + PathText(previous) + ", which the next compile deletes";
+
+        // the template step would copy it into the game
+        fs::remove(dir / kPreviousGameBuildMarkerFileName, ec);
+        if (ec)
+            MIR_LOG_WARN("Build: could not remove {} from the game build template: {}",
+                kPreviousGameBuildMarkerFileName, ec.message());
+        MIR_LOG_INFO("Build: moved the previous game build template back into {}", PathText(dir));
+        return std::nullopt;
+    }
+
     BuildJob::~BuildJob() { Cancel(); }
 
     bool BuildJob::Start(BuildJobRequest request)
@@ -287,6 +318,9 @@ namespace mir
         }
 
         RestorePreviousBuild(mRequest.mOutDir);
+        // only a compile replaces the template
+        const std::optional<std::string> templateLost =
+            mRequest.mGameBuildPreset.empty() ? std::nullopt : RestorePreviousGameBuild(mRequest.mGameBuildDir);
         BuildResult result;
         result.mOutcome = BuildOutcome::Canceled;
         result.mOutDir = mRequest.mOutDir;
@@ -300,6 +334,13 @@ namespace mir
             result.mOutcome = BuildOutcome::Failed;
             result.mError = "Cancel stopped MjolnirBuild while it swapped builds, and the previous build could not be "
                             "moved back into " + PathText(mRequest.mOutDir) + "; see the log";
+        }
+        if (templateLost)
+        {
+            result.mOutcome = BuildOutcome::Failed;
+            const std::string what =
+                "Cancel stopped MjolnirBuild while it replaced the game build template, and " + *templateLost;
+            result.mError = result.mError.empty() ? what : result.mError + "; " + what;
         }
         Finish(std::move(result));
     }
