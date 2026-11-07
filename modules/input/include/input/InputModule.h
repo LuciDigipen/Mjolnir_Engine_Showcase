@@ -22,10 +22,11 @@ namespace mir
     class InputModule
     {
     public:
-        // the map comes from project settings, with the engine's default actions added; the look options come
-        // from @p userSettingsPath, and an empty path neither reads nor saves them
-        InputModule(ModuleContext context, Window &window, const std::filesystem::path &projectSettingsPath,
-            const std::filesystem::path &userSettingsPath = {});
+        // The InputMap is a shared project resource, so the World already holds it. The look options come from
+        // @p userSettingsPath unless sharedControls is supplied, which must outlive the World.
+        // An empty path neither reads nor saves the options.
+        InputModule(ModuleContext context, Window &window, const std::filesystem::path &userSettingsPath = {},
+            ControlsSettings *sharedControls = nullptr);
 
         InputModule(const InputModule &) = delete;
         InputModule &operator=(const InputModule &) = delete;

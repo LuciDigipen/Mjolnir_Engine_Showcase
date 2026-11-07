@@ -141,6 +141,42 @@ namespace mir
         project.mRootDir = root;
         project.mAssetsDir = (root / project.mAssetsRoot).lexically_normal();
         project.mSceneDir = (root / sceneDir).lexically_normal();
+        const auto invalidCatalog = [&](const std::string &cause) {
+            throw SetupError(ErrorCategory::ProjectData, "Invalid scene catalog", manifestPath, cause,
+                "Register scenes with unique IDs and game-relative paths, then select a startupScene ID.");
+        };
+        if (const auto scenes = json->find("scenes"); scenes != json->end())
+        {
+            const auto startup = json->find("startupScene");
+            if (!scenes->is_array() || startup == json->end() || !startup->is_string())
+                invalidCatalog("scenes must be an array and startupScene must be a string");
+            project.mStartupSceneId = startup->get<std::string>();
+            for (const auto &entry : *scenes)
+            {
+                if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string() ||
+                    !entry.contains("path") || !entry["path"].is_string())
+                    invalidCatalog("each scene requires string id and path fields");
+
+                const std::string id = entry["id"].get<std::string>();
+                const auto relative = std::filesystem::u8path(entry["path"].get<std::string>()).lexically_normal();
+                if (id.empty() || std::ranges::any_of(project.mScenes,
+                        [&](const ProjectScene &scene) { return scene.mId == id; }))
+                    invalidCatalog("empty or duplicate scene ID: " + id);
+                if (relative.empty() || relative == "." || relative.has_root_path() || *relative.begin() == "..")
+                    invalidCatalog("scene path must be inside the game folder: " + id);
+                project.mScenes.push_back({ id, (root / relative).lexically_normal() });
+            }
+            const auto selected = std::ranges::find(project.mScenes, project.mStartupSceneId, &ProjectScene::mId);
+            if (selected == project.mScenes.end())
+                invalidCatalog("startupScene is not registered: " + project.mStartupSceneId);
+            project.mSceneDir = selected->mDirectory;
+        }
+        else
+        {
+            if (json->contains("startupScene"))
+                invalidCatalog("startupScene requires a scenes array");
+            project.mScenes.push_back({ project.mStartupSceneId, project.mSceneDir });
+        }
         project.mProjectSettingsPath = root / kProjectSettingsFileName;
         project.mSoundBankDir = (root / soundBanksRoot).lexically_normal();
 

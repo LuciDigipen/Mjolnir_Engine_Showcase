@@ -367,6 +367,30 @@ TEST_CASE("Detail follows projected error: near ground is fine and far ground co
     CHECK(CountKind(zoomed.Draws(), Kind::Tile) > CountKind(draws, Kind::Tile));
 }
 
+TEST_CASE("Applied view settings change the detail of the next update", "[terrain][selection][configuration]")
+{
+    const Fixture f;
+    const TerrainSelectionInstance instance = f.Instance();
+    TerrainStreamingSettings::View coarse = ViewSettings();
+    coarse.refineErrorPixels = 1000.0;
+    coarse.mergeErrorPixels = 750.0;
+    coarse.prefetchErrorPixels = 500.0;
+    TerrainViewSelector selector(coarse);
+    const TerrainView view = LookingEverywhere(f.At({-180.0, 12.0, -120.0}), 200.0);
+
+    selector.Update({&instance, 1}, view, AllReady());
+    const size_t before = selector.Draws().size();
+
+    TerrainStreamingSettings::View fine = ViewSettings();
+    fine.refineErrorPixels = 0.1;
+    fine.mergeErrorPixels = 0.05;
+    fine.prefetchErrorPixels = 0.02;
+    selector.ApplySettings(fine);
+    selector.Update({&instance, 1}, view, AllReady());
+
+    CHECK(selector.Draws().size() > before);
+}
+
 TEST_CASE("Hysteresis keeps a tile's LOD between the merge and refine bounds", "[terrain][selection]")
 {
     const Fixture f;

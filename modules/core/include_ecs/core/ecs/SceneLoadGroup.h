@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "SceneInstance.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -17,8 +19,9 @@ namespace mir
     class SceneLoadGroup
     {
     public:
-        void Begin()
+        void Begin(SceneInstanceId instance = kOwnedBySession)
         {
+            mInstance = instance;
             mReady = false;
             mDiscovered = false;
             mProgress = 0.0f;
@@ -70,6 +73,7 @@ namespace mir
         }
 
         bool Ready() const { return mReady; }
+        SceneInstanceId Instance() const { return mInstance; }
         // False until the work set is known, then the finished share of it. Never decreases within a load.
         bool Discovered() const { return mDiscovered; }
         float Progress() const { return mProgress; }
@@ -83,6 +87,7 @@ namespace mir
         };
 
         std::vector<SourceReport> mReports;
+        SceneInstanceId mInstance = kOwnedBySession;
         bool mReady = true;
         bool mDiscovered = true;
         float mProgress = 1.0f;

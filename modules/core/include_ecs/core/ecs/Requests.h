@@ -8,6 +8,7 @@
  */
 
 #pragma once
+#include "SceneInstance.h"
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -28,6 +29,19 @@ namespace mir
         SaveScene,
         ApplyImportedAssets,
         Quit,
+    };
+
+    struct OpenSceneRequest
+    {
+        std::string id;
+        bool saveCurrent = false;
+        std::string newScenePath;
+    };
+
+    struct AdditiveSceneRequest
+    {
+        std::string id;
+        SceneInstanceId instance = kOwnedBySession;
     };
 
     // World resource. Applied where nothing is drawn or running, so a transition never
@@ -53,21 +67,42 @@ namespace mir
             return taken;
         }
 
-        bool Empty() const { return mPending.empty() && !mOpenProject.has_value(); }
+        bool Empty() const
+        {
+            return mPending.empty() && !mOpenProject.has_value() && !mOpenScene.has_value() &&
+                !mNextScene.has_value() && mAdditiveScenes.empty() && mUnloadScenes.empty() && !mPrimaryScene;
+        }
 
-        // What was pending when a span of time began, kept apart so what is pushed during it can be told from it.
+// What was pending when a span of time began, kept apart so what is pushed during it can be told from it.
         struct Held
         {
             std::vector<Request> requests;
             std::optional<std::string> openProject;
+            std::optional<OpenSceneRequest> openScene;
+            std::optional<std::string> nextScene;
+            std::vector<AdditiveSceneRequest> additiveScenes;
+            std::vector<SceneInstanceId> unloadScenes;
+            std::optional<SceneInstanceId> primaryScene;
         };
-        Held Hold() { return { std::exchange(mPending, {}), std::exchange(mOpenProject, std::nullopt) }; }
-        // Drops everything pushed since Hold and brings back what was held. Returns how many were dropped.
+        Held Hold()
+        {
+            return { std::exchange(mPending,{}), std::exchange(mOpenProject, std::nullopt),
+                    std::exchange(mOpenScene, std::nullopt), std::exchange(mNextScene, std::nullopt),
+                    std::exchange(mAdditiveScenes, {}), std::exchange(mUnloadScenes, {}),
+                    std::exchange(mPrimaryScene, std::nullopt) };
+        }
+// Drops everything pushed since Hold and brings back what was held. Returns how many were dropped.
         size_t Restore(Held held)
         {
-            const size_t dropped = mPending.size() + (mOpenProject.has_value() ? 1 : 0);
+            const size_t dropped = mPending.size() + mOpenProject.has_value() + mOpenScene.has_value() +
+                mNextScene.has_value() + mAdditiveScenes.size() + mUnloadScenes.size() + mPrimaryScene.has_value();
             mPending = std::move(held.requests);
             mOpenProject = std::move(held.openProject);
+            mOpenScene = std::move(held.openScene);
+            mNextScene = std::move(held.nextScene);
+            mAdditiveScenes = std::move(held.additiveScenes);
+            mUnloadScenes = std::move(held.unloadScenes);
+            mPrimaryScene = held.primaryScene;
             return dropped;
         }
 
@@ -75,8 +110,30 @@ namespace mir
         void PushOpenProject(std::string dir) { mOpenProject = std::move(dir); }
         std::optional<std::string> TakeOpenProject() { return std::exchange(mOpenProject, std::nullopt); }
 
+        void PushOpenScene(OpenSceneRequest request) { mOpenScene = std::move(request); }
+        std::optional<OpenSceneRequest> TakeOpenScene() { return std::exchange(mOpenScene, std::nullopt); }
+
+        void PushNextScene(std::string id) { mNextScene = std::move(id); }
+        std::optional<std::string> TakeNextScene() { return std::exchange(mNextScene, std::nullopt); }
+
+        void PushAdditiveScene(AdditiveSceneRequest request) { mAdditiveScenes.push_back(std::move(request)); }
+        std::vector<AdditiveSceneRequest> TakeAdditiveScenes() { return std::exchange(mAdditiveScenes, {}); }
+        void PushUnloadScene(SceneInstanceId instance)
+        {
+            if (std::find(mUnloadScenes.begin(), mUnloadScenes.end(), instance) == mUnloadScenes.end())
+                mUnloadScenes.push_back(instance);
+        }
+        std::vector<SceneInstanceId> TakeUnloadScenes() { return std::exchange(mUnloadScenes, {}); }
+        void PushPrimaryScene(SceneInstanceId instance) { mPrimaryScene = instance; }
+        std::optional<SceneInstanceId> TakePrimaryScene() { return std::exchange(mPrimaryScene, std::nullopt); }
+
     private:
         std::vector<Request> mPending;
         std::optional<std::string> mOpenProject;
+        std::optional<OpenSceneRequest> mOpenScene;
+        std::optional<std::string> mNextScene;
+        std::vector<AdditiveSceneRequest> mAdditiveScenes;
+        std::vector<SceneInstanceId> mUnloadScenes;
+        std::optional<SceneInstanceId> mPrimaryScene;
     };
 }

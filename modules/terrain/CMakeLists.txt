@@ -24,6 +24,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainRenderMesh.cpp
     src/terrain/TerrainScene.cpp
     src/terrain/TerrainStreamer.cpp
+    src/terrain/TerrainStreamingConfiguration.cpp
     src/terrain/TerrainStreamingSettings.cpp
     src/terrain/TerrainSurface.cpp
     src/terrain/TerrainTileMesh.cpp
@@ -31,7 +32,10 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TileAddressing.cpp
     src/terrain/TileHeights.cpp
 )
-target_link_libraries(engine_terrain PUBLIC mir::assets mir::core PRIVATE mir::serial)
+find_package(nlohmann_json CONFIG REQUIRED)
+
+# Terrain's public headers expose nlohmann::json, not serial's API.
+target_link_libraries(engine_terrain PUBLIC mir::assets mir::core nlohmann_json::nlohmann_json PRIVATE mir::serial)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)

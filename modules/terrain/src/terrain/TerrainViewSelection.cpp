@@ -717,6 +717,11 @@ namespace mir
 
     TerrainViewSelector::~TerrainViewSelector() = default;
 
+    void TerrainViewSelector::ApplySettings(const TerrainStreamingSettings::View &view)
+    {
+        mImpl->settings = view;
+    }
+
     void TerrainViewSelector::Update(std::span<const TerrainSelectionInstance> instances, const TerrainView &view,
                                      const TerrainUnitReady &ready)
     {

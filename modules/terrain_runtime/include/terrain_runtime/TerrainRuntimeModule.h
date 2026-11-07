@@ -25,7 +25,7 @@ namespace mir
     {
     public:
         TerrainRuntimeModule(ModuleContext context, RendererModule &renderer, const GameProject &project, const AssetResolver &resolver,
-                             JobExecutor &jobs);
+                             JobExecutor &jobs, bool updateInPlay = true);
         ~TerrainRuntimeModule();
 
         TerrainRuntimeModule(const TerrainRuntimeModule &) = delete;

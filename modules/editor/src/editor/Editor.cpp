@@ -471,6 +471,7 @@ namespace mir
             (claimsSlot && !valueOf("emitterOffsetPlacement" + std::to_string(slot), &placementId, sizeof(placementId), values[1])))
             return;
         const Name *name = world.GetComponent<Name>(entity);
+        // TODO: the particle editor only edits the authored scene, revisit once authoring tools work during Play.
         mHistory.Submit(MakeSetFieldsEditCommand(entity, *ops, std::move(values),
             std::format("Move particle emitter {}", name != nullptr ? name->mValue : "Entity"), mAuthoredEntities));
     }
@@ -808,7 +809,7 @@ namespace mir
 
         if (mGizmoWasUsing && !usingGizmo)
         {
-            mHistory.EndStep();
+            ActiveHistory().EndStep();
             mGizmoTargets.clear();
         }
         mGizmoWasUsing = usingGizmo;
@@ -888,16 +889,16 @@ namespace mir
 
             const Name *name = world.GetComponent<Name>(target.mEntity);
             commands.push_back(MakeSetFieldsEditCommand(target.mEntity, *ops, std::move(values),
-                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"), mAuthoredEntities));
+                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"), ActiveAuthored()));
         }
 
         if (commands.empty())
             return;
 
         if (mGizmoTargets.size() == 1)
-            mHistory.Submit(std::move(commands.front()));
+            ActiveHistory().Submit(std::move(commands.front()));
         else
-            mHistory.Submit(MakeCommandGroup(std::format("{} {} Entities", verb, mGizmoTargets.size()),
+            ActiveHistory().Submit(MakeCommandGroup(std::format("{} {} Entities", verb, mGizmoTargets.size()),
                 std::move(commands)));
     }
 
@@ -967,11 +968,11 @@ namespace mir
                                     payload->DataSize);
                                 if (!documentTab)
                                 {
-                                    mHistory.Submit(particle ?
+                                    ActiveHistory().Submit(particle ?
                                         MakePlaceParticleSystemCommand(contentPath, kNullEntity, point->Meters()) :
                                         MakePlacePrefabCommand(contentPath, kNullEntity, point->Meters()));
                                 }
-                                else if (!particle && mAuthoredEntities != nullptr)
+                                else if (!particle && ActiveAuthored() != nullptr)
                                 {
                                     const std::span<const Entity> roots = world.HierarchyIndex().Roots();
                                     const Entity root = roots.empty() ? kNullEntity : roots.front();
@@ -984,8 +985,8 @@ namespace mir
                                         action.mKind = EntityActionKind::PlacePrefab;
                                         action.mPrefabPath = contentPath;
                                         action.mPlacement = local->Meters();
-                                        mHistory.Submit(
-                                            MakeDocumentEntityCommand(action, *mAuthoredEntities, world));
+                                        ActiveHistory().Submit(
+                                            MakeDocumentEntityCommand(action, *ActiveAuthored(), world));
                                     }
                                 }
                             }
@@ -1287,7 +1288,7 @@ namespace mir
 
         const bool documentTab = documents.mActive != kSceneDocument;
         GroundQuery *ground = activeWorld.TryResource<GroundQuery>();
-        mSnapFrameSubmissions = mHistory.SubmissionCount();
+        mSnapFrameSubmissions = ActiveHistory().SubmissionCount();
         PollSnapToTerrain(activeWorld, documents.mActive, mode, dt);
         SnapToTerrainAction snap = SnapToTerrainActionFor(activeWorld, documents.mActive, ground);
         snap.mWaiting = mSnapToTerrain.Active();
@@ -1360,20 +1361,24 @@ namespace mir
 
             if (ImGui::Begin("Hierarchy"))
             {
-                const EntityAction entityAction = mHierarchyPanel.Draw(activeWorld, mAuthoredEntities, documentTab);
+                EntityAction entityAction = mHierarchyPanel.Draw(activeWorld, ActiveAuthored(), documentTab);
+                // TODO: prefab documents are read-only during Play until the editor has separate Scene and Game
+                // windows, the panels show the runtime World meanwhile.
+                if (documentTab && mode.mMode != EngineMode::Edit)
+                    entityAction = {};
                 if (!documentTab && entityAction.mKind == EntityActionKind::CreatePrefab)
                 {
-                    if (mAuthoredEntities != nullptr)
-                        mHistory.Submit(MakeCreatePrefabCommand(*mAuthoredEntities, entityAction.mTarget));
+                    if (ActiveAuthored() != nullptr)
+                        ActiveHistory().Submit(MakeCreatePrefabCommand(*ActiveAuthored(), entityAction.mTarget));
                 }
-                else if (documentTab && mAuthoredEntities != nullptr)
+                else if (documentTab && ActiveAuthored() != nullptr)
                 {
-                    mHistory.Submit(MakeDocumentEntityCommand(entityAction, *mAuthoredEntities, activeWorld));
+                    ActiveHistory().Submit(MakeDocumentEntityCommand(entityAction, *ActiveAuthored(), activeWorld));
                 }
                 else if (entityAction.mKind == EntityActionKind::PlaceParticleSystem)
                 {
                     if (mode.mMode == EngineMode::Edit)
-                        mHistory.Submit(MakePlaceParticleSystemCommand(entityAction.mPrefabPath,
+                        ActiveHistory().Submit(MakePlaceParticleSystemCommand(entityAction.mPrefabPath,
                             kNullEntity, WorldVec3(0)));
                 }
                 else if (entityAction.mKind == EntityActionKind::AttachParticleSystem &&
@@ -1390,10 +1395,10 @@ namespace mir
                             FieldValue value;
                             std::memcpy(value.mBytes, path.c_str(), path.size() + 1);
                             if (ops->Has(activeWorld, entityAction.mTarget))
-                                mHistory.Submit(MakeSetFieldsCommand(entityAction.mTarget, *ops,
+                                ActiveHistory().Submit(MakeSetFieldsCommand(entityAction.mTarget, *ops,
                                     { value }, "Assign Particle System"));
                             else
-                                mHistory.Submit(MakeAddComponentCommand(entityAction.mTarget, *ops,
+                                ActiveHistory().Submit(MakeAddComponentCommand(entityAction.mTarget, *ops,
                                     { value }));
                         }
                     }
@@ -1401,14 +1406,14 @@ namespace mir
                 else if (documentTab || entityAction.mKind != EntityActionKind::PlacePrefab ||
                     mode.mMode == EngineMode::Edit)
                 {
-                    mHistory.Submit(MakeEntityCommand(entityAction));
+                    ActiveHistory().Submit(MakeEntityCommand(entityAction));
                 }
             }
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
             {
-                snapRequested |= mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities, snap);
+                snapRequested |= mInspectorPanel.Draw(activeWorld, assetImport, ActiveHistory(), ActiveAuthored(), snap);
                 if (!documentTab && mode.mMode == EngineMode::Edit)
                 {
                     const auto &selection = activeWorld.Resource<Selection>().mSelected;
@@ -1464,18 +1469,31 @@ namespace mir
             UpdateViewPie(mode);
 
             ImGui::PopStyleColor(pushedColors);
+            bool showNewScene = false;
             if (ImGui::BeginMainMenuBar())
             {
                 if (ImGui::BeginMenu("File"))
                 {
                     ImGui::BeginDisabled(mode.mMode == EngineMode::Play);
 
-                    if (ImGui::MenuItem("New Scene"))
-                        actions.mScene = SceneMenuAction::New;
+                    if (ImGui::MenuItem("New Scene..."))
+                        showNewScene = true;
                     if (ImGui::MenuItem("Save Scene"))
                         actions.mScene = SceneMenuAction::Save;
-                    if (ImGui::MenuItem("Load Scene"))
-                        actions.mScene = SceneMenuAction::Load;
+                    if (ImGui::MenuItem("Reload Scene") && !mOpenSceneId.empty())
+                        mPendingSceneId = mOpenSceneId;
+                    if (ImGui::BeginMenu("Open Scene", !mSceneCatalog.empty()))
+                    {
+                        for (const ProjectScene &scene : mSceneCatalog)
+                        {
+                            const bool current = scene.mId == mOpenSceneId;
+                            ImGui::PushID(scene.mId.c_str());
+                            if (ImGui::MenuItem(scene.mId.c_str(), nullptr, current, !current))
+                                mPendingSceneId = scene.mId;
+                            ImGui::PopID();
+                        }
+                        ImGui::EndMenu();
+                    }
 
                     ImGui::EndDisabled();
                     ImGui::Separator();
@@ -1521,6 +1539,65 @@ namespace mir
             }
             pushedColors = pushPanelAlpha();
 
+            if (showNewScene || !mSceneCreationError.empty())
+                ImGui::OpenPopup("New Scene");
+            if (ImGui::BeginPopupModal("New Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::InputText("Scene Name", mNewSceneId, sizeof(mNewSceneId));
+                ImGui::InputTextWithHint("Folder", "scenes/<scene name>", mNewScenePath, sizeof(mNewScenePath));
+                ImGui::TextDisabled("Folder is relative to the game directory.");
+                if (!mSceneCreationError.empty())
+                    ImGui::TextWrapped("%s", mSceneCreationError.c_str());
+                ImGui::BeginDisabled(mNewSceneId[0] == '\0');
+                if (ImGui::Button("Create"))
+                {
+                    mPendingSceneId = mNewSceneId;
+                    mPendingScenePath = mNewScenePath[0] ? mNewScenePath : "scenes/" + mPendingSceneId;
+                    mSceneCreationError.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel"))
+                {
+                    mSceneCreationError.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            if (!mPendingSceneId.empty())
+            {
+                if (IsSceneUnsaved())
+                    ImGui::OpenPopup("Open Scene###OpenSceneConfirm");
+                else
+                    actions.mOpenScene = OpenSceneRequest{ std::exchange(mPendingSceneId, {}), false,
+                        std::exchange(mPendingScenePath, {}) };
+            }
+            if (ImGui::BeginPopupModal("Open Scene###OpenSceneConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::TextUnformatted("Save changes to the current scene before opening the selected scene?");
+                if (ImGui::Button("Save and Open"))
+                {
+                    actions.mOpenScene = OpenSceneRequest{ std::exchange(mPendingSceneId, {}), true,
+                        std::exchange(mPendingScenePath, {}) };
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Discard and Open"))
+                {
+                    actions.mOpenScene = OpenSceneRequest{ std::exchange(mPendingSceneId, {}), false,
+                        std::exchange(mPendingScenePath, {}) };
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel"))
+                {
+                    mPendingSceneId.clear();
+                    mPendingScenePath.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
             DrawOpenProjectConfirm(actions, materialDraftsUnsaved);
             DrawNewProjectModal(actions, projects, materialDraftsUnsaved);
 
@@ -1545,7 +1622,7 @@ namespace mir
             {
                 if (ImGui::Begin("Project Settings", &mShowProjectSettings))
                     mProjectSettingsPanel.Draw(renderSettings, mProjectSettingsPath, mShowInputSettings,
-                        sceneWorld.TryResource<PhysicsLayerUpdate>(), mAudio, mode.mMode == EngineMode::Edit, &renderer);
+                        sceneWorld.TryResource<PhysicsLayerTable>(), mAudio, mode.mMode == EngineMode::Edit, &renderer);
                 ImGui::End();
             }
             else
@@ -1641,14 +1718,16 @@ namespace mir
         const bool snapTransitionRequested =
             actions.mScene == SceneMenuAction::New || actions.mScene == SceneMenuAction::Load ||
             actions.mScene == SceneMenuAction::Play || actions.mScene == SceneMenuAction::Stop ||
-            !actions.mOpenProject.empty() || !actions.mCreateProjectName.empty() ||
+            actions.mOpenScene.has_value() || !actions.mOpenProject.empty() || !actions.mCreateProjectName.empty() ||
             actions.mDocument.mKind != EditorDocumentActionKind::None;
         if (snapRequested)
             StartSnapToTerrain(activeWorld, documents.mActive);
         FinishSnapToTerrain(activeWorld, documents.mActive, ground, mode.mMode == EngineMode::Edit,
                             snapTransitionRequested);
 
-        if (mSceneOps != nullptr)
+        if (PlayEditing())
+            mPlayHistory.Flush(activeWorld, *mPlaySceneOps);
+        else if (mSceneOps != nullptr && mode.mMode == EngineMode::Edit)
             mHistory.Flush(sceneWorld, *mSceneOps);
 
         return actions;
@@ -1666,15 +1745,15 @@ namespace mir
         }
 
         //keeps the item's id while the step name in its label changes
-        const std::string undo = mHistory.CanUndo() ? "Undo " + mHistory.UndoName() : std::string("Undo");
+        const std::string undo = ActiveHistory().CanUndo() ? "Undo " + ActiveHistory().UndoName() : std::string("Undo");
 
-        if (ImGui::MenuItem((undo + "###Undo").c_str(), "Ctrl+Z", false, mHistory.CanUndo()))
-            mHistory.RequestUndo();
+        if (ImGui::MenuItem((undo + "###Undo").c_str(), "Ctrl+Z", false, ActiveHistory().CanUndo()))
+            ActiveHistory().RequestUndo();
 
-        const std::string redo = mHistory.CanRedo() ? "Redo " + mHistory.RedoName() : std::string("Redo");
+        const std::string redo = ActiveHistory().CanRedo() ? "Redo " + ActiveHistory().RedoName() : std::string("Redo");
 
-        if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
-            mHistory.RequestRedo();
+        if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, ActiveHistory().CanRedo()))
+            ActiveHistory().RequestRedo();
     }
 
     void Editor::PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt)
@@ -1722,7 +1801,7 @@ namespace mir
             return;
         }
 
-        const SnapToTerrainCommit commit{mSnapFrameSubmissions, mHistory.SubmissionCount(), transitionRequested};
+        const SnapToTerrainCommit commit{mSnapFrameSubmissions, ActiveHistory().SubmissionCount(), transitionRequested};
         const std::optional<SnapToTerrainEdit> edit =
             mSnapToTerrain.TakeEdit(world, document, *ground, editing, commit);
         if (!edit)
@@ -1734,13 +1813,13 @@ namespace mir
         }
 
         const Entity entity = mSnapToTerrain.Target();
-        std::unique_ptr<ICommand> command = MakeSnapToTerrainCommand(entity, *edit, mAuthoredEntities);
+        std::unique_ptr<ICommand> command = MakeSnapToTerrainCommand(entity, *edit, ActiveAuthored());
         if (!command)
         {
             MIR_LOG_ERROR("Snap to Terrain: the Transform edit could not be built.");
             return;
         }
-        mHistory.Submit(std::move(command), true);
+        ActiveHistory().Submit(std::move(command), true);
         MIR_LOG_INFO("Snap to Terrain: {} samples, {:.3f} m residual, source spacing {:.3f} m", edit->mSamples,
                      edit->mResidual, edit->mSourceSpacing);
     }
@@ -1878,9 +1957,9 @@ namespace mir
             return;
 
         if (ImGui::IsKeyPressed(ImGuiKey_Z))
-            mHistory.RequestUndo();
+            ActiveHistory().RequestUndo();
         else if (ImGui::IsKeyPressed(ImGuiKey_Y))
-            mHistory.RequestRedo();
+            ActiveHistory().RequestRedo();
         else if (mode.mMode == EngineMode::Edit && ImGui::IsKeyPressed(ImGuiKey_S))
             actions.mSaveActiveDocument = true;
     }

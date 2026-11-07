@@ -38,13 +38,21 @@ namespace mir
         class AudioSettingsSystem final : public ISystem
         {
         public:
-            AudioSettingsSystem(std::filesystem::path path, const AudioSettings &saved)
-                : mPath(std::move(path)), mSaved(saved)
+            // defaults is the project's loaded section, which outlives this system and is edited in place.
+            AudioSettingsSystem(std::filesystem::path path, const AudioSettings &saved, const AudioSettings &defaults)
+                : mPath(std::move(path)), mSaved(saved), mDefaults(defaults), mAppliedDefaults(defaults)
             {
             }
 
             void OnUpdate(SystemContext &context) override
             {
+                if (mDefaults != mAppliedDefaults)
+                {
+                    // Applied levels that equal the defaults are not a player choice, so they are not saved.
+                    if (ApplyChangedDefaults(mDefaults, mPath))
+                        mSaved = mDefaults;
+                    mAppliedDefaults = mDefaults;
+                }
                 if (context.elapsed - mLastSave >= kMinSaveIntervalSeconds)
                     Save(context.elapsed);
             }
@@ -72,13 +80,15 @@ namespace mir
 
             std::filesystem::path mPath;
             AudioSettings mSaved;
+            const AudioSettings &mDefaults;
+            AudioSettings mAppliedDefaults;
             double mLastSave = -kMinSaveIntervalSeconds;
         };
     }
 
-    AudioModule::AudioModule(ModuleContext context, const std::filesystem::path &bankDir,
+    AudioModule::AudioModule(ModuleContext context, const std::filesystem::path &bankDir, AudioSettings &defaults,
         const std::filesystem::path &projectSettingsPath, const std::filesystem::path &settingsPath)
-        : mProjectSettingsPath(projectSettingsPath), mDefaults(LoadAudioSettings(projectSettingsPath))
+        : mProjectSettingsPath(projectSettingsPath), mDefaults(defaults)
     {
         // before Init, which applies the volumes without a ramp
         const AudioSettings settings = LoadAudioSettings(settingsPath, mDefaults);
@@ -93,7 +103,7 @@ namespace mir
         context.scheduler.AddSystem<SoundtrackSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate});
         context.scheduler.AddSystem<AudioSettingsSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate},
-            settingsPath, settings);
+            settingsPath, settings, mDefaults);
 
         mHooks = context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
         mSoundtrackHooks =
@@ -108,6 +118,41 @@ namespace mir
 
         mDefaults = defaults;
         return true;
+    }
+
+    bool AudioModule::ReloadDefaults(std::string &problem)
+    {
+        const std::optional<AudioSettings> saved = ReadAudioDefaults(mProjectSettingsPath, problem);
+        if (!saved)
+            return false;
+
+        mDefaults = *saved;
+        return true;
+    }
+
+    std::unique_ptr<AudioModule::WorldBinding> AudioModule::BindWorld(ModuleContext context)
+    {
+        return std::make_unique<WorldBinding>(context);
+    }
+
+    AudioModule::WorldBinding::WorldBinding(ModuleContext context)
+    {
+        context.scheduler.AddSystem<AudioEmitterSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<SoundtrackSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate});
+
+        mHooks = context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
+        mSoundtrackHooks =
+            context.world.SetComponentHooks<Soundtrack>({ .onRemove = &SoundtrackSystem::OnSoundtrackRemoved });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, &SoundtrackSystem::OnPlayEnd);
+    }
+
+    AudioModule::WorldBinding::~WorldBinding()
+    {
+        mPlayEnd.Reset();
+        mSoundtrackHooks.Reset();
+        mHooks.Reset();
     }
 
     AudioModule::~AudioModule()

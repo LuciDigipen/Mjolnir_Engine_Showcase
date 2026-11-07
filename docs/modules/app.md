@@ -9,8 +9,11 @@ or at a transition, its module registers.
 
 ## Model
 
-`App(desc)` builds everything, `Run()` loops until the window closes, and the
-destructor stops the systems and lets the members die.
+`App(desc)` builds the authoring world and shared services. `PlayScene` creates a
+`RuntimeSession` with its own World, scheduler, scene, simulation modules and
+render binding. `Run()` updates the runtime scheduler during Play and the
+authoring scheduler during Edit. Stop unloads and destroys the runtime session,
+then returns to the same authoring World and editor history.
 
 The members are the modules, declared in dependency order: a module after every
 module it uses, and a bridge after `script` and its library. C++ builds them in
@@ -23,7 +26,7 @@ it belongs.
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until the first view has loaded and the window opens
 mCommands, mWorld, mScheduler
-CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), AssetResolver, ParticlesModule, SceneModule, PrefabModule
+CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), AssetResolver, ProjectResources, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
 WindowModule, RendererModule, ParticlesGpuModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
 CameraModule, AudioModule, PhysicsModule, TerrainModule
@@ -33,15 +36,16 @@ ScriptModule, ParticlesRuntimeModule, the six script bridges, TerrainRuntimeModu
 Between two module members a `SplashStep` sets the splash's status line, so the
 splash follows startup without the constructor body doing it.
 
-`Run` is a plain loop with no fixed timestep.
+`Run` advances a fixed timestep for the active World.
 
 The window stays hidden behind the splash while `Run` renders its first frames,
 so what the first view needs has loaded when it opens. Models load on their
 first frame; terrain streams, and `StartupGate` waits until every area the
 viewports chose can draw as chosen. It gives up with a warning after 10 s without
 progress or 60 s in all, for example past a budget or after a failed read.
-`RevealWindow` then starts Play in a game without an editor, shows the window and
-closes the splash, so a game's simulation and audio do not run while hidden. A
+A standalone game creates its runtime before this wait and checks that runtime's
+terrain. Simulation is paused while the first view prepares. `RevealWindow` resumes
+the runtime, shows the window and closes the splash. A
 `--frames` or `--hidden` run does not wait, so frame counts mean what they did.
 
 ```
@@ -54,10 +58,11 @@ while true:
     dt = min(elapsed, mMaxDeltaSeconds)
     ApplyRequests                      last frame's transitions, and a game to switch to
     AsyncAssetService::DrainCompletions  background asset loads that finished become visible
-    RunFrameSlot(FrameBegin)           script reload poll, terrain installs and Edit refresh, import and content browser polls
+    ProjectResources::Refresh          edited terrain configuration is merged and validated
+    RunFrameSlot(FrameBegin)           authoring tools and shared services, plus runtime frame slots during Play
     ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
-    SystemScheduler::Update            PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
+    active SystemScheduler::Update     PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
     if ToggleFullscreen just pressed: ToggleFullscreen    F11; the swapchain follows next frame
     ++frame
     until the window opens: StartupGate on TerrainRuntime::AreasLoading, then RevealWindow
@@ -96,25 +101,66 @@ next process: the ordinary startup path
 in `Run` reports with `App` alive, and a failure while building it reports after
 what was built is torn down.
 
+### Project resources
+
+`ProjectResources` (`app/ProjectResources.h`) holds the configuration the project
+owns, as a member declared after `AssetResolver` and before the World state. Each
+value loads once, with the loader and the failure behavior its module used before:
+`InputMap` (with the engine's default actions added), `RenderSettings` and
+`PostProcessingSettings` fall back to defaults, `PhysicsLayerTable` throws a
+`SetupError` for a broken section, and `TerrainStreamingConfiguration` reads the
+game's `terrain_streaming.json` and the machine-local file beside the executable.
+The audio defaults load under `MIR_WITH_AUDIO` and go to `AudioModule` by
+reference, not into a World, because the module keeps the device and playback
+state and the defaults only seed it.
+
+`WorldState` shares the values into its World through a member declared right after
+`CoreModule`, so every module after it finds them with `Resource<T>()`, which
+asserts when injection is missing. `RuntimeSession` passes the same object, so the
+authoring World and the Play World return the same address for each value, and a
+change made during Play is still there after Stop. `World::ShareResource` stores a
+pointer without extending the value's lifetime, which is why `ProjectResources`
+outlives every World and why a writer edits a value in place.
+
+`Run` calls `ProjectResources::Refresh` after `ApplyRequests` and
+`DrainCompletions` and before the `FrameBegin` slots, so a configuration edit is
+merged once, ahead of every consumer that frame. Today it refreshes the terrain
+configuration, the one value whose effective form is computed from two sources.
+The other values are read as they are, and each consumer compares them with what
+it last applied.
+
+Player look preferences have a separate App-owned `ControlsSettings`, loaded once
+from the user settings file. Both input modules borrow it while keeping independent
+`InputState` resources. Both game shells use the same `GameControlsOptions` adapter,
+which edits the shared preferences and saves changes. Stop does not discard them.
+
 ### Transitions
 
-`App` keeps what defines a transition: the scene commands, the Play snapshot and
-`EngineModeState`. Every other step is a stage function a module registered.
+`App` keeps what defines a transition: the authoring scene, the runtime session
+and `EngineModeState`. Scene commands use stages registered by modules.
 
 ```
 NewScene     SceneUnload stage, SceneModule::New, SceneLoad stage
 LoadScene    probe and prompt, SceneUnload, SceneModule::LoadFromDisk, SceneLoad
 SaveScene    prompt for an untitled scene, SceneModule::Bind, SceneModule::Save, SceneSaved stage
-PlayScene    PlayBegin stage, SceneModule::CaptureForPlay, Play mode
-StopScene    PlayEnd stage, SceneModule::RestoreFromPlay, Edit mode, SceneLoad stage
+PlayScene    commit authoring prefabs, copy the live scene into RuntimeSession, runtime SceneLoad and PlayBegin, Play mode
+StopScene    runtime PlayEnd, SceneUnload and scheduler Stop, destroy RuntimeSession, Edit mode
+SwapScene    queue background preparation, then activate the current result at a frame boundary
 asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
              (a veto: ReloadAbort stage, AbortReload)
 ```
 
-`StopScene` runs `PlayEnd` before the restore, so scripts get their `OnStop` in
-the World they ran in. Stop keeps the GPU caches: the restore fires `OnRemove`
-for every Play entity, which drops its per-entity state, and the caches are
-keyed by asset. A `ReloadPrepare` function vetoes the swap by throwing; `App`
+Runtime scenes share one World and scheduler. Additive requests reserve instance
+handles, prepare independently, and append to `SceneCollection` at a frame boundary.
+Unloading a handle cancels its pending preparation or emits `SceneEnd` and
+`SceneUnload` for its loaded instance. Stop cancels all preparation and unloads
+every instance before destroying the session. Primary selection controls the
+default spawn owner and camera preference, and can target a pending additive load.
+
+`StopScene` runs `PlayEnd` before unloading runtime entities, so scripts get
+their `OnStop` in the World they ran in. The authoring entities, unsaved edits
+and editor history remain in place. Window, GPU and asset services outlive the
+runtime session. A `ReloadPrepare` function vetoes the swap by throwing; `App`
 then runs `ReloadAbort`, so the holders that prepared before it drop their
 staging, aborts the reload and tells the import why.
 
@@ -145,6 +191,7 @@ included, is the same code.
 |---|---|---|
 | `AppDesc` | `app/App.h` | Window size, Vulkan app name and validation, editor-layout gate, `dt` clamp, frame limit, the game to open, a scripted game switch for tests |
 | `App` | `app/App.h` | Builds the modules, runs the loop, runs the transitions, takes a request to open another game |
+| `ProjectResources` | `app/ProjectResources.h` | The project's configuration, loaded once and shared into every World: `Input()`, `Render()`, `PostProcessing()`, `PhysicsLayers()`, `Terrain()` and, with audio, `AudioDefaults()`, plus `ShareInto(World &)` and `Refresh()` |
 
 `app/ErrorReport.h` declares `ReportFatal`, which logs a `SetupError`, writes
 `logs/last-error.json`, starts `MjolnirErrorReporter` and returns the exit code.
@@ -304,6 +351,18 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
    cheap for a large scene.
 
 ## Changed
+
+*2026-11-05*, **`App` owns a `ProjectResources`.** Was: `InputModule`, the renderer's
+world binding, `PhysicsModule`, `TerrainRuntime` and `AudioModule` each read their
+settings from disk in their constructors, and `RuntimeSession` shared three of the
+values from the authoring World by hand. Now: one `ProjectResources` loads them,
+`WorldState` shares them into its World before any module member is built,
+`RuntimeSession` passes the same object, and `Run` refreshes the terrain
+configuration once a frame before the `FrameBegin` slots. The modules read the shared
+values with `Resource<T>()`, and `mProjectSettingsPath` left `RendererModuleSettings`
+and the input, physics and audio constructors. Because: a value loaded in two places
+could differ between the authoring and Play Worlds, and a panel's edit could not
+reach a running system without a hand-written share.
 
 *2026-10-31* — **`App` owns an `AssetResolver`.** Was: `App` passed `mAssetIdRoot` to
 the particles, animation, script and renderer modules. Now: it builds one

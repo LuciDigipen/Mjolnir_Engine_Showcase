@@ -476,8 +476,8 @@ focus ring and an icon.
 
 `UIContext::Nav()` holds the UI actions read at `BeginFrame`; `UIState` reads
 `UINavigate` and `UIConfirm` from them, the pause menu reads `UIPause` and
-`UICancel`, and `UITabLeft` and `UITabRight` are unused yet. `App` merges `DefaultInputMap()` into the project's map at
-startup with `AddDefaultActions`, so they are in every project and appear in
+`UICancel`, and `UITabLeft` and `UITabRight` are unused yet. `ProjectResources` merges `DefaultInputMap()` into the project's map
+when it loads it, with `AddDefaultActions`, so they are in every project and appear in
 Project Settings; a rebound action keeps its bindings, and a removed one comes
 back at the next start. `UIContext::Input()` hands back the `InputState` from
 `BeginFrame`. It is a frame old at that point, since `InputSystem` runs later in

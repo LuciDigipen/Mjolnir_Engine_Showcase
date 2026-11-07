@@ -12,7 +12,6 @@
 #include <physics/CollisionEventSystem.h>
 #include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
-#include <physics_layers/PhysicsLayerSettings.h>
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
@@ -25,7 +24,7 @@
 
 namespace mir
 {
-    PhysicsModule::PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath, JobExecutor *jobs)
+    PhysicsModule::PhysicsModule(ModuleContext context, JobExecutor *jobs)
     {
         RegisterPhysicsComponents();
 
@@ -33,17 +32,16 @@ namespace mir
         if (jobs) desc.mWorkerThreads = static_cast<int>(jobs->WorkerCount());
         PhysicsWorld &physics = context.world.EmplaceResource<PhysicsWorld>(desc);
         MIR_LOG_INFO("Physics: {} simulation workers, {} pose workers", physics.WorkerCount(), jobs ? jobs->WorkerCount() : 0);
-        physics.SetLayerTable(ReadPhysicsLayers(projectSettingsPath));
+        physics.SetLayerTable(context.world.Resource<PhysicsLayerTable>());
         context.world.EmplaceResource<CollisionEvents>();
-        context.world.EmplaceResource<PhysicsLayerUpdate>();
 
         // once per fixed substep, before Propagate turns the Transforms it writes into world matrices
-        context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal}, jobs);
+        context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{ SystemOrder::kNormal }, jobs);
         context.scheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate,
-            SystemOrder{SystemOrder::kNormal});
-        context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+            SystemOrder{ SystemOrder::kNormal });
+        context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate, SystemOrder{ SystemOrder::kNormal });
         // after every fixed step and Propagate, so the outlines are this frame's poses
-        context.scheduler.AddSystem<ColliderDebugSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<ColliderDebugSystem>(SystemPhase::LateUpdate, SystemOrder{ SystemOrder::kNormal });
 
         mHooks = context.world.SetComponentHooks<RigidBody>(
             { .onAdd = &PhysicsSystem::OnRigidBodyAdded, .onRemove = &PhysicsSystem::OnRigidBodyRemoved });

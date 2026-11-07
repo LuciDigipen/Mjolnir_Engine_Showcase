@@ -1,7 +1,7 @@
 /**
  * @file WorldSceneOps.cpp
  * @author Dong Ta
- * @brief The scene calls the editor's history makes, done on a World and its LoadedScene.
+ * @brief The scene calls the editor's history makes, done on a World and the scenes it holds.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -17,6 +17,7 @@
 #include <scene/SceneAsset.h>
 #include <scene/SceneDuplicate.h>
 #include <scene/SceneIO.h>
+#include <scene/SceneModule.h>
 
 #include <optional>
 #include <string>
@@ -24,19 +25,44 @@
 
 namespace mir
 {
+    namespace
+    {
+        // An entity no scene owns is edited directly. Its records go into a throwaway scene with the session's ID,
+        // so nothing is registered and new entities stay owned by the session.
+        template <typename Fn>
+        decltype(auto) InScene(World &world, LoadedScene *scene, Fn &&fn)
+        {
+            LoadedScene unowned;
+            unowned.mInstanceId = kOwnedBySession;
+            LoadedScene &target = scene != nullptr ? *scene : unowned;
+            const World::SceneScope scope(world, target.mInstanceId);
+            return fn(target);
+        }
+    }
+
+    LoadedScene *WorldSceneOps::FindScene(SceneInstanceId instance)
+    {
+        SceneCollection *scenes = mWorld.TryResource<SceneCollection>();
+        SceneEntry *entry = scenes != nullptr ? scenes->Find(instance) : nullptr;
+        return entry != nullptr ? &entry->scene : nullptr;
+    }
+
     Entity WorldSceneOps::CreateEntity()
     {
-        return CreateSceneEntity(mWorld, mScene);
+        return InScene(mWorld, FindScene(mWorld.PrimaryScene()),
+            [&](LoadedScene &scene) { return CreateSceneEntity(mWorld, scene); });
     }
 
     Entity WorldSceneOps::Duplicate(Entity source)
     {
-        return DuplicateSceneEntitySubtree(mWorld, mScene, source);
+        return InScene(mWorld, FindScene(mWorld.EntityScene(source)),
+            [&](LoadedScene &scene) { return DuplicateSceneEntitySubtree(mWorld, scene, source); });
     }
 
     Entity WorldSceneOps::CopyAsOrdinaryObject(Entity source)
     {
-        return CopyInstanceMemberAsOrdinary(mWorld, mScene, source);
+        return InScene(mWorld, FindScene(mWorld.EntityScene(source)),
+            [&](LoadedScene &scene) { return CopyInstanceMemberAsOrdinary(mWorld, scene, source); });
     }
 
     CapturedSubtree WorldSceneOps::Capture(Entity root)
@@ -47,9 +73,13 @@ namespace mir
         subtree.mMembers = SnapshotMembers(world, root);
         subtree.mData = CaptureEntity(world, root).mData;
 
+        const LoadedScene *scene = FindScene(world.EntityScene(root));
+        subtree.mScene = scene != nullptr ? scene->mInstanceId : kOwnedBySession;
+
         std::unordered_map<uint64_t, StableId> ids;
-        for (const auto &[id, entity] : mScene.mEntities)
-            ids[PackEntity(entity)] = id;
+        if (scene != nullptr)
+            for (const auto &[id, entity] : scene->mEntities)
+                ids[PackEntity(entity)] = id;
 
         subtree.mStableIds.reserve(subtree.mMembers.size());
         for (const Entity member : subtree.mMembers)
@@ -58,31 +88,44 @@ namespace mir
             subtree.mStableIds.push_back(it != ids.end() ? it->second : kNullStableId);
         }
 
-        subtree.mInstances = CaptureInstanceRecords(mScene, subtree.mStableIds);
+        if (scene != nullptr)
+            subtree.mInstances = CaptureInstanceRecords(*scene, subtree.mStableIds);
 
         return subtree;
     }
 
     std::vector<Entity> WorldSceneOps::Restore(const CapturedSubtree &subtree, Entity parent, Entity before)
     {
-        std::vector<Entity> members = RestoreEntityAt(mWorld, EntitySnapshot{ subtree.mData }, mScene,
-            subtree.mStableIds, parent, before);
-        if (!members.empty() && !subtree.mInstances.empty() && !RestoreInstanceRecords(mScene, subtree.mInstances))
-            MIR_LOG_WARN("WorldSceneOps: could not restore a prefab instance record");
-        return members;
+        LoadedScene *owner = FindScene(subtree.mScene);
+        if (owner == nullptr && subtree.mScene != kOwnedBySession)
+            MIR_LOG_WARN("WorldSceneOps: the entity's scene is no longer loaded, so it is restored without one");
+
+        return InScene(mWorld, owner, [&](LoadedScene &scene)
+            {
+                std::vector<Entity> members = RestoreEntityAt(mWorld, EntitySnapshot{ subtree.mData }, scene,
+                    subtree.mStableIds, parent, before);
+                if (owner != nullptr && !members.empty() && !subtree.mInstances.empty() &&
+                    !RestoreInstanceRecords(scene, subtree.mInstances))
+                    MIR_LOG_WARN("WorldSceneOps: could not restore a prefab instance record");
+                return members;
+            });
     }
 
     bool WorldSceneOps::Destroy(Entity root)
     {
-        StableId instanceRoot = kNullStableId;
-        const std::optional<StableId> rootId = StableIdOf(mScene, root);
-        if (rootId && FindInstanceBinding(mScene, *rootId, instanceRoot) != nullptr && instanceRoot != *rootId)
+        LoadedScene *owner = FindScene(mWorld.EntityScene(root));
+        if (owner != nullptr)
         {
-            MIR_LOG_WARN("WorldSceneOps: cannot delete a prefab instance member; delete its root instead");
-            return false;
+            StableId instanceRoot = kNullStableId;
+            const std::optional<StableId> rootId = StableIdOf(*owner, root);
+            if (rootId && FindInstanceBinding(*owner, *rootId, instanceRoot) != nullptr && instanceRoot != *rootId)
+            {
+                MIR_LOG_WARN("WorldSceneOps: cannot delete a prefab instance member; delete its root instead");
+                return false;
+            }
         }
 
-        return DestroySceneEntity(mWorld, mScene, root);
+        return InScene(mWorld, owner, [&](LoadedScene &scene) { return DestroySceneEntity(mWorld, scene, root); });
     }
 
     Entity WorldSceneOps::PlacePrefab(std::string_view contentPath, Entity parent, const WorldVec3 &position)
@@ -103,8 +146,10 @@ namespace mir
         StableId instanceRoot = kNullStableId;
         if (!parent.IsNull())
         {
-            const std::optional<StableId> parentId = StableIdOf(mScene, parent);
-            if (parentId && FindInstanceBinding(mScene, *parentId, instanceRoot) != nullptr)
+            const LoadedScene *parentScene = FindScene(mWorld.EntityScene(parent));
+            const std::optional<StableId> parentId =
+                parentScene != nullptr ? StableIdOf(*parentScene, parent) : std::nullopt;
+            if (parentId && FindInstanceBinding(*parentScene, *parentId, instanceRoot) != nullptr)
             {
                 MIR_LOG_WARN("WorldSceneOps: cannot reparent under a prefab instance member");
                 return false;
@@ -113,8 +158,16 @@ namespace mir
 
         for (const Entity entity : entities)
         {
-            const std::optional<StableId> id = StableIdOf(mScene, entity);
-            if (id && FindInstanceBinding(mScene, *id, instanceRoot) != nullptr && instanceRoot != *id)
+            // Each scene saves and unloads its own entities, so a parent from another scene is refused.
+            if (!parent.IsNull() && mWorld.EntityScene(entity) != mWorld.EntityScene(parent))
+            {
+                MIR_LOG_WARN("WorldSceneOps: cannot reparent under an entity from another scene");
+                return false;
+            }
+
+            const LoadedScene *scene = FindScene(mWorld.EntityScene(entity));
+            const std::optional<StableId> id = scene != nullptr ? StableIdOf(*scene, entity) : std::nullopt;
+            if (id && FindInstanceBinding(*scene, *id, instanceRoot) != nullptr && instanceRoot != *id)
             {
                 MIR_LOG_WARN("WorldSceneOps: cannot reparent a prefab instance member");
                 return false;

@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <app/ProjectResources.h>
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetResolver.h>
@@ -44,6 +45,7 @@
 #include <renderer_script/RendererScriptModule.h>
 #include <prefab/PrefabModule.h>
 #include <scene/SceneIO.h>
+#include <scene/SceneLoader.h>
 #include <scene/SceneModule.h>
 #include <script/ScriptModule.h>
 #include <terrain/TerrainModule.h>
@@ -77,6 +79,7 @@
 
 namespace mir
 {
+    struct AdditiveSceneRequest;
 
     struct AppDesc
     {
@@ -133,8 +136,9 @@ namespace mir
 
         void Run();
 
-        World &GetWorld() { return mWorld; }
-        SystemScheduler &Systems() { return mScheduler; }
+        World &GetWorld() { return mWorldState.world; }
+        World *RuntimeWorld();
+        SystemScheduler &Systems() { return mWorldState.scheduler; }
 
         // Temporary seam
         VulkanRenderer &Renderer() { return mRenderer.Renderer(); }
@@ -149,7 +153,7 @@ namespace mir
         AsyncAssetService *AssetService() { return mAssetService.get(); }
 
         // The scene currently in the World
-        LoadedScene &Scene() { return mScene.Scene(); }
+        LoadedScene &Scene() { return mWorldState.scene.Scene(); }
 
         // The game currently open
         const GameProject &Project() const { return mProject; }
@@ -208,9 +212,22 @@ namespace mir
 
         // context is rebuilt per tick
         SystemContext MakeContext(float dt);
+        SystemContext MakeRuntimeContext(float dt);
 
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
+
+        // Queues background preparation, then activates a current result at the frame boundary.
+        bool SwapScene(const std::string &id);
+        void PollSceneLoad();
+        bool ActivateScene(const SceneLoadCompletion &completed);
+        bool LoadAdditiveScene(const AdditiveSceneRequest &request);
+        bool UnloadRuntimeScene(SceneInstanceId instance, bool partial = true);
+        bool SetPrimaryScene(SceneInstanceId instance);
+        void RefreshPrimaryScene();
+
+        // PlayEnd, every scene's unload and the runtime systems' Stop, in the order Stop runs them.
+        void StopRuntimeStages();
 
         // A standalone game starts no gameplay for a scene until its resources are ready. The window, the
         // completions, the uploads and the loading UI keep running, and only the resource systems tick. False
@@ -241,18 +258,23 @@ namespace mir
         };
 
         // Asks what to do with a scene ProbeScene found broken; Refuse when nobody can answer
-        SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const;
+        SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, const std::filesystem::path &directory, bool atStartup) const;
 
         // Asks whether an untitled scene may replace the broken one in the scene directory
         bool ConfirmBindUntitledScene() const;
 
         // Unload and load, with no checks; incomplete when entity files are missing
+    #if MIR_WITH_EDITOR
+        void CreateScene(const std::string &id, const std::string &path, bool saveCurrent);
+    #endif
+        bool OpenScene(const std::string &id, bool saveCurrent);
+
         void ReplaceSceneFromDisk(bool incomplete);
 
         // a frame's check of the first view's loading, until the window opens
         void WaitForFirstView();
 
-        // what a game without an editor starts, the window, and the end of the splash
+        // resumes the prepared runtime, shows the window and closes the splash
         void RevealWindow();
 
         // the mSwitchProjectTo test hook
@@ -268,33 +290,53 @@ namespace mir
         // equal orders in a phase run in this order too, but nothing may rely on it
         AppDesc mDesc;
         GameProject mProject;
+        std::string mOpenSceneId = mProject.mStartupSceneId;
         StartupSplash mSplash;
         JobExecutor mJobs;
+        SceneLoader mSceneLoader{ mJobs };
 
-        // before mWorld, so it is destroyed after it
-        CommandBuffer mCommands;
-        World mWorld;
-        SystemScheduler mScheduler;
+        struct WorldState
+        {
+            WorldState(ProjectResources &resources, const GameProject &project, AssetsModule &assets,
+                const AssetResolver &resolver, GameShellSettings shellSettings);
 
-        CoreModule mCore;
+            // Shares the project resources first, so every module member below finds them in the World.
+            struct ProjectShare
+            {
+                ProjectShare(World &world, ProjectResources &resources) { resources.ShareInto(world); }
+            };
+
+            CommandBuffer commands;
+            World world;
+            SystemScheduler scheduler;
+            CoreModule core{ ModuleContext{ world, scheduler }, commands };
+            ProjectShare projectShare;
+
+            ParticlesModule particles;
+            SceneModule scene;
+            PrefabModule prefab;
+            GameUIModule gameUI;
+            GameShellModule gameShell;
+
+            ModuleContext Context() { return { world, scheduler }; }
+        };
+
         AssetsModule mAssets;
         std::unique_ptr<AsyncAssetService> mAssetService;
         AssetResolver mResolver;
-        ParticlesModule mParticles;
-        SceneModule mScene;
-        PrefabModule mPrefab;
+        // every World borrows from it, so it outlives them
+        ProjectResources mProjectResources{ mProject };
+        ControlsSettings mControls;
+        GameControlsOptions mControlsOptions;
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
         // so the textures must still be there
-        GameUIModule mGameUI;
-        GameShellModule mGameShell;
+        WorldState mWorldState;
         WindowModule mWindow;
         SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
         RendererModule mRenderer;
         ParticlesGpuModule mParticlesGpu;
         // before ImGui and the editor, which read input and models
         InputModule mInput;
-        // handed to mGameShell, built before it
-        GameControlsOptions mControlsOptions{ mInput };
         AnimationModule mAnimation;
         SplashStep mImGuiStep{ mSplash, "Initializing UI...", 0.4f };
         ImGuiModule mImGui;
@@ -306,27 +348,39 @@ namespace mir
         CameraModule mCamera;
     #if MIR_WITH_AUDIO
         AudioModule mAudio;
-        // handed to mGameShell, built before it, once both are up
+        // handed to mWorldState.gameShell, built before it, once both are up
         GameAudioOptions mAudioOptions{ mAudio };
     #if MIR_WITH_EDITOR
         // handed to mEditor the same way
         EditorAudioOptions mEditorAudio{ mAudio, mProject.mSoundBankDir };
     #endif
     #endif
-        PhysicsModule mPhysics;
-        TerrainModule mTerrainData;
-        ScriptModule mScript;
-        ParticlesRuntimeModule mParticlesRuntime;
-        ParticlesScriptModule mParticlesScript;
-    #if MIR_WITH_AUDIO
-        AudioScriptModule mAudioScript;
-    #endif
-        InputScriptModule mInputScript;
-        PhysicsScriptModule mPhysicsScript;
-        RendererScriptModule mRendererScript;
-        TerrainScriptModule mTerrainScript;
+        struct SimulationSystems
+        {
+            SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
+                AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
+                ParticlesGpuModule &particlesGpu, RenderSystem &rendering);
+
+            PhysicsModule physics;
+            TerrainModule terrainData;
+            ScriptModule script;
+            ParticlesRuntimeModule particlesRuntime;
+            ParticlesScriptModule particlesScript;
+        #if MIR_WITH_AUDIO
+            AudioScriptModule audioScript;
+        #endif
+            InputScriptModule inputScript;
+            PhysicsScriptModule physicsScript;
+            RendererScriptModule rendererScript;
+            TerrainScriptModule terrainScript;
+        };
+
+        SimulationSystems mSimulation;
         TerrainRuntimeModule mTerrain;
         GameUIImGuiModule mGameUIImGui;
+
+        struct RuntimeSession;
+        std::unique_ptr<RuntimeSession> mRuntime;
 
         // set until the window opens; a bounded or hidden run does not wait
         std::optional<StartupGate> mFirstView;

@@ -10,6 +10,7 @@
 #include <input/InputSystem.h>
 #include <physics/PhysicsModule.h>
 #include <physics/PhysicsSystem.h>
+#include <physics_layers/PhysicsLayers.h>
 #include <script/ScriptFixedSystem.h>
 #include <script/ScriptModule.h>
 #include <script/ScriptResolveSystem.h>
@@ -61,8 +62,9 @@ TEST_CASE("The input, script and physics modules keep the ordering constraints c
     mir::World world;
     mir::SystemScheduler scheduler;
     mir::AssetsModule assets{ none };
-    mir::InputModule input{ { world, scheduler }, window, none / "ProjectSettings.json" };
-    mir::PhysicsModule physics{ { world, scheduler }, none / "ProjectSettings.json" };
+    world.EmplaceResource<mir::PhysicsLayerTable>();
+    mir::InputModule input{ { world, scheduler }, window };
+    mir::PhysicsModule physics{ { world, scheduler } };
     mir::AssetResolver resolver{ assets, "games/Test/assets" };
     mir::ScriptModule scripts{ { world, scheduler }, assets, resolver };
 

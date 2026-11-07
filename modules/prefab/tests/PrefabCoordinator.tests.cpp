@@ -156,7 +156,7 @@ namespace
 
         document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "PrefabCoordinatorTestData",
-            json{ { "amount", 1.0 }, { "bonus", 2.0 }, { "target", json::array({ "2" }) } } });
+            json{ { "amount", 1.0 },{ "bonus", 2.0 },{ "target", json::array({ "2" }) } } });
         document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "Transform", json{ { "position", json::array({ 100.0, 0.0, 0.0 }) } } });
 
@@ -165,7 +165,7 @@ namespace
         second.mParent = 1;
         second.mComponents.push_back(PrefabComponentInstance{
             "PrefabCoordinatorTestData",
-            json{ { "amount", 3.0 }, { "bonus", 4.0 }, { "target", nullptr } } });
+            json{ { "amount", 3.0 },{ "bonus", 4.0 },{ "target", nullptr } } });
         second.mComponents.push_back(PrefabComponentInstance{
             "CoordRuntimeComponent", json{ { "authored", 7.0 } } });
 
@@ -174,7 +174,7 @@ namespace
         third.mParent = 1;
         third.mComponents.push_back(PrefabComponentInstance{
             "PrefabCoordinatorTestData",
-            json{ { "amount", 5.0 }, { "bonus", 6.0 }, { "target", nullptr } } });
+            json{ { "amount", 5.0 },{ "bonus", 6.0 },{ "target", nullptr } } });
 
         document.mNodes.push_back(std::move(second));
         document.mNodes.push_back(std::move(third));
@@ -372,7 +372,7 @@ namespace
         PrefabDocument document = mir::NewPrefabDocument();
         document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "PrefabCoordinatorTestData",
-            json{ { "amount", 1.0 }, { "bonus", 2.0 }, { "target", json::array({ "2" }) } } });
+            json{ { "amount", 1.0 },{ "bonus", 2.0 },{ "target", json::array({ "2" }) } } });
         document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "Transform", json{ { "position", json::array({ 0.0, 0.0, 0.0 }) } } });
 
@@ -381,7 +381,7 @@ namespace
         child.mParent = 1;
         child.mComponents.push_back(PrefabComponentInstance{
             "PrefabCoordinatorTestData",
-            json{ { "amount", 3.0 }, { "bonus", 4.0 }, { "target", nullptr } } });
+            json{ { "amount", 3.0 },{ "bonus", 4.0 },{ "target", nullptr } } });
         document.mNodes.push_back(std::move(child));
         document.mNextNodeId = 3;
         return document;
@@ -392,7 +392,7 @@ namespace
         PrefabDocument document = mir::NewPrefabDocument();
         document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "PrefabCoordinatorTestData",
-            json{ { "amount", 10.0 }, { "bonus", 20.0 }, { "target", nullptr } } });
+            json{ { "amount", 10.0 },{ "bonus", 20.0 },{ "target", nullptr } } });
 
         PrefabNode first;
         first.mId = 2;
@@ -714,7 +714,7 @@ TEST_CASE("A node added to the prefab appears in every instance with a fresh Sta
     added.mId = 4;
     added.mParent = 1;
     added.mComponents.push_back(PrefabComponentInstance{
-        "PrefabCoordinatorTestData", json{ { "amount", 31.0 }, { "target", nullptr } } });
+        "PrefabCoordinatorTestData", json{ { "amount", 31.0 },{ "target", nullptr } } });
     fixture.mDocument.mNodes.push_back(std::move(added));
     fixture.mDocument.mNextNodeId = 5;
     REQUIRE(fixture.mCoordinator->SetDocument(fixture.mDocument));
@@ -818,7 +818,7 @@ TEST_CASE("A cleared reference stays null when the source node returns", "[prefa
     returning.mId = 3;
     returning.mParent = 1;
     returning.mComponents.push_back(PrefabComponentInstance{
-        "PrefabCoordinatorTestData", json{ { "amount", 17.0 }, { "target", nullptr } } });
+        "PrefabCoordinatorTestData", json{ { "amount", 17.0 },{ "target", nullptr } } });
     fixture.mDocument.mNodes.push_back(std::move(returning));
     fixture.mDocument.mNextNodeId = 4;
     REQUIRE(fixture.mCoordinator->SetDocument(fixture.mDocument));
@@ -1205,7 +1205,7 @@ TEST_CASE("Scene components on a nested member add, remove and revert", "[prefab
     REQUIRE(mir::RevertInstancePatch(fixture.mWorld, fixture.mCoordinator->Registry(),
         fixture.mCoordinator->Cache(), fixture.mScene, fixture.mOuterRoot,
         mir::PrefabPatchSelection{ child, mir::PrefabPatchKind::RemovedComponent,
-            "PrefabCoordinatorTestData", {} }));
+            "PrefabCoordinatorTestData",{} }));
     CHECK(DataOps().Has(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child)));
     CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child), DataOps(), "amount") == 20.0f);
 }
@@ -1259,6 +1259,30 @@ TEST_CASE("An outer prefab compiles once its missing inner prefab arrives", "[pr
     REQUIRE(coordinator.SetDocument(inner));
     system.OnUpdate(context);
     CHECK(coordinator.Cache().Find(outer.mId) != nullptr);
+}
+
+TEST_CASE("Play copies unsaved prefab definitions into an independent world", "[prefab][coordinator][play]")
+{
+    Fixture authoring;
+    World runtime;
+    runtime.EmplaceResource<ComponentFieldListeners>();
+    PrefabCoordinator &prefabs = runtime.EmplaceResource<PrefabCoordinator>();
+    prefabs.CopyPrefabDefinitionsFrom(*authoring.mCoordinator);
+
+    REQUIRE(prefabs.Registry().HasMemoryDocument(authoring.mDocument.mId));
+    REQUIRE(prefabs.Cache().Find(authoring.mDocument.mId) != nullptr);
+
+    LoadedScene copied = mir::CopyWorld(authoring.mWorld, authoring.mScene, runtime,
+        &authoring.mCoordinator->Resolver(), &prefabs.Resolver());
+    REQUIRE(copied.mInstances.size() == 1);
+    REQUIRE(copied.mEntities.size() == authoring.mScene.mEntities.size());
+
+    const Entity original = authoring.Member(authoring.mRoot, SceneNodeAddress{ 1 });
+    const Entity running = copied.mEntities.at(authoring.Binding(authoring.mRoot, SceneNodeAddress{ 1 }));
+    REQUIRE(runtime.IsAlive(running));
+    runtime.DestroyEntity(running);
+    CHECK(authoring.mWorld.IsAlive(original));
+    CHECK(prefabs.Registry().Find(authoring.mDocument.mId) != nullptr);
 }
 
 TEST_CASE("Changing an inner prefab refreshes dependent instances in one commit", "[prefab][coordinator][nesting]")
@@ -1351,7 +1375,7 @@ TEST_CASE("Deleting an inner node clears nested references permanently", "[prefa
     restored.mId = 2;
     restored.mParent = 1;
     restored.mComponents.push_back(PrefabComponentInstance{
-        "PrefabCoordinatorTestData", json{ { "amount", 3.0 }, { "bonus", 4.0 }, { "target", nullptr } } });
+        "PrefabCoordinatorTestData", json{ { "amount", 3.0 },{ "bonus", 4.0 },{ "target", nullptr } } });
     edited.mNodes.push_back(std::move(restored));
     REQUIRE(fixture.mCoordinator->SetDocument(edited));
     fixture.Commit();

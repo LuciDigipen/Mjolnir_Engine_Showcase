@@ -732,6 +732,20 @@ namespace mir
 
     TerrainCollisionResidency::~TerrainCollisionResidency() = default;
 
+    void TerrainCollisionResidency::ApplySettings(const TerrainStreamingSettings::Collision &collision)
+    {
+        TerrainStreamingSettings::Collision &mine = mImpl->settings;
+        mine.budgetBytes = collision.budgetBytes;
+        mine.retainSeconds = collision.retainSeconds;
+        mine.loadLatencySeconds = collision.loadLatencySeconds;
+        mine.latencyMarginSeconds = collision.latencyMarginSeconds;
+        mine.prefetchSeconds = collision.prefetchSeconds;
+        mine.spacingsMeters = collision.spacingsMeters;
+        mine.maxErrorMeters = collision.maxErrorMeters;
+        mine.bodyToleranceMeters = collision.bodyToleranceMeters;
+        mImpl->stats.budgetBytes = collision.budgetBytes;
+    }
+
     void TerrainCollisionResidency::SetInstances(std::span<const TerrainCollisionInstance> instances,
                                                  std::span<const TerrainCollisionInstance> staged)
     {

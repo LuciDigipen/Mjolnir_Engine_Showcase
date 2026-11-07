@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -44,6 +46,8 @@ namespace mir
         {
             // Decoded payload bytes held or being read.
             uint64_t budgetBytes = 0;
+
+            bool operator==(const Cpu &) const = default;
         } cpu;
 
         struct Io
@@ -53,6 +57,8 @@ namespace mir
             uint32_t workerThreads = 0;
             // Finished reads installed by one Update; the rest wait for the next.
             uint32_t maxInstallsPerFrame = 0;
+
+            bool operator==(const Io &) const = default;
         } io;
 
         // An IO failure is retried after firstDelaySeconds, doubling up to maxDelaySeconds, until maxAttempts
@@ -63,6 +69,8 @@ namespace mir
             double firstDelaySeconds = std::numeric_limits<double>::quiet_NaN();
             double maxDelaySeconds = std::numeric_limits<double>::quiet_NaN();
             double failedHoldSeconds = std::numeric_limits<double>::quiet_NaN();
+
+            bool operator==(const Retry &) const = default;
         } retry;
 
         struct Residency
@@ -70,6 +78,8 @@ namespace mir
             std::optional<TerrainResidencyMode> mode;
             // A height query's tile stays wanted this long after it was last asked for or answered from.
             double queryLeaseSeconds = std::numeric_limits<double>::quiet_NaN();
+
+            bool operator==(const Residency &) const = default;
         } residency;
 
         // Per-viewport detail: a unit's error bound projected to pixels at its nearest point.
@@ -82,6 +92,8 @@ namespace mir
             double prefetchErrorPixels = std::numeric_limits<double>::quiet_NaN();
             // Decoded bytes one viewport may ask for beyond what it draws; zero prefetches nothing.
             std::optional<uint64_t> prefetchBudgetBytes;
+
+            bool operator==(const View &) const = default;
         } view;
 
         // GPU meshes of draw units: vertex and index buffers plus any BLAS.
@@ -93,6 +105,8 @@ namespace mir
             uint64_t stagingBytes = 0;
             // A mesh outlives its last want or draw by this much.
             double meshRetainSeconds = std::numeric_limits<double>::quiet_NaN();
+
+            bool operator==(const Gpu &) const = default;
         } gpu;
 
         // Height field pieces built from resident final heights.
@@ -117,7 +131,11 @@ namespace mir
             uint64_t budgetBytes = 0;
             // A piece outlives its last need by this much.
             double retainSeconds = std::numeric_limits<double>::quiet_NaN();
+
+            bool operator==(const Collision &) const = default;
         } collision;
+
+        bool operator==(const TerrainStreamingSettings &) const = default;
     };
 
     // Jolt quantizes a height field's last cells against a shorter block range, so near a piece's max sides
@@ -135,6 +153,28 @@ namespace mir
         bool gameFileFound = false;
         bool localFileFound = false;
     };
+
+    // The two files as read, before any parsing. problems holds a missing file or one that is not a JSON object.
+    struct TerrainStreamingFiles
+    {
+        bool gameFileFound = false;
+        bool localFileFound = false;
+        // Null when the game file is missing or unreadable.
+        nlohmann::json game;
+        std::optional<nlohmann::json> local;
+        std::vector<std::string> problems;
+        std::string gameName;
+        std::string localName;
+    };
+
+    TerrainStreamingFiles ReadTerrainStreamingFiles(const std::filesystem::path &gameFile,
+                                                    const std::filesystem::path &localFile);
+
+    // Merges local over project key by key, then reads and validates the result. The found flags stay false.
+    TerrainStreamingSettingsLoad ParseTerrainStreamingSettings(const nlohmann::json &project,
+                                                               const nlohmann::json *local,
+                                                               std::string_view projectName,
+                                                               std::string_view localName);
 
     // The game file is required; the local file is optional and replaces values key by key.
     TerrainStreamingSettingsLoad LoadTerrainStreamingSettings(const std::filesystem::path &gameFile,

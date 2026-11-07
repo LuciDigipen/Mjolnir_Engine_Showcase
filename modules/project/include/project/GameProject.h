@@ -22,6 +22,12 @@ namespace mir
     inline constexpr std::string_view kGameManifestFileName = "game.json";
     inline constexpr std::string_view kProjectSettingsFileName = "project_settings.json";
 
+    struct ProjectScene
+    {
+        std::string mId;
+        std::filesystem::path mDirectory;
+    };
+
     // One game directory; paths in its game.json are relative to it
     struct GameProject
     {
@@ -46,6 +52,9 @@ namespace mir
         // mAssetsRoot on disk
         std::filesystem::path mAssetsDir;
 
+        std::vector<ProjectScene> mScenes;
+        std::string mStartupSceneId = "default";
+        // Resolved startup directory for existing startup callers
         std::filesystem::path mSceneDir;
         std::filesystem::path mProjectSettingsPath;
         std::filesystem::path mSoundBankDir;

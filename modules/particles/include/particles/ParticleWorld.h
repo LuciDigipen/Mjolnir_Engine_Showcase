@@ -47,6 +47,7 @@ namespace mir
         ParticleHandle PreviewHandle() const { return mPreview; }
         void Synchronize(Entity owner, ParticleSystem &emitter, const WorldPose &pose);
         void Clear();
+        void ClearScene(SceneInstanceId scene);
         void Detach(Entity owner);
         void PrepareReload(AssetCache &candidate);
         void CommitReload();

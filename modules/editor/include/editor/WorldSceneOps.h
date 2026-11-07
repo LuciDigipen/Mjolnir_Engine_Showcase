@@ -1,7 +1,7 @@
 /**
  * @file WorldSceneOps.h
  * @author Dong Ta
- * @brief The scene calls the editor's history makes, done on a World and its LoadedScene.
+ * @brief The scene calls the editor's history makes, done on a World and the scenes it holds.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -9,6 +9,8 @@
 #pragma once
 
 #include <editor/history/SceneOps.h>
+
+#include <core/ecs/SceneInstance.h>
 
 #include <filesystem>
 
@@ -21,10 +23,10 @@ namespace mir
     class WorldSceneOps final : public ISceneOps
     {
     public:
-        // scene is the one the World holds; App replaces its value, never the object
-        // projectRoot resolves the content paths PlacePrefab is given
-        WorldSceneOps(World &world, LoadedScene &scene, PrefabWorkspace &prefabs, std::filesystem::path projectRoot)
-            : mWorld(world), mScene(scene), mPrefabs(prefabs), mProjectRoot(std::move(projectRoot))
+        // Each call works on the scene that owns its entity, found in the World's SceneCollection, so additive
+        // scenes keep their own records. projectRoot resolves the content paths PlacePrefab is given.
+        WorldSceneOps(World &world, PrefabWorkspace &prefabs, std::filesystem::path projectRoot)
+            : mWorld(world), mPrefabs(prefabs), mProjectRoot(std::move(projectRoot))
         {
         }
 
@@ -38,8 +40,10 @@ namespace mir
         bool CanReparent(std::span<const Entity> entities, Entity parent) override;
 
     private:
+        // The scene's records, or nullptr for an entity no loaded scene owns.
+        LoadedScene *FindScene(SceneInstanceId instance);
+
         World &mWorld;
-        LoadedScene &mScene;
         PrefabWorkspace &mPrefabs;
         std::filesystem::path mProjectRoot;
     };

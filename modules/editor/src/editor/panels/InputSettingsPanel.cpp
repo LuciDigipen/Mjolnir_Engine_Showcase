@@ -239,12 +239,6 @@ namespace mir
     void InputSettingsPanel::Draw(InputMap &inputMap, const RawInputSnapshot &raw,
         const std::filesystem::path &savePath)
     {
-        if (!mDraftLoaded)
-        {
-            mDraftInputMap = inputMap;
-            mDraftLoaded = true;
-        }
-
         ImGui::SetNextItemWidth(160.0f);
         ImGui::InputTextWithHint("##NewActionName", "New action name...", mNewActionName, sizeof(mNewActionName));
 
@@ -254,31 +248,23 @@ namespace mir
         ImGui::Combo("##NewActionType", &mNewActionType, typeItems, IM_ARRAYSIZE(typeItems));
 
         ImGui::SameLine();
-        const bool canAdd = mNewActionName[0] != '\0' && mDraftInputMap.Find(mNewActionName) == nullptr;
+        const bool canAdd = mNewActionName[0] != '\0' && inputMap.Find(mNewActionName) == nullptr;
         ImGui::BeginDisabled(!canAdd);
         if (ImGui::Button("+ Action"))
         {
-            mDraftInputMap.AddAction(mNewActionName, static_cast<InputActionType>(mNewActionType));
+            inputMap.AddAction(mNewActionName, static_cast<InputActionType>(mNewActionType));
             mNewActionName[0] = '\0';
         }
         ImGui::EndDisabled();
 
-        if (!mStatusMessage.empty() && mDraftInputMap != mMessageSnapshot)
+        if (!mStatusMessage.empty() && inputMap != mSavedCopy)
             mStatusMessage.clear();
 
         ImGui::SameLine();
         if (ImGui::Button("Save"))
         {
-            if (mDraftInputMap.SaveFile(savePath))
-            {
-                inputMap = mDraftInputMap;
-                mStatusMessage = "Saved.";
-            }
-            else
-            {
-                mStatusMessage = "Save failed - see log.";
-            }
-            mMessageSnapshot = mDraftInputMap;
+            mStatusMessage = inputMap.SaveFile(savePath) ? "Saved." : "Save failed - see log.";
+            mSavedCopy = inputMap;
         }
 
         if (!mStatusMessage.empty())
@@ -289,7 +275,7 @@ namespace mir
 
         ImGui::Separator();
 
-        std::vector<InputAction> &actions = mDraftInputMap.MutableActions();
+        std::vector<InputAction> &actions = inputMap.MutableActions();
         std::string pendingRemove;
         for (int i = 0; i < static_cast<int>(actions.size()); ++i)
         {
@@ -298,7 +284,7 @@ namespace mir
         }
         if (!pendingRemove.empty())
         {
-            mDraftInputMap.RemoveAction(pendingRemove);
+            inputMap.RemoveAction(pendingRemove);
             CancelListening();
         }
 

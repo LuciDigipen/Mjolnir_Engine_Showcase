@@ -7,3 +7,4 @@ engine_add_module_tests(scene
     SceneDuplicate.tests.cpp
     SceneModule.tests.cpp
 )
+target_link_libraries(engine_scene_tests PRIVATE mir::jobs)

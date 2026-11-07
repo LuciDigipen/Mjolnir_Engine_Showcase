@@ -18,20 +18,26 @@
 namespace mir
 {
     TerrainRuntimeModule::TerrainRuntimeModule(ModuleContext context, RendererModule &renderer,
-        const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs)
+        const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs, bool updateInPlay)
         : mRuntime(std::make_unique<TerrainRuntime>())
     {
         mRuntime->Bind(context.world, renderer.Renderer(), renderer.SurfaceMaterials(), project, resolver, jobs);
 
         // before any system runs: every mode installs finished work, and Edit picks up scene edits
-        mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &frame)
+        mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this, updateInPlay](SystemContext &frame)
             {
+                if (IsPlaying(frame.world) && !updateInPlay)
+                    return;
                 mRuntime->Update();
                 if (IsEditing(frame.world))
                     mRuntime->Refresh(frame.dt, false);
             });
 
-        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &) { mRuntime->Unload(); });
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
+            {
+                if (frame.sceneSwapped) mRuntime->Refresh(0.0f, true);
+                else mRuntime->Unload();
+            });
 
         // after an Unload it applies the whole spec; after Stop's restore, almost nothing
         mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &) { mRuntime->Refresh(0.0f, true); });

@@ -37,6 +37,8 @@ namespace mir
         PrefabRegistry &Registry() { return mRegistry; }
         const PrefabRegistry &Registry() const { return mRegistry; }
 
+        void CopyPrefabDefinitionsFrom(const PrefabCoordinator &source);
+
         CompiledPrefabCache &Cache() { return mCache; }
         const CompiledPrefabCache &Cache() const { return mCache; }
 

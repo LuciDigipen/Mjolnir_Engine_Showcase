@@ -15,7 +15,6 @@
 #include <core/ecs/Query.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Name.h>
-#include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
@@ -27,6 +26,7 @@
 #include <terrain/TerrainExecutor.h>
 #include <jobs/JobExecutor.h>
 #include <terrain/TerrainMaterialUv.h>
+#include <terrain/TerrainStreamingConfiguration.h>
 #include <terrain/TerrainStreamingSettings.h>
 
 #include <glm/geometric.hpp>
@@ -226,16 +226,14 @@ namespace mir
             sources = &world.EmplaceResource<ViewDrawSources>();
         sources->sources.push_back(this);
 
-        const TerrainStreamingSettingsLoad load =
-            LoadTerrainStreamingSettings(project.mRootDir / kTerrainStreamingSettingsFileName,
-                                         ExecutableDir() / kTerrainStreamingLocalSettingsFileName);
-        if (!load.settings)
+        const TerrainStreamingConfiguration &configuration = world.Resource<TerrainStreamingConfiguration>();
+        if (!configuration.Effective())
         {
             mSettingsProblem.clear();
-            for (const std::string &problem : load.problems)
+            for (const std::string &problem : configuration.Problems())
                 mSettingsProblem += (mSettingsProblem.empty() ? "" : "; ") + problem;
             // Without either file the game may simply have no terrain; Apply reports it if it does.
-            if (load.gameFileFound || load.localFileFound)
+            if (configuration.GameFileFound() || configuration.LocalFileFound())
             {
                 MIR_LOG_ERROR("Terrain streaming is not configured, so no terrain loads: {}", mSettingsProblem);
                 mSettingsReported = true;
@@ -243,14 +241,14 @@ namespace mir
             return;
         }
 
-        const TerrainStreamingSettings &settings = *load.settings;
-        world.EmplaceResource<TerrainStreamingSettings>(settings);
+        const TerrainStreamingSettings &settings = *configuration.Effective();
+        mSeenSettings = settings;
         mPool = std::make_shared<TerrainJobExecutor>(jobs, settings.io.workerThreads);
         world.EmplaceResource<TerrainStreamer>(settings, mPool);
         MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} shared slots ({} engine workers), {} residency{}",
                      MiB(settings.cpu.budgetBytes), mPool->Concurrency(), jobs.WorkerCount(),
                      TerrainResidencyModeName(*settings.residency.mode),
-                     load.localFileFound ? " (machine-local overrides applied)" : "");
+                     configuration.LocalFileFound() ? " (machine-local overrides applied)" : "");
         MIR_LOG_INFO("Terrain views: refine above {} px, merge below {} px, prefetch to {} px within {:.1f} MiB",
                      settings.view.refineErrorPixels, settings.view.mergeErrorPixels, settings.view.prefetchErrorPixels,
                      MiB(*settings.view.prefetchBudgetBytes));
@@ -300,9 +298,53 @@ namespace mir
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - mStart).count();
     }
 
+    // The project configuration is edited in place, so each frame compares its effective value with the last seen.
+    void TerrainRuntime::ApplyConfiguration(TerrainStreamer &streamer)
+    {
+        const TerrainStreamingConfiguration *configuration = mWorld->TryResource<TerrainStreamingConfiguration>();
+        if (configuration == nullptr || !configuration->Effective() || !mSeenSettings ||
+            *configuration->Effective() == *mSeenSettings)
+            return;
+
+        const TerrainStreamingSettings &next = *configuration->Effective();
+        const TerrainStreamingSettings &applied = streamer.Settings();
+        const TerrainStreamingSettings &seen = *mSeenSettings;
+        if (next.gpu.stagingBytes != seen.gpu.stagingBytes && next.gpu.stagingBytes != applied.gpu.stagingBytes)
+            MIR_LOG_WARN("Terrain setting gpu.stagingBytes changed to {:.1f} MiB. Increase: next Play. Decrease: restart.",
+                         MiB(next.gpu.stagingBytes));
+        if (next.collision.pieceTiles != seen.collision.pieceTiles &&
+            next.collision.pieceTiles != applied.collision.pieceTiles)
+            MIR_LOG_WARN("Terrain setting collision.pieceTiles changed to {}, which takes effect at the next Play",
+                         next.collision.pieceTiles);
+        if (next.collision.seamOverlapMeters != seen.collision.seamOverlapMeters &&
+            next.collision.seamOverlapMeters != applied.collision.seamOverlapMeters)
+            MIR_LOG_WARN("Terrain setting collision.seamOverlapMeters changed to {} m, which takes effect at the next Play",
+                         next.collision.seamOverlapMeters);
+        if (next.io.workerThreads != seen.io.workerThreads && next.io.workerThreads != applied.io.workerThreads)
+            MIR_LOG_WARN("Terrain setting io.workerThreads changed to {}, which takes effect after a restart",
+                         next.io.workerThreads);
+
+        streamer.ApplySettings(next);
+        // Each viewport and each staged release holds its own copy of the view bounds.
+        for (ViewState &view : mViews)
+        {
+            if (view.selector)
+                view.selector->ApplySettings(next.view);
+            for (auto &[asset, staged] : view.staged)
+                staged->ApplySettings(next.view);
+        }
+        if (mMeshes)
+            mMeshes->ApplySettings(next.gpu);
+        if (mCollision)
+            mCollision->ApplySettings(next.collision);
+        mSeenSettings = next;
+    }
+
     void TerrainRuntime::Update()
     {
         TerrainStreamer *streamer = Streamer();
+        if (streamer && mWorld)
+            ApplyConfiguration(*streamer);
         if (streamer)
             streamer->Update();
         if (mSwitch && streamer)

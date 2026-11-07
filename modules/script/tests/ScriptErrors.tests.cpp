@@ -62,3 +62,30 @@ TEST_CASE("A script that errors every frame leaves one counted entry in the log"
     host.DestroyInstance(instance);
     mir::ShutdownLog();
 }
+
+TEST_CASE("The host counts every script that fails to load and every callback that fails", "[script][host][log]")
+{
+    mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "mir_script_error_count.log").string(),
+        .consoleLevel = mir::LogLevel::Off });
+
+    mir::World world;
+    mir::CommandBuffer commands;
+    mir::ScriptHost host;
+    CHECK(host.ErrorCount() == 0);
+
+    CHECK_FALSE(host.LoadScriptSource("syntax", "return {"));
+    CHECK(host.ErrorCount() == 1);
+
+    REQUIRE(host.LoadScriptSource("broken", kBroken));
+    const mir::Entity entity = world.CreateEntity();
+    const int32_t instance = host.CreateInstance("broken");
+    REQUIRE(instance != -1);
+    CHECK(host.ErrorCount() == 1);
+
+    host.CallOnUpdate(world, commands, entity, instance, 1.0f / 60.0f);
+    host.CallOnUpdate(world, commands, entity, instance, 1.0f / 60.0f);
+    CHECK(host.ErrorCount() == 3);
+
+    host.DestroyInstance(instance);
+    mir::ShutdownLog();
+}

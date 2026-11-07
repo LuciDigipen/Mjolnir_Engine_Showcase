@@ -63,6 +63,13 @@ namespace mir
         bool LayoutEnabled() const { return mEnableLayout; }
         bool HasUnsavedMaterialDrafts() const;
 
+        // The runtime World, or null when Play ends. Each call starts a fresh Play history.
+        void SetPlayWorld(World *world);
+        // A scene leaving the runtime World takes the entities its Play edits point at.
+        void ClearPlayHistory() { mEditor.ClearPlayHistory(); }
+        void PreparePlay();
+        void FinishPlay();
+
         // set once the audio is built, null leaves out the Audio settings and the soundtrack picker
         void SetAudio(IEditorAudio *audio)
         {
@@ -106,6 +113,7 @@ namespace mir
         void FeedViewport();
 
         World &mWorld;
+        World *mPlayWorld = nullptr;
         RendererModule &mRenderer;
         SceneModule &mScene;
         PrefabModule &mPrefab;
@@ -124,6 +132,7 @@ namespace mir
         PrefabWorkspace mPrefabWorkspace;
         WorldSceneOps mSceneOps;
         Editor mEditor;
+        std::optional<WorldSceneOps> mPlaySceneOps;
         std::unique_ptr<ParticleEditorPanel> mParticleEditor;
         std::unique_ptr<MaterialEditor> mMaterialEditor;
         bool mShowMaterialEditor = false;

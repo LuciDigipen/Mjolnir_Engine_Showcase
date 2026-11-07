@@ -1,0 +1,56 @@
+{
+  "id": 1,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Demo floor"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          0,
+          -1.2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          6,
+          0.2,
+          4
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {
+        "position": [
+          0,
+          -1.2,
+          0
+        ]
+      }
+    },
+    {
+      "type": "MeshRenderer",
+      "fields": {
+        "meshName": "builtin:cube",
+        "materialShader": "default",
+        "tint": [
+          0.22,
+          0.28,
+          0.36,
+          1
+        ]
+      }
+    }
+  ]
+}

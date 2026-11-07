@@ -15,6 +15,8 @@
 #include <core/platform/Surface.h>
 #include <editor/BackgroundImage.h>
 #include <editor/BuildSettings.h>
+#include <core/ecs/Requests.h>
+#include <project/GameProject.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
 #include <editor/SnapToTerrain.h>
@@ -118,6 +120,7 @@ namespace mir
     {
         SceneMenuAction mScene = SceneMenuAction::None;
         std::string mOpenProject;
+        std::optional<OpenSceneRequest> mOpenScene;
 
         // non-empty mCreateProjectName requests CreateGameProject(name, RT),
         // then the same open-into-new-directory path as mOpenProject
@@ -190,6 +193,20 @@ namespace mir
 
         void ClearHistory() { mHistory.Clear(); }
 
+        // Edits made during Play run on the runtime World through a history of their own, so they never reach the
+        // scene being authored, its unsaved mark or its undo steps. Stop discards them.
+        void BeginPlayEdits(ISceneOps &ops)
+        {
+            mPlaySceneOps = &ops;
+            mPlayHistory.Clear();
+        }
+        void EndPlayEdits()
+        {
+            mPlaySceneOps = nullptr;
+            mPlayHistory.Clear();
+        }
+        void ClearPlayHistory() { mPlayHistory.Clear(); }
+
         // Scene, Play and document transitions cancel a pending snap.
         void CancelSnapToTerrain() { mSnapToTerrain.Cancel("The scene changed."); }
 
@@ -216,6 +233,14 @@ namespace mir
         }
 
         // the game File > Build Settings is for
+        void SetSceneCatalog(std::vector<ProjectScene> scenes, std::string startupId)
+        {
+            mSceneCatalog = std::move(scenes);
+            mOpenSceneId = std::move(startupId);
+        }
+        void SetSceneCreationError(std::string message) { mSceneCreationError = std::move(message); }
+        void SetOpenSceneId(std::string id) { mOpenSceneId = std::move(id); }
+
         void SetBuildGame(BuildGame game) { mBuildGame = std::move(game); }
 
     private:
@@ -300,10 +325,17 @@ namespace mir
         bool mShownDocumentKnown = false;
 
         History mHistory;
+        History mPlayHistory;
+        ISceneOps *mPlaySceneOps = nullptr;
         SnapToTerrainSession mSnapToTerrain;
         std::size_t mSnapFrameSubmissions = 0;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
+
+        bool PlayEditing() const { return mPlaySceneOps != nullptr; }
+        History &ActiveHistory() { return PlayEditing() ? mPlayHistory : mHistory; }
+        // Play has no authored entities, its edits are not written back to a scene.
+        IAuthoredEntities *ActiveAuthored() const { return PlayEditing() ? nullptr : mAuthoredEntities; }
         IEditorAudio *mAudio = nullptr;
 
         std::filesystem::path mPreferencesPath;
@@ -314,6 +346,13 @@ namespace mir
         bool mThemePending = false;
 
         // waiting on the confirm dialog
+        std::vector<ProjectScene> mSceneCatalog;
+        std::string mOpenSceneId;
+        std::string mPendingSceneId;
+        std::string mPendingScenePath;
+        std::string mSceneCreationError;
+        char mNewSceneId[128]{};
+        char mNewScenePath[512]{};
         ProjectMenuEntry mPendingProject;
         bool mOpenConfirmRequested = false;
 

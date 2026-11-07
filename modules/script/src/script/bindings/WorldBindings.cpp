@@ -11,8 +11,12 @@
 
 #include <script/BindingHelpers.h>
 
+#include <scene/SceneModule.h>
+
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
+#include <core/ecs/EngineMode.h>
+#include <core/ecs/Requests.h>
 #include <core/ecs/RuntimeQuery.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
@@ -198,9 +202,6 @@ namespace mir
                     const double number = value.as<double>();
                     if (std::isnan(number) || std::isinf(number) || !std::isfinite(static_cast<float>(number)))
                         return refuse("the number is NaN, infinite or too large");
-                    // the range the field declares, which the Inspector keeps to as well
-                    if (field.mClamped && (number < field.mMin || number > field.mMax))
-                        return refuse("it must be between " + std::to_string(field.mMin) + " and " + std::to_string(field.mMax));
                     scratch.asFloat = static_cast<float>(number);
                     return true;
                 }
@@ -237,6 +238,10 @@ namespace mir
                         return refuse(why);
                     scratch.asQuat = glm::quat(static_cast<float>(c[3]), static_cast<float>(c[0]), static_cast<float>(c[1]),
                         static_cast<float>(c[2]));
+                    const float length = glm::length(scratch.asQuat);
+                    if (!(length > 0.0f) || !std::isfinite(length))
+                        return refuse("the rotation must have a finite, nonzero length");
+                    scratch.asQuat /= length;
                     return true;
                 }
             case FieldKind::Mat4:
@@ -385,13 +390,6 @@ namespace mir
                 return false;
             }
 
-            if (!field->Constrain(&scratch))
-            {
-                MIR_LOG_ERROR("script: world:set '{}.{}' - value is outside the field's range", componentName,
-                    fieldName);
-                return false;
-            }
-
             if (!field->Write(component, &scratch))
             {
                 MIR_LOG_ERROR("script: world:set '{}.{}' is read-only", componentName, fieldName);
@@ -431,9 +429,18 @@ namespace mir
             return out;
         }
 
-        Entity WorldSpawn(World &world)
+        sol::object WorldSpawn(World &world, sol::optional<SceneInstanceId> instance, sol::this_state state)
         {
-            return world.CreateEntity();
+            sol::state_view lua(state);
+            if (instance)
+            {
+                const auto *scenes = world.TryResource<SceneCollection>();
+                if (*instance != kOwnedBySession && (scenes == nullptr || scenes->Find(*instance) == nullptr))
+                    return sol::nil;
+                const World::SceneScope scope(world, *instance);
+                return sol::make_object(lua, world.CreateEntity());
+            }
+            return sol::make_object(lua, world.CreateEntity());
         }
 
         bool WorldDestroy(World &world, Entity entity)
@@ -664,6 +671,74 @@ namespace mir
             "add", &WorldAdd,
             "remove", &WorldRemove,
             "each", &WorldEach,
+            "persist", [](World &world, Entity entity)
+            {
+                return world.HasResource<EngineModeState>() && IsPlaying(world) && world.PersistEntity(entity);
+            },
+            "scene_instance", [](World &world) { return world.ActiveScene(); },
+            "primary_scene", [](World &world) { return world.PrimaryScene(); },
+            "scene_loaded", [](World &world, SceneInstanceId instance)
+            {
+                const auto *scenes = world.TryResource<SceneCollection>();
+                return scenes != nullptr && scenes->Find(instance) != nullptr;
+            },
+            "entity_scene", [](World &world, Entity entity) -> sol::optional<SceneInstanceId>
+            {
+                if (!world.IsAlive(entity)) return sol::nullopt;
+                return world.EntityScene(entity);
+            },
+            "is_alive", [](World &world, Entity entity) { return world.IsAlive(entity); },
+            "find_scene_entity", [](World &world, SceneInstanceId instance, StableId stable,
+                sol::this_state state) -> sol::object
+            {
+                const auto *scenes = world.TryResource<SceneCollection>();
+                if (scenes == nullptr) return sol::nil;
+                const Entity entity = scenes->FindEntity(world, instance, stable);
+                if (entity.IsNull()) return sol::nil;
+                return sol::make_object(sol::state_view(state), entity);
+            },
+            "load_scene_additive", [](World &world, const std::string &id) -> sol::optional<SceneInstanceId>
+            {
+                if (id.empty() || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return sol::nullopt;
+                const auto instance = AllocateSceneInstanceId();
+                world.Resource<RequestQueue>().PushAdditiveScene({ id, instance });
+                return instance;
+            },
+            "unload_scene", [](World &world, SceneInstanceId instance)
+            {
+                if (instance == kOwnedBySession || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return false;
+                world.Resource<RequestQueue>().PushUnloadScene(instance);
+                return true;
+            },
+            "set_primary_scene", [](World &world, SceneInstanceId instance)
+            {
+                if (instance == kOwnedBySession || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return false;
+                world.Resource<RequestQueue>().PushPrimaryScene(instance);
+                return true;
+            },
+            "session_data", [](World &, sol::this_state state)
+            {
+                sol::state_view lua(state);
+                sol::optional<sol::table> data = lua.registry()["mir.sessionData"];
+                if (data) return *data;
+                sol::table created = lua.create_table();
+                lua.registry()["mir.sessionData"] = created;
+                return created;
+            },
+            "load_scene", [](World &world, const std::string &id)
+            {
+                if (id.empty() || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return false;
+                world.Resource<RequestQueue>().PushNextScene(id);
+                return true;
+            },
             "declare", &WorldDeclare);
     }
 }

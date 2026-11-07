@@ -32,6 +32,8 @@ namespace mir
             collides.fill(0xFFFFFFFFu);
         }
 
+        bool operator==(const PhysicsLayerTable &) const = default;
+
         bool Collide(int a, int b) const { return ((collides[a] >> b) & 1u) != 0; }
 
         void SetCollide(int a, int b, bool collide)
@@ -53,11 +55,5 @@ namespace mir
             }
             return std::nullopt;
         }
-    };
-
-    // A World resource the editor writes a saved table into and physics takes, so neither links the other.
-    struct PhysicsLayerUpdate
-    {
-        std::optional<PhysicsLayerTable> mPending;
     };
 }

@@ -33,7 +33,7 @@ namespace mir
         // a WorldTransform reader
         mLibrary = std::make_shared<ModelLibrary>(renderer, renderer, renderer.ErrorTexture());
         mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, mLibrary, assets,
+            SystemOrder{ SystemOrder::kNormal }, mLibrary, assets,
             resolver, jobs);
 
         mHooks = context.world.SetComponentHooks<ModelPlayer>({ .onRemove = [this](World &world, Entity entity)
@@ -43,6 +43,7 @@ namespace mir
 
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
             {
+                if (frame.sceneSwapped) return;
                 mModels->ReleaseResources();
                 frame.world.Resource<ModelDrawItems>().items.clear();
                 frame.world.Resource<ModelMorphOverrides>().instances.clear();

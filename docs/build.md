@@ -637,3 +637,24 @@ around it is not close.
 Single-config generators were chosen over multi-config, because single-config
 keeps a configuration component out of the output paths, which the shader and
 asset copy steps depend on.
+
+### Scene catalog
+
+Register scenes in the game's `game.json`:
+
+```json
+{
+  "startupScene": "intro",
+  "scenes": [
+    { "id": "intro", "path": "scenes/default" },
+    { "id": "level-two", "path": "scenes/level-two" }
+  ]
+}
+```
+
+IDs are unique within a game. Keep the ID when moving a scene and update its
+path. Each registered directory must contain a `scene.json` to be packaged.
+The packaged `game.json` serves as the runtime catalog and uses paths relative
+to the packaged game. Legacy games can keep `sceneDir`. To register a legacy
+startup scene explicitly, give it the ID `default` and use its existing path.
+Opening or packaging a game leaves the source manifest intact.

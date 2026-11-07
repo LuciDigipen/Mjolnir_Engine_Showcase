@@ -47,9 +47,10 @@ namespace
         void CallOnStart(World &, CommandBuffer &, Entity, int32_t) override {}
         void CallOnUpdate(World &, CommandBuffer &, Entity, int32_t, float) override {}
         void CallOnFixedUpdate(World &, CommandBuffer &, Entity, int32_t, float) override {}
-        void CallOnStop(World &, CommandBuffer &, Entity, int32_t) override {}
+        void CallOnStop(World &, CommandBuffer &, Entity, int32_t ref) override { mStopped.push_back(ref); }
 
         std::vector<int32_t> mDestroyed;
+        std::vector<int32_t> mStopped;
 
     private:
         int32_t mNextInstance = 0;
@@ -123,4 +124,33 @@ TEST_CASE("OnStop unsubscribes from field changes", "[script][changes]")
     world.Resource<ComponentFieldListeners>().NotifyBeforeChange(world, changes);
     CHECK(host.mDestroyed.empty());
     CHECK(world.GetComponent<ScriptRef>(entity)->instanceRef == 9);
+}
+
+TEST_CASE("Scene end stops only scripts owned by the outgoing instance", "[script][scene]")
+{
+    mir::RegisterCoreComponents();
+    mir::RegisterScriptComponents();
+    World world;
+    CommandBuffer commands;
+    FakeHost host;
+    ScriptSystem system(host);
+    SystemContext context{ world, commands };
+    system.OnStart(context);
+
+    const auto outgoing = mir::AllocateSceneInstanceId();
+    world.SetActiveScene(outgoing);
+    const Entity removed = Scripted(world, 1);
+    const Entity persistent = Scripted(world, 2);
+    REQUIRE(world.PersistEntity(persistent));
+    world.SetActiveScene(mir::AllocateSceneInstanceId());
+    const Entity pending = Scripted(world, 3);
+    context.sceneInstance = outgoing;
+    system.StopSceneScripts(context);
+
+    CHECK(host.mStopped == std::vector<int32_t>{ 1 });
+    CHECK_FALSE(world.GetComponent<ScriptRef>(removed)->started);
+    CHECK(world.GetComponent<ScriptRef>(persistent)->started);
+    CHECK(world.GetComponent<ScriptRef>(persistent)->instanceRef == 2);
+    CHECK(world.GetComponent<ScriptRef>(pending)->started);
+    system.OnStop(context);
 }

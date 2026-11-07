@@ -1,7 +1,29 @@
 {
-    "name": "HelloWorld",
-    "title": "MjolnirEngine - HelloWorld",
-    "assetsRoot": "assets",
-    "sceneDir": "scenes/default",
-    "soundBanksRoot": "assets/audio/SoundBanks"
+  "assetsRoot": "assets",
+  "name": "HelloWorld",
+  "scenes": [
+    {
+      "id": "default",
+      "path": "scenes/default"
+    },
+    {
+      "id": "newScene",
+      "path": "scenes/newScene"
+    },
+    {
+      "id": "demo_gallery",
+      "path": "scenes/demo_gallery"
+    },
+    {
+      "id": "demo_plaza",
+      "path": "scenes/demo_plaza"
+    },
+    {
+      "id": "demo_beacons",
+      "path": "scenes/demo_beacons"
+    }
+  ],
+  "soundBanksRoot": "assets/audio/SoundBanks",
+  "startupScene": "default",
+  "title": "MjolnirEngine - HelloWorld"
 }

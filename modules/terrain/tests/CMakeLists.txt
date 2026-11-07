@@ -20,6 +20,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainReleaseSwitch.tests.cpp
     TerrainScene.tests.cpp
     TerrainStreamer.tests.cpp
+    TerrainStreamingConfiguration.tests.cpp
     TerrainStreamingSettings.tests.cpp
     TerrainSurface.tests.cpp
     TerrainTileMesh.tests.cpp

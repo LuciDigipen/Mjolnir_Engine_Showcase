@@ -37,11 +37,21 @@ Everything a module registers comes back as a `Registration`, a move-only token
 that undoes the registration when it dies. Component hooks, stage functions,
 frame-slot functions, ImGui drawers and Lua bindings all work this way.
 
-A *stage* is a transition `App` runs: `SceneUnload`, `SceneLoad`, `SceneSaved`,
+A *stage* is a transition `App` runs: `SceneEnd`, `SceneUnload`, `SceneLoad`, `SceneSaved`,
 `PlayBegin`, `PlayEnd`, `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. `RunStage` calls the
 stage's functions in registration order, then flushes the command buffer. A
 *frame slot* is host work once per rendered frame, outside the phases; today the
 only one is `FrameBegin`. The scheduler holds both lists next to its phases.
+
+Each loaded scene has a `SceneInstanceId`. An entity records the instance that
+was active when it was created, and `SystemContext::sceneInstance` names the
+scene a stage is for, so a callback running for an outgoing scene creates its
+entities under that scene. Entities and resources owned by the session, id
+`kSessionOwner`, outlive a scene swap. `World::PersistEntity` moves an
+entity and its descendants to the session, and `EmplaceSceneResource` stores a
+resource that is released with its instance. A swap sets
+`SystemContext::sceneSwapped`, and modules that own session-wide state skip
+their `SceneUnload` and `SceneLoad` reset when it is set.
 
 The `RequestQueue` World resource holds the transitions someone asked for during
 a frame. `App` takes them at the top of the next frame, in push order with

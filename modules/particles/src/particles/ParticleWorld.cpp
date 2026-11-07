@@ -191,7 +191,7 @@ namespace mir
                 return;
             }
             emitter.instance = mRuntime.Start(id, *parsed.mEffect, pose, owner,
-                emitter.overrideParameters ? &emitter.userParameters : nullptr);
+                emitter.overrideParameters ? &emitter.userParameters : nullptr, false, mWorld.EntityScene(owner));
             if (emitter.instance.IsNull())
                 return; // Capacity failures may recover after other instances drain.
             emitter.failedEffect = {};
@@ -216,7 +216,18 @@ namespace mir
 
     void ParticleWorld::Detach(Entity owner)
     {
-        mRuntime.Detach(owner);
+        mRuntime.Detach(owner, mWorld.EntityScene(owner));
+    }
+
+    void ParticleWorld::ClearScene(SceneInstanceId scene)
+    {
+        if (scene == kOwnedBySession) return;
+        for (const auto &instance : mRuntime.Slots())
+        {
+            if (instance.handle.IsNull() || instance.preview) continue;
+            const auto ownerScene = mWorld.IsAlive(instance.owner) ? mWorld.EntityScene(instance.owner) : instance.scene;
+            if (ownerScene == scene) mRuntime.Destroy(instance.handle);
+        }
     }
 
     void ParticleWorld::Clear()

@@ -341,6 +341,13 @@ namespace mir
 
     TerrainMeshResidency::~TerrainMeshResidency() = default;
 
+    void TerrainMeshResidency::ApplySettings(const TerrainStreamingSettings::Gpu &gpu)
+    {
+        mImpl->settings.budgetBytes = gpu.budgetBytes;
+        mImpl->settings.meshRetainSeconds = gpu.meshRetainSeconds;
+        mImpl->stats.budgetBytes = gpu.budgetBytes;
+    }
+
     void TerrainMeshResidency::Install()
     {
         Impl &impl = *mImpl;

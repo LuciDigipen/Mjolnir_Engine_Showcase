@@ -70,6 +70,32 @@ TEST_CASE("FindActiveCamera returns the flagged camera, or null", "[renderer][ca
     CHECK(mir::FindActiveCamera(world) == active);
 }
 
+TEST_CASE("Additive cameras retain their flags and follow primary scene selection", "[renderer][camera][additive]")
+{
+    SystemFixture fixture;
+    const auto first = mir::AllocateSceneInstanceId();
+    const auto second = mir::AllocateSceneInstanceId();
+    fixture.world.SetPrimaryScene(first);
+    const Entity a = MakeCamera(fixture.world, true);
+    Entity b;
+    {
+        const World::SceneScope scope(fixture.world, second);
+        b = MakeCamera(fixture.world, true);
+    }
+    fixture.Update();
+    CHECK(IsActive(fixture.world, a));
+    CHECK(IsActive(fixture.world, b));
+    CHECK(mir::ResolvePlayCamera(fixture.world).mEntity == a);
+    CHECK(mir::FindActiveCamera(fixture.world) == a);
+    fixture.world.SetPrimaryScene(second);
+    CHECK(mir::ResolvePlayCamera(fixture.world).mEntity == b);
+    CHECK(mir::FindActiveCamera(fixture.world) == b);
+    REQUIRE(mir::SetActiveCamera(fixture.world, b));
+    CHECK(IsActive(fixture.world, a));
+    fixture.world.DestroyEntity(b);
+    CHECK(mir::ResolvePlayCamera(fixture.world).mEntity == a);
+}
+
 TEST_CASE("SetActiveCamera flags one camera and clears the rest", "[renderer][camera]")
 {
     World world;

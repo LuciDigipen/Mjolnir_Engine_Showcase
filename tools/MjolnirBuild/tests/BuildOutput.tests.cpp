@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <exception>
 #include <fstream>
 #include <optional>
 #include <thread>
@@ -211,6 +212,39 @@ TEST_CASE("A commit blocked by a file in use leaves the previous build", "[build
     CHECK(fs::exists(out / "running.txt"));
     CHECK_FALSE(fs::exists(out / "new.txt"));
     CHECK(fs::exists(staging / "new.txt"));
+}
+
+TEST_CASE("A commit retries until a temporary file handle is released", "[build-output]")
+{
+    Sandbox sandbox;
+    const fs::path out = sandbox.mRoot / "out";
+    Touch(out / kBuildMarkerFileName, "{}");
+    Touch(out / "running.txt");
+
+    const fs::path staging = BeginStaging(out);
+    Touch(staging / "new.txt");
+
+    std::ofstream inUse(out / "running.txt", std::ios::app);
+    REQUIRE(inUse);
+    std::thread release([stream = std::move(inUse)]() mutable
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            stream.close();
+        });
+
+    bool committed = false;
+    try
+    {
+        CommitStaging(staging, out);
+        committed = true;
+    }
+    catch (const std::exception &)
+    {}
+    release.join();
+
+    CHECK(committed);
+    CHECK(fs::exists(out / "new.txt"));
+    CHECK_FALSE(fs::exists(out / "running.txt"));
 }
 
 TEST_CASE("--result and --progress are refused inside the output, its .tmp or its .old", "[build-output]")

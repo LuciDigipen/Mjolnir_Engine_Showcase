@@ -25,15 +25,12 @@ namespace mir
 
         void OnHidden()
         {
-            mDraftLoaded = false;
             mStatusMessage.clear();
         }
 
     private:
         std::string mStatusMessage;
-        PostProcessingSettings mMessageSnapshot;
-
-        bool mDraftLoaded = false;
-        PostProcessingSettings mDraftSettings;
+        // The settings as of the last Save; a further edit clears the message before it goes stale.
+        PostProcessingSettings mSavedCopy;
     };
 }

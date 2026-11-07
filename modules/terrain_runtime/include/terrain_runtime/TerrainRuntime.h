@@ -149,6 +149,9 @@ namespace mir
             return mWorld != nullptr;
         }
         TerrainStreamer *Streamer() const;
+
+        // Applies a changed effective configuration to the streamer and both residencies.
+        void ApplyConfiguration(TerrainStreamer &streamer);
         double Now() const;
         void Apply(TerrainSceneSpec spec, std::vector<TerrainReleaseAdoption> adopted = {});
         std::vector<InstanceResources> Build(TerrainWorld &next);
@@ -191,6 +194,8 @@ namespace mir
         // Why there is no streamer; reported once, when a scene has terrain.
         std::string mSettingsProblem;
         bool mSettingsReported = false;
+        // The effective settings the last frame saw, so a change is applied and reported once.
+        std::optional<TerrainStreamingSettings> mSeenSettings;
 
         // Plus the latest edit waiting to settle.
         TerrainSceneSpec mSpec;

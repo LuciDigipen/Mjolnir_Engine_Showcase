@@ -1318,19 +1318,90 @@ TEST_CASE("A capsule axis outside X, Y and Z does not index past the scale", "[p
     CHECK(BodyOfEntity(fixture, entity).IsValid());
 }
 
-TEST_CASE("A layer table the editor leaves is taken when Play begins", "[physics][layers]")
+namespace
+{
+    mir::PhysicsLayerTable EnemyTable()
+    {
+        mir::PhysicsLayerTable table;
+        table.names[4] = "Enemy";
+        table.SetCollide(0, 4, false);
+        return table;
+    }
+
+    void CheckEnemyApplied(PhysicsFixture &fixture)
+    {
+        CHECK(fixture.Physics().LayerTable().IndexOf("Enemy") == 4);
+        CHECK_FALSE(fixture.Physics().LayerTable().Collide(0, 4));
+    }
+}
+
+TEST_CASE("A changed shared layer table is taken on the next update in Edit", "[physics][layers]")
 {
     PhysicsFixture fixture(mir::EngineMode::Edit);
-    mir::PhysicsLayerTable table;
-    table.names[4] = "Enemy";
-    table.SetCollide(0, 4, false);
-    fixture.world.EmplaceResource<mir::PhysicsLayerUpdate>().mPending = table;
+    mir::PhysicsLayerTable &shared = fixture.world.EmplaceResource<mir::PhysicsLayerTable>();
+    fixture.Run(1);
+    CHECK(fixture.Physics().LayerTable() == shared);
+
+    shared = EnemyTable();
+    CHECK(fixture.Physics().LayerTable().IndexOf("Enemy") != 4);
+    fixture.Run(1);
+    CheckEnemyApplied(fixture);
+}
+
+TEST_CASE("A changed shared layer table is taken while Play is paused", "[physics][layers]")
+{
+    PhysicsFixture fixture;
+    mir::PhysicsLayerTable &shared = fixture.world.EmplaceResource<mir::PhysicsLayerTable>();
+    mir::SetPlayState(fixture.world, mir::PlayState::Paused);
+
+    shared = EnemyTable();
+    fixture.Run(1);
+    CheckEnemyApplied(fixture);
+}
+
+TEST_CASE("A changed shared layer table is taken when Play begins", "[physics][layers]")
+{
+    PhysicsFixture fixture(mir::EngineMode::Edit);
+    fixture.world.EmplaceResource<mir::PhysicsLayerTable>() = EnemyTable();
 
     mir::PhysicsSystem::OnPlayBegin(fixture.world);
 
-    CHECK(fixture.Physics().LayerTable().IndexOf("Enemy") == 4);
-    CHECK_FALSE(fixture.Physics().LayerTable().Collide(0, 4));
-    CHECK_FALSE(fixture.world.Resource<mir::PhysicsLayerUpdate>().mPending.has_value());
+    CheckEnemyApplied(fixture);
+}
+
+TEST_CASE("An invalid shared layer table leaves the applied one and logs once", "[physics][layers]")
+{
+    mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "mir_physics_layers.log").string() });
+    mir::LogHistory::Clear();
+    const auto rejections = []()
+    {
+        std::size_t count = 0;
+        for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
+            count += entry.message.find("Physics layers not applied") != std::string::npos ? entry.count : 0;
+        return count;
+    };
+
+    PhysicsFixture fixture(mir::EngineMode::Edit);
+    mir::PhysicsLayerTable &shared = fixture.world.EmplaceResource<mir::PhysicsLayerTable>();
+    shared = EnemyTable();
+    fixture.Run(1);
+    CheckEnemyApplied(fixture);
+
+    shared.names[0] = "Renamed";
+    fixture.Run(3);
+    CheckEnemyApplied(fixture);
+    CHECK(fixture.Physics().LayerTable().names[0] == "Default");
+    CHECK(rejections() == 1);
+
+    // another invalid table is a new rejection
+    shared.names[0] = "Other";
+    fixture.Run(1);
+    CHECK(rejections() == 2);
+
+    shared.names[0] = "Default";
+    fixture.Run(1);
+    CHECK(rejections() == 2);
+    CHECK(fixture.Physics().LayerTable() == shared);
 }
 
 TEST_CASE("A parent's body is written before its child's, whatever order they were made in", "[physics][world]")

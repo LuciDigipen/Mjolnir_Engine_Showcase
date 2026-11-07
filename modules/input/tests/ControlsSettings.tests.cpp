@@ -164,17 +164,34 @@ TEST_CASE("InputModule loads the player's controls, applies a change and saves i
           "[input][controls]")
 {
     TempSettingsFile file("controls_module.json");
-    TempSettingsFile project("controls_module_project.json");
     REQUIRE(SaveControlsSettings(file.mPath, ControlsSettings{.mInvertGamepadY = true}));
 
     TestWindow window;
     World world;
     SystemScheduler scheduler;
-    InputModule input({world, scheduler}, window, project.mPath, file.mPath);
+    InputModule input({world, scheduler}, window, file.mPath);
     CHECK(input.Controls().mInvertGamepadY);
     CHECK(world.Resource<ControlsSettings>().mInvertGamepadY);
 
     input.SetControls(ControlsSettings{.mInvertMouseY = true});
     CHECK(world.Resource<ControlsSettings>() == ControlsSettings{.mInvertMouseY = true});
     CHECK(LoadControlsSettings(file.mPath) == ControlsSettings{.mInvertMouseY = true});
+}
+
+TEST_CASE("Input modules borrow the same player controls while keeping independent input state", "[input][controls]")
+{
+    ControlsSettings controls{ .mInvertMouseY = true };
+    TestWindow window;
+    World authoring;
+    World runtime;
+    SystemScheduler authoringScheduler;
+    SystemScheduler runtimeScheduler;
+    InputModule authoringInput({authoring, authoringScheduler}, window, {}, &controls);
+    InputModule runtimeInput({runtime, runtimeScheduler}, window, {}, &controls);
+    CHECK(&authoringInput.Controls() == &controls);
+    CHECK(&runtimeInput.Controls() == &controls);
+    CHECK(&authoring.Resource<InputState>() != &runtime.Resource<InputState>());
+    runtimeInput.SetControls(ControlsSettings{ .mInvertGamepadY = true });
+    CHECK(authoringInput.Controls().mInvertGamepadY);
+    CHECK_FALSE(authoringInput.Controls().mInvertMouseY);
 }

@@ -40,6 +40,7 @@ TEST_CASE("Requests made while held are dropped and the held ones come back", "[
     RequestQueue queue;
     queue.Push(Request::SaveScene);
     queue.PushOpenProject("games/Other");
+    queue.PushNextScene("second");
 
     RequestQueue::Held held = queue.Hold();
     CHECK(queue.Empty());
@@ -47,9 +48,11 @@ TEST_CASE("Requests made while held are dropped and the held ones come back", "[
     queue.Push(Request::Pause);
     queue.Push(Request::Quit);
     queue.PushOpenProject("games/Wrong");
+    queue.PushNextScene("wrong");
 
-    CHECK(queue.Restore(std::move(held)) == 3);
+    CHECK(queue.Restore(std::move(held)) == 4);
     CHECK(queue.TakeOpenProject() == std::optional<std::string>("games/Other"));
+    CHECK(queue.TakeNextScene() == std::optional<std::string>("second"));
     CHECK(queue.Take() == std::vector<Request>{ Request::SaveScene });
 }
 
@@ -58,6 +61,29 @@ TEST_CASE("Holding and restoring an empty queue changes nothing", "[ecs][request
     RequestQueue queue;
     RequestQueue::Held held = queue.Hold();
     CHECK(queue.Restore(std::move(held)) == 0);
+    CHECK(queue.Empty());
+}
+
+TEST_CASE("Holding additive scene operations keeps their instance handles", "[ecs][requests]")
+{
+    RequestQueue queue;
+    const auto instance = AllocateSceneInstanceId();
+    queue.PushAdditiveScene({ "room", instance });
+    queue.PushUnloadScene(instance);
+    queue.PushUnloadScene(instance);
+    queue.PushPrimaryScene(instance);
+    auto held = queue.Hold();
+    CHECK(queue.Empty());
+    queue.PushAdditiveScene({ "discarded", AllocateSceneInstanceId() });
+    queue.PushUnloadScene(AllocateSceneInstanceId());
+    queue.PushPrimaryScene(AllocateSceneInstanceId());
+    CHECK(queue.Restore(std::move(held)) == 3);
+    const auto loads = queue.TakeAdditiveScenes();
+    REQUIRE(loads.size() == 1);
+    CHECK(loads.front().id == "room");
+    CHECK(loads.front().instance == instance);
+    CHECK(queue.TakeUnloadScenes() == std::vector<SceneInstanceId>{ instance });
+    CHECK(queue.TakePrimaryScene() == std::optional<SceneInstanceId>{ instance });
     CHECK(queue.Empty());
 }
 

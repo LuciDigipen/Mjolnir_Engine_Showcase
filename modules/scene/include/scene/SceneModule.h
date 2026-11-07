@@ -1,7 +1,7 @@
 /**
  * @file SceneModule.h
  * @author sumin.park
- * @brief The scene the World holds, its Play snapshot and how it last got there.
+ * @brief The scene the World holds and how it last got there.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace mir
 {
@@ -25,7 +26,7 @@ namespace mir
     {
         FromDisk,
         New,
-        // Stop put the World back as it was at Play
+        // A scene was copied into another World
         FromSnapshot,
     };
 
@@ -34,6 +35,25 @@ namespace mir
         SceneLoadCause cause = SceneLoadCause::New;
         // missing entity files, or a corrupt scene replaced by an empty one
         bool incomplete = false;
+        SceneInstanceId instance = kOwnedBySession;
+    };
+
+    struct SceneEntry
+    {
+        LoadedScene scene;
+        std::filesystem::path directory;
+        std::string id;
+    };
+
+    struct SceneCollection
+    {
+        SceneEntry primary;
+        std::map<SceneInstanceId, SceneEntry> additive;
+
+        const SceneEntry *Find(SceneInstanceId instance) const;
+        SceneEntry *Find(SceneInstanceId instance);
+        std::vector<SceneInstanceId> Instances() const;
+        Entity FindEntity(const World &world, SceneInstanceId instance, StableId stable) const;
     };
 
     class SceneModule
@@ -49,6 +69,8 @@ namespace mir
         // the same object for the module's life; commands replace its value
         LoadedScene &Scene() { return mScene; }
         const std::filesystem::path &SceneDir() const { return mSceneDir; }
+
+        void SetSceneDir(std::filesystem::path directory) { mSceneDir = std::move(directory); }
 
         // Every scene command sets it before its SceneLoad stage runs; stage functions
         // are its only readers
@@ -66,19 +88,25 @@ namespace mir
         // binds; an incomplete New unbinds, and any other New keeps the binding
         void New(std::string name, bool incomplete = false);
         void LoadFromDisk(ScenePrefabResolver *resolver, bool incomplete);
+        void ReplacePrimaryScene(LoadedScene scene, std::filesystem::path directory, std::string id = {});
+        void Add(LoadedScene scene, std::filesystem::path directory, std::string id);
+        bool Remove(SceneInstanceId instance);
+        bool SetPrimary(SceneInstanceId instance);
+        void SetCatalogId(std::string id) { mScenes.primary.id = std::move(id); }
+        const SceneCollection &Scenes() const { return mScenes; }
+
+        // Copies the live scene, including unsaved edits, into this module's World.
+        void CopyFrom(World &source, const LoadedScene &scene, const ScenePrefabResolver *sourceResolver,
+            ScenePrefabResolver *destinationResolver);
 
         // false on I/O failure, or while the scene is unbound
         bool Save(const ScenePrefabResolver *resolver);
 
-        // Play keeps a snapshot; Stop destroys Play's entities and restores it
-        void CaptureForPlay(const ScenePrefabResolver *resolver);
-        void RestoreFromPlay(ScenePrefabResolver *resolver);
-
     private:
         World &mWorld;
-        std::filesystem::path mSceneDir;
-        LoadedScene mScene;
-        PlaySnapshot mSnapshot;
+        SceneCollection &mScenes;
+        std::filesystem::path &mSceneDir;
+        LoadedScene &mScene;
         SceneLoadResult mLastLoad;
         bool mBound = true;
     };

@@ -1,0 +1,55 @@
+{
+  "id": 3,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Demo sun"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          -0.382683,
+          0,
+          0,
+          0.92388
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {
+        "position": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "type": "Light",
+      "fields": {
+        "type": 0,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 2
+      }
+    }
+  ]
+}

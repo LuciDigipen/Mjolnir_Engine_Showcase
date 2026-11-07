@@ -64,6 +64,19 @@ TEST_CASE("Particle system and emitter handles reject stale slots after destroy 
     CHECK(runtime.Capacity() == 1);
 }
 
+TEST_CASE("Detached particle instances retain their originating scene", "[particles][scene]")
+{
+    mir::ParticleRuntime runtime(1);
+    const auto scene = mir::AllocateSceneInstanceId();
+    const mir::Entity owner{ 7, 1 };
+    const auto handle = runtime.Start({ 2 }, Definition(), {}, owner, nullptr, false, scene);
+    REQUIRE(runtime.Find(handle));
+    runtime.Detach(owner);
+    REQUIRE(runtime.Find(handle));
+    CHECK(runtime.Find(handle)->owner.IsNull());
+    CHECK(runtime.Find(handle)->scene == scene);
+}
+
 TEST_CASE("Particle stop drains without extending lifetime and pause freezes it", "[particles]")
 {
     mir::ParticleRuntime runtime;

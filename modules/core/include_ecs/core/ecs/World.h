@@ -16,6 +16,7 @@
 #include "QueryTerms.h"
 #include "core/Registration.h"
 #include "Signature.h"
+#include "SceneInstance.h"
 #include "core/log/Assert.h"
 
 #include <algorithm>
@@ -57,6 +58,7 @@ namespace mir
 
     struct EntityRecord
     {
+        SceneInstanceId scene = kOwnedBySession;
         Archetype *archetype = nullptr;
         uint32_t row = 0;
         bool destroying = false;                 // set while DestroyEntity runs its hooks
@@ -125,10 +127,52 @@ namespace mir
                 mRecords.resize(entity.mIndex + 1);
 
             // no defer needed
-            mRecords[entity.mIndex] = EntityRecord{ mEmptyArchetype, mEmptyArchetype->AddRow(entity) };
+            mRecords[entity.mIndex] = EntityRecord{ mActiveScene, mEmptyArchetype, mEmptyArchetype->AddRow(entity) };
             detail::HierarchyMutator::AddRoot(mHierarchy, entity);
 
             return entity;
+        }
+
+        SceneInstanceId ActiveScene() const { return mActiveScene; }
+        void SetActiveScene(SceneInstanceId scene) { mActiveScene = scene; }
+        SceneInstanceId PrimaryScene() const { return mPrimaryScene; }
+        void SetPrimaryScene(SceneInstanceId scene) { mPrimaryScene = scene; mActiveScene = scene; }
+        class SceneScope
+        {
+        public:
+            SceneScope(World &world, SceneInstanceId scene) : mWorld(world), mPrevious(world.ActiveScene())
+            {
+                mWorld.SetActiveScene(scene);
+            }
+            ~SceneScope() { mWorld.SetActiveScene(mPrevious); }
+            SceneScope(const SceneScope &) = delete;
+            SceneScope &operator=(const SceneScope &) = delete;
+        private:
+            World &mWorld;
+            SceneInstanceId mPrevious;
+        };
+        SceneInstanceId EntityScene(Entity entity) const
+        {
+            return IsAlive(entity) ? mRecords[entity.mIndex].scene : kOwnedBySession;
+        }
+        void SetEntityScene(Entity entity, SceneInstanceId scene)
+        {
+            if (IsAlive(entity)) mRecords[entity.mIndex].scene = scene;
+        }
+
+        bool PersistEntity(Entity root)
+        {
+            if (!IsAlive(root)) return false;
+            std::vector<Entity> pending{ root };
+            while (!pending.empty())
+            {
+                const Entity entity = pending.back();
+                pending.pop_back();
+                SetEntityScene(entity, kOwnedBySession);
+                const auto children = mHierarchy.ChildrenOf(entity);
+                pending.insert(pending.end(), children.begin(), children.end());
+            }
+            return true;
         }
 
         // The hooks fire until the token dies; its owner keeps it as a last-declared member
@@ -397,31 +441,74 @@ namespace mir
             auto holder = std::make_unique<detail::ResourceHolder<T>>(std::forward<Args>(args)...);
             T &value = holder->mValue;
 
-            mResources[detail::ResourceKeyOf<T>()] = std::move(holder);
+            const auto key = detail::ResourceKeyOf<T>();
+            mWorldResources[key] = std::move(holder);
+            mReferencedResources.erase(key);
             return value;
         }
+
+        // Shares a value its caller owns without extending its lifetime. The value must outlive this reference,
+        // so the owner must not remove or replace it while this World uses it.
+        template <typename T>
+        T &ShareResource(T &value)
+        {
+            static_assert(std::is_same_v<T, std::remove_cvref_t<T>>);
+            const auto key = detail::ResourceKeyOf<T>();
+            if (TryResource<T>() == &value)
+                return value;
+            mReferencedResources[key] = &value;
+            mWorldResources.erase(key);
+            return value;
+        }
+
+        // Shares the source World's value, with the same lifetime contract.
+        template <typename T>
+        T &ShareResourceFrom(World &source)
+        {
+            return ShareResource(source.Resource<T>());
+        }
+
+        // Scene resources are released with their instance, ordinary resources belong to the session.
+        template <typename T, typename... Args>
+        T &EmplaceSceneResource(SceneInstanceId scene, Args &&...args)
+        {
+            static_assert(std::is_same_v<T, std::remove_cvref_t<T>>);
+            MIR_CHECK(scene != kOwnedBySession, "A scene resource needs an instance ID");
+            auto holder = std::make_unique<detail::ResourceHolder<T>>(std::forward<Args>(args)...);
+            T &value = holder->mValue;
+            mSceneResources[scene][detail::ResourceKeyOf<T>()] = std::move(holder);
+            return value;
+        }
+
+        template <typename T>
+        T *TrySceneResource(SceneInstanceId scene)
+        {
+            const auto owner = mSceneResources.find(scene);
+            if (owner == mSceneResources.end()) return nullptr;
+            const auto value = owner->second.find(detail::ResourceKeyOf<T>());
+            return value == owner->second.end() ? nullptr :
+                &static_cast<detail::ResourceHolder<std::remove_cvref_t<T>> *>(value->second.get())->mValue;
+        }
+
+        void ClearSceneResources(SceneInstanceId scene) { mSceneResources.erase(scene); }
 
         // The resource, or nullptr when none has been emplaced.
         template <typename T>
         T *TryResource()
         {
-            const auto it = mResources.find(detail::ResourceKeyOf<T>());
-            if (it == mResources.end())
-                return nullptr;
-
             using Bare = std::remove_cvref_t<T>;
-            return &static_cast<detail::ResourceHolder<Bare> *>(it->second.get())->mValue;
+            const auto key = detail::ResourceKeyOf<T>();
+            const auto owned = mWorldResources.find(key);
+            if (owned != mWorldResources.end())
+                return &static_cast<detail::ResourceHolder<Bare> *>(owned->second.get())->mValue;
+            const auto referenced = mReferencedResources.find(key);
+            return referenced == mReferencedResources.end() ? nullptr : static_cast<Bare *>(referenced->second);
         }
 
         template <typename T>
         const T *TryResource() const
         {
-            const auto it = mResources.find(detail::ResourceKeyOf<T>());
-            if (it == mResources.end())
-                return nullptr;
-
-            using Bare = std::remove_cvref_t<T>;
-            return &static_cast<const detail::ResourceHolder<Bare> *>(it->second.get())->mValue;
+            return const_cast<World *>(this)->TryResource<T>();
         }
 
         template <typename T>
@@ -444,14 +531,17 @@ namespace mir
         template <typename T>
         bool HasResource() const
         {
-            return mResources.find(detail::ResourceKeyOf<T>()) != mResources.end();
+            return TryResource<T>() != nullptr;
         }
 
-        // Destroys the resource. True if there was one.
+        // Removes the entry, destroying the value only when this World owns it. True if there was one.
         template <typename T>
         bool RemoveResource()
         {
-            return mResources.erase(detail::ResourceKeyOf<T>()) != 0;
+            const auto key = detail::ResourceKeyOf<T>();
+            const bool owned = mWorldResources.erase(key) != 0;
+            const bool referenced = mReferencedResources.erase(key) != 0;
+            return owned || referenced;
         }
 
         template <typename... Ts, typename... Filters>
@@ -517,7 +607,7 @@ namespace mir
             }
 
             RemoveRow(*from.archetype, from.row);
-            mRecords[entity.mIndex] = EntityRecord{ &target, row };
+            mRecords[entity.mIndex] = EntityRecord{ from.scene, &target, row };
 
             const ComponentHooks *hooks = FindHooks(type);
             if (hooks == nullptr || !hooks->onAdd)
@@ -559,7 +649,7 @@ namespace mir
             CopySharedColumns(*from.archetype, from.row, target, row);
 
             RemoveRow(*from.archetype, from.row);
-            mRecords[entity.mIndex] = EntityRecord{ &target, row };
+            mRecords[entity.mIndex] = EntityRecord{ from.scene, &target, row };
         }
 
         template <typename T>
@@ -781,11 +871,16 @@ namespace mir
         mir::HierarchyIndex mHierarchy;
 
         // hook tokens hold it weakly, to assert the World outlives them. Before
-        // mResources, so a resource holding a token still finds the World alive
+        // mWorldResources, so a resource holding a token still finds the World alive
         std::shared_ptr<const int> mAlive = std::make_shared<const int>(0);
 
         // intentionally declared last as it must be destroyed first.
-        std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>> mResources; // by detail::ResourceIdOf
+        std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>> mWorldResources; // resources that world owns
+        std::unordered_map<uint32_t, void *> mReferencedResources; // resources that survives world sessions
+        std::unordered_map<SceneInstanceId,
+            std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>>> mSceneResources; // resources that scene owns.
+        SceneInstanceId mActiveScene = kOwnedBySession;
+        SceneInstanceId mPrimaryScene = kOwnedBySession;
         std::size_t mArchetypeGeneration = 0;
         uint32_t mQueryIterationDepth = 0; // depth for nested iteration checking
         uint32_t mHookDepth = 0;           // hooks currently running

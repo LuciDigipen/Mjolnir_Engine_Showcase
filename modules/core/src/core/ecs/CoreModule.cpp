@@ -30,7 +30,7 @@ namespace mir
         context.world.EmplaceResource<RequestQueue>();
         context.world.EmplaceResource<SceneLoadGroup>();
         mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad,
-            [](SystemContext &frame) { frame.world.Resource<SceneLoadGroup>().Begin(); });
+            [](SystemContext &frame) { frame.world.Resource<SceneLoadGroup>().Begin(frame.sceneInstance); });
 
         context.scheduler.AddSystem<TransformPropagateSystem>(SystemPhase::Propagate,
             SystemOrder{SystemOrder::kNormal});

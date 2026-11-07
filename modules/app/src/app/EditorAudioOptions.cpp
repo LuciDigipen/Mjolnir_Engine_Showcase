@@ -46,6 +46,16 @@ namespace mir
         return mAudio.SaveDefaults(ToAudio(defaults));
     }
 
+    void EditorAudioOptions::SetDefaults(const EditorAudioLevels &defaults)
+    {
+        mAudio.SetDefaults(ToAudio(defaults));
+    }
+
+    bool EditorAudioOptions::ReloadDefaults(std::string &problem)
+    {
+        return mAudio.ReloadDefaults(problem);
+    }
+
     std::vector<EditorSoundBank> EditorAudioOptions::SoundBanks() const
     {
         std::vector<EditorSoundBank> banks;

@@ -460,6 +460,13 @@ namespace mir
         }
     }
 
+    struct PreparedSceneData
+    {
+        std::optional<SceneManifest> manifest;
+        std::map<StableId, ScenePrefabInstance> instances;
+        std::vector<std::pair<StableId, json>> entities;
+    };
+
     fs::path SceneManifestPath(const fs::path &sceneDir)
     {
         return sceneDir / kSceneManifestFileName;
@@ -635,51 +642,80 @@ namespace mir
         return probe;
     }
 
-    LoadedScene LoadScene(World &world, const fs::path &sceneDir, ScenePrefabResolver *resolver)
+    LoadedScene LoadScene(World &world, const fs::path &sceneDir, ScenePrefabResolver *resolver, SceneInstanceId instance)
     {
-        LoadedScene loaded;
+        return LoadPreparedScene(world, PrepareScene(sceneDir), resolver, instance);
+    }
 
-        std::string error;
-        const std::optional<SceneManifest> manifest = ReadManifest(sceneDir, error);
-        if (!manifest)
+    PreparedScene PrepareScene(const fs::path &sceneDir, std::stop_token cancellation)
+    {
+        PreparedScene prepared;
+        auto data = std::make_shared<PreparedSceneData>();
+        prepared.data = data;
+        const auto cancelled = [&]
         {
-            MIR_LOG_ERROR("LoadScene: '{}' has no usable {} ({}), loading an empty scene", sceneDir.string(),
-                kSceneManifestFileName, error);
-            return loaded;
-        }
-        loaded.mName = manifest->mName;
-        loaded.mNextId = manifest->mNextId;
+            prepared.cancelled = cancellation.stop_requested();
+            return prepared.cancelled;
+        };
+        if (cancelled()) return prepared;
+        data->manifest = ReadManifest(sceneDir, prepared.probe.mManifestError);
+        if (!data->manifest) return prepared;
 
-        for (const StableId id : manifest->mInstances)
+        for (const StableId id : data->manifest->mInstances)
         {
+            if (cancelled()) return prepared;
             std::string instanceError;
             std::optional<ScenePrefabInstance> record = ReadInstanceFile(sceneDir, id, instanceError);
             if (!record)
             {
+                prepared.probe.mMissingInstances.push_back(id);
                 MIR_LOG_ERROR("LoadScene: instance file '{}' {}, skipped", InstanceFilePath(sceneDir, id).string(),
                     instanceError);
                 continue;
             }
-            loaded.mInstances.emplace(id, std::move(*record));
+            data->instances.emplace(id, std::move(*record));
         }
 
         // Read before entity files so stale flattened members cannot shadow them
-        const std::set<StableId> memberIds = MemberIdsOf(loaded.mInstances);
+        const std::set<StableId> memberIds = MemberIdsOf(data->instances);
 
-        std::vector<std::pair<StableId, json>> entities;
-        for (const StableId id : manifest->mEntities)
+        for (const StableId id : data->manifest->mEntities)
         {
+            if (cancelled()) return prepared;
             if (memberIds.contains(id))
                 continue;
 
             std::optional<json> entityJson = ReadEntityFile(sceneDir, id);
             if (!entityJson)
             {
+                prepared.probe.mMissingEntities.push_back(id);
                 MIR_LOG_ERROR("LoadScene: entity file for id {} listed in manifest but missing or unreadable", id);
                 continue; // 0030 leaves this failure mode open; skip rather than abort the load
             }
-            entities.emplace_back(id, std::move(*entityJson));
+            data->entities.emplace_back(id, std::move(*entityJson));
         }
+        cancelled();
+        return prepared;
+    }
+
+    LoadedScene LoadPreparedScene(World &world, const PreparedScene &prepared,
+        ScenePrefabResolver *resolver, SceneInstanceId instance)
+    {
+        LoadedScene loaded;
+        if (instance != kOwnedBySession) loaded.mInstanceId = instance;
+        const World::SceneScope scope(world, loaded.mInstanceId);
+        loaded.mComplete = !prepared.cancelled && prepared.probe.Ok();
+        if (!prepared.data || !prepared.data->manifest || prepared.cancelled)
+        {
+            loaded.mComplete = false;
+            return loaded;
+        }
+        const auto &manifest = prepared.data->manifest;
+        const auto &entities = prepared.data->entities;
+        loaded.mName = manifest->mName;
+        loaded.mNextId = manifest->mNextId;
+        loaded.mInstances = prepared.data->instances;
+        const std::set<StableId> memberIds = MemberIdsOf(loaded.mInstances);
 
         const auto raiseNextId = [&loaded](StableId id)
             {
@@ -727,6 +763,8 @@ namespace mir
             earlierIds.insert(bindingIds.begin(), bindingIds.end());
             if (valid)
                 materializeRoots.insert(root);
+            else
+                loaded.mComplete = false;
         }
 
         struct SpawnItem
@@ -796,6 +834,7 @@ namespace mir
             ScenePrefabInstance &instance = loaded.mInstances.at(item.mId);
             if (resolver == nullptr)
             {
+                loaded.mComplete = false;
                 MIR_LOG_WARN("LoadScene: no prefab resolver, instance {} left unchanged", item.mId);
                 continue;
             }
@@ -803,6 +842,7 @@ namespace mir
             std::map<SceneNodeAddress, Entity> members = resolver->Materialize(world, instance);
             if (members.empty())
             {
+                loaded.mComplete = false;
                 MIR_LOG_WARN("LoadScene: prefab '{}' for instance {} is unavailable, left unchanged",
                     instance.mPrefab, item.mId);
                 continue;
@@ -811,6 +851,7 @@ namespace mir
             const std::optional<SceneNodeAddress> rootAddress = RootAddressOf(instance);
             if (!rootAddress)
             {
+                loaded.mComplete = false;
                 MIR_LOG_WARN("LoadScene: instance {} has no root binding, left unchanged", item.mId);
                 for (const auto &[address, entity] : members)
                 {
@@ -823,6 +864,7 @@ namespace mir
             const auto rootIt = members.find(*rootAddress);
             if (rootIt == members.end())
             {
+                loaded.mComplete = false;
                 MIR_LOG_WARN("LoadScene: prefab for instance {} did not materialize its root, left unchanged",
                     item.mId);
                 for (const auto &[address, entity] : members)
@@ -1104,7 +1146,19 @@ namespace mir
 
     void UnloadScene(World &world, const LoadedScene &loaded)
     {
-        for (const auto &[id, entity] : loaded.mEntities)
+        std::vector<Entity> owned;
+        std::vector<Entity> retained;
+        world.ForEachAliveEntity([&](Entity entity)
+            {
+                if (world.EntityScene(entity) == loaded.mInstanceId)
+                    owned.push_back(entity);
+                else if (const Entity parent = world.HierarchyIndex().ParentOf(entity);
+                    !parent.IsNull() && world.EntityScene(parent) == loaded.mInstanceId)
+                    retained.push_back(entity);
+            });
+        for (Entity entity : retained)
+            SetParent(world, entity, kNullEntity);
+        for (Entity entity : owned)
         {
             // destroying a parent cascades, so a child reached later may
             // already be dead

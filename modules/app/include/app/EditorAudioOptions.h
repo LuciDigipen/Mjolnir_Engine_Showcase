@@ -29,6 +29,8 @@ namespace mir
 
         EditorAudioLevels Defaults() const override;
         bool SaveDefaults(const EditorAudioLevels &defaults) override;
+        void SetDefaults(const EditorAudioLevels &defaults) override;
+        bool ReloadDefaults(std::string &problem) override;
 
         std::vector<EditorSoundBank> SoundBanks() const override;
 

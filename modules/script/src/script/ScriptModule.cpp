@@ -48,6 +48,8 @@ namespace mir
 
         // before Stop's restore destroys the entities the scripts run on
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &frame) { mScripts->StopAllScripts(frame); });
+        mSceneEnd = context.scheduler.AddStage(Stage::SceneEnd,
+            [this](SystemContext &frame) { mScripts->StopSceneScripts(frame); });
 
         // a script whose asset arrived with this cook resolves now
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &) { mResolver->ForgetFailures(); });

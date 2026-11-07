@@ -8,10 +8,10 @@
  */
 #include <renderer/RendererModule.h>
 
+
 #include <renderer/ActiveCamera.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/MeshResolveSystem.h>
-#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
 #include <renderer/ViewDrawSource.h>
@@ -52,28 +52,53 @@ namespace mir
                 return mSurfaceMaterials.ValidateRecord(frontend, layout, bytes, error);
             });
 
+        mWorldBinding = BindWorld(context, settings);
+        mActiveWorldBinding = mWorldBinding.get();
+    }
+
+    void RendererModule::ActivateWorld(WorldBinding *binding)
+    {
+        mActiveWorldBinding = binding != nullptr ? binding : mWorldBinding.get();
+        mRenderer.ResetHistory();
+    }
+
+    RenderSystem &RendererModule::Rendering() { return mActiveWorldBinding->Rendering(); }
+
+    MeshResolveSystem &RendererModule::Meshes() { return mActiveWorldBinding->Meshes(); }
+
+    std::unique_ptr<RendererModule::WorldBinding> RendererModule::BindWorld(ModuleContext context,
+        const RendererModuleSettings &settings)
+    {
+        return std::unique_ptr<WorldBinding>(new WorldBinding(context, mRenderer, mSurfaceMaterials, settings));
+    }
+
+    RendererModule::WorldBinding::WorldBinding(ModuleContext context, VulkanRenderer &renderer,
+        SurfaceMaterialLibrary &surfaceMaterials, const RendererModuleSettings &settings)
+        : mRenderer(renderer), mSurfaceMaterials(surfaceMaterials)
+    {
         context.world.EmplaceResource<ViewDrawSources>();
         // physics fills it while a view shows colliders
         context.world.EmplaceResource<DebugLines>();
-        const RenderSettings renderSettings =
-            RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{});
-        context.world.EmplaceResource<RenderSettings>(renderSettings);
-        // The game's play-time upload budget.
-        mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
-        mRenderer.SharedResidency()->SetTotalTarget(renderSettings.ResidencyBytes());
-        context.world.EmplaceResource<PostProcessingSettings>(
-            PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
+        // The renderer is shared, so only the main binding applies the budgets.
+        if (settings.mAdvanceSharedFrame)
+        {
+            const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
+            mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
+            mRenderer.SharedResidency()->SetTotalTarget(renderSettings.ResidencyBytes());
+            mAppliedUploadMiB = renderSettings.uploadMiBPerFrame;
+            mAppliedResidencyMiB = renderSettings.residencyMiB;
+        }
 
         MIR_ASSERT(settings.mResolver != nullptr, "RendererModule: settings.mResolver is required");
 
         // a WorldTransform reader
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, mRenderer, settings.mAssetService,
+            SystemOrder{ SystemOrder::kNormal }, mRenderer, settings.mAssetService,
             *settings.mResolver, &mSurfaceMaterials);
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
-            SystemOrder{SystemOrder::kEarly});
+            SystemOrder{ SystemOrder::kEarly });
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
-            SystemOrder{SystemOrder::kNormal}, mRenderer);
+            SystemOrder{ SystemOrder::kNormal }, mRenderer);
 
         mHooks = context.world.SetComponentHooks<MeshRenderer>({ .onRemove = [this](World &, Entity entity)
             {
@@ -81,8 +106,9 @@ namespace mir
             } });
 
         // no scene entity holds a mesh or material handle now
-        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
             {
+                if (frame.sceneSwapped) return;
                 mMeshes->ReleaseResources();
                 mSurfaceMaterials.SetActiveMaterials({});
                 // Independent Prefab Worlds keep their shared handles and preview values.
@@ -106,10 +132,23 @@ namespace mir
             });
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mActiveCamera->Reset(); });
 
-        mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &)
-            {
-                mSurfaceMaterials.Advance();
-            });
+        if (settings.mAdvanceSharedFrame)
+            mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &frame)
+                {
+                    mSurfaceMaterials.Advance();
+
+                    // Edits are made in place, so a difference from what was applied is applied here. A refused
+                    // upload budget keeps its old applied value and is tried again next frame.
+                    const RenderSettings &shared = frame.world.Resource<RenderSettings>();
+                    if (shared.uploadMiBPerFrame != mAppliedUploadMiB &&
+                        mRenderer.SetUploadFrameBudget(shared.UploadFrameBytes()))
+                        mAppliedUploadMiB = shared.uploadMiBPerFrame;
+                    if (shared.residencyMiB != mAppliedResidencyMiB)
+                    {
+                        mRenderer.SharedResidency()->SetTotalTarget(shared.ResidencyBytes());
+                        mAppliedResidencyMiB = shared.residencyMiB;
+                    }
+                });
 
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
@@ -118,8 +157,7 @@ namespace mir
             });
     }
 
-    // the tokens first, so nothing they reach runs on a renderer already shut down
-    RendererModule::~RendererModule()
+    RendererModule::WorldBinding::~WorldBinding()
     {
         mReloadCommit.Reset();
         mPlayEnd.Reset();
@@ -132,6 +170,11 @@ namespace mir
         // reaching the library before the library object goes away.
         if (mMeshes != nullptr)
             mMeshes->DetachSurfaceMaterials();
+    }
+
+    RendererModule::~RendererModule()
+    {
+        mWorldBinding.reset();
         mRenderer.SetShaderReloadListener({});
         mRenderer.SetMaterialRecordValidator({});
         mRenderer.Shutdown();

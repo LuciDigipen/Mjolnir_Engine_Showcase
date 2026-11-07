@@ -43,6 +43,7 @@ target_sources(engine_app PRIVATE
     src/app/App.cpp
     src/app/ErrorReport.cpp
     src/app/GameControlsOptions.cpp
+    src/app/ProjectResources.cpp
     src/app/Prompt.cpp
 )
 
@@ -63,4 +64,8 @@ if(MIR_WITH_AUDIO)
     if(MJOLNIR_WITH_EDITOR)
         target_sources(engine_app PRIVATE src/app/EditorAudioOptions.cpp)
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
 endif()

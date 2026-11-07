@@ -61,6 +61,8 @@ namespace mir
         // the moving bodies, parents first, for the pull
         std::vector<Entity> mOrder;
         JobExecutor *mJobs = nullptr;
+        // the last layer table that failed its check, so a bad table is reported once
+        std::optional<PhysicsLayerTable> mRejectedLayers;
         std::vector<BodyHandle> mReadBodies;
         std::vector<BodyPoseSnapshot> mReadPoses;
     };

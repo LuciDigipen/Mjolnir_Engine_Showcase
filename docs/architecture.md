@@ -101,7 +101,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `core` | module | `core_base` |
 | `assets` | module | `project` |
 | `particles` | module | `assets` |
-| `scene` | module | `serial` |
+| `scene` | module | `serial`, `jobs` |
 | `prefab` | module | `assets`, `scene`, `serial` |
 | `window` | module | none |
 | `audio` | module | `serial` |
@@ -114,7 +114,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `terrain` | module | `assets`, `serial`, `jobs` |
 | `particles_runtime` | module, bridge | `particles`, `particles_gpu` |
 | `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project`, `jobs` |
-| `script` | module | `assets` |
+| `script` | module | `assets`, `scene` |
 | `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script` | module, bridge | `script` and its library |
 | `imguiruntime` | module | `window`, `renderer`, `input` |
 | `gameui` | module | `assets`, `input` |
@@ -143,7 +143,7 @@ would.
 | `assets` | Cooked blobs, manifest, cache | [assets.md](modules/assets.md) |
 | `particles` | Cooked effect definitions, emitter handles and CPU playback lifecycle | [particles.md](modules/particles.md) |
 | `animation` | Model pose sampling and per-instance playback data | [animation.md](modules/animation.md) |
-| `scene` | Scene save and load, the scene the World holds, the Play snapshot | [scene.md](modules/scene.md) |
+| `scene` | Scene save and load, the scene each World holds, live scene copying for Play | [scene.md](modules/scene.md) |
 | `prefab` | Prefab source/cooked resources, compiled templates and scene instances | [prefab.md](modules/prefab.md) |
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
@@ -254,6 +254,27 @@ everything else depends on.
 A module above those two decides what a document means, and names no stream
 type. The flow is in [A file](#a-file).
 
+**`ProjectResources` owns configuration, and Worlds own the runtime state built from it.**
+
+`App` loads the project's configuration once, in `ProjectResources`, and every
+World borrows it before that World's modules are built. An edit and the running
+game therefore read one value, and a script write survives Stop.
+
+| Scope | Owner | Examples | Lifetime |
+|---|---|---|---|
+| Project | `App`'s `ProjectResources` | input bindings, render settings, post-processing defaults, terrain configuration, physics layers, editable audio configuration | until the project closes, which is the process, since a project switch relaunches |
+| World | each World | input state, physics simulation, collision events | until the World is destroyed |
+| Scene instance | the World, keyed by scene ID (`EmplaceSceneResource`) | state belonging to one additive scene | until that scene unloads |
+
+Editing configuration and applying it to a running system are separate
+operations. A writer, whether a panel, a script or a reload, changes the project
+value in place and never replaces its storage, because Worlds hold references to
+it. Each consumer then applies the value at its own safe boundary, and each
+setting's behavior is one of live, apply, applies on next registration, or
+rebuild and restart, classified per field in the owning module's doc. A widget
+whose value needs validation edits a short-lived buffer, and only a valid value
+reaches the project value. See [app.md](modules/app.md#project-resources).
+
 ## Flows
 
 ### A frame
@@ -340,18 +361,18 @@ order, then flushes the command buffer.
 ```
 New / Load        SceneUnload  ->  scene replaced  ->  SceneLoad
 Save              written      ->  SceneSaved
-Play              PlayBegin    ->  snapshot  ->  Play mode
-Stop              PlayEnd  ->  restore the snapshot  ->  Edit mode  ->  SceneLoad
+  Play              commit authored prefabs  ->  copy live scene to runtime World  ->  runtime SceneLoad and PlayBegin
+  Stop              runtime PlayEnd and SceneUnload  ->  destroy runtime session  ->  Edit mode
 Asset reload      BeginReload  ->  ReloadPrepare  ->  CommitReload  ->  ReloadCommit
                                      (a veto)  ->  ReloadAbort  ->  AbortReload
 ```
 
 A `SceneLoad` function reads why the scene is there through
-`SceneModule::LastLoad()`: from disk, new, or restored from the Play snapshot,
+`SceneModule::LastLoad()`: from disk, new, or copied into a runtime World,
 and whether it is incomplete. A `ReloadPrepare` function vetoes the swap by
-throwing, and `ReloadAbort` then drops what every holder staged. Stop keeps the GPU caches, which are keyed by asset; per-entity state
-goes in the owning component's `OnRemove`, which the restore fires for every
-Play entity.
+throwing, and `ReloadAbort` then drops what every holder staged. Stop unloads
+the runtime entities, which fires their `OnRemove` hooks before the runtime
+modules and scheduler are destroyed.
 
 ### A file
 
@@ -371,7 +392,9 @@ every path is built from `ExecutableDir()`.
              |
         GameProject
              |
-             +-- mProjectSettingsPath --> InputMap, RenderSettings
+             +-- mProjectSettingsPath --> ProjectResources: InputMap, RenderSettings, PostProcessingSettings,
+             |                            PhysicsLayerTable, the audio defaults
+             +-- mRootDir             --> ProjectResources: terrain_streaming.json
              +-- mSceneDir            --> SceneManifestPath(), EntityFilePath()
              +-- mSoundBankDir        --> audio::Init, after which Wwise opens banks itself
              +-- mAssetIdRoot         --> an id prefix, not a disk path
@@ -512,8 +535,7 @@ A scene instance is the bridge back to `StableId`s. Its record binds each
 compiled address to one, and its patches hold only what the scene overrides.
 `PrefabCoordinator` binds that scene, and its `PrefabSystem` publishes compiled
 edits and nested dependency changes at the next Edit frame boundary. During
-Play it is frozen, so no template change can restructure entities the Play
-snapshot owns.
+Play it is frozen, so no template change can restructure runtime entities.
 
 An open Prefab document gets its own preview World and `LoadedScene`, so the
 editor can edit it without touching the scene. `PrefabAuthoring` records the
@@ -554,6 +576,17 @@ table. See [script.md](modules/script.md).
    [modules/assets.md](modules/assets.md)).
 
 ## Changed
+
+*2026-11-05*, **Project configuration has one owner.** Was: each module loaded
+its own settings in its constructor, the editor's panels edited whole-settings
+drafts and copied them back on Save, and a saved physics layer table travelled to
+the running World through a `PhysicsLayerUpdate` resource. Now: `App` loads the
+configuration once in `ProjectResources`, shares it into every World before the
+World's modules are built, and each consumer applies a change at its own safe
+boundary, while panels edit the shared value directly. Because: a script's write
+was hidden by a panel's draft and then overwritten on Save, the authoring and Play
+Worlds each held a copy, and no setting said whether an edit reached a running
+system. See [app.md](modules/app.md#project-resources).
 
 *2026-10-24* — **App builds modules instead of wiring subsystems.** Was: `App`
 held fixed subsystem members, registered every library's components, resources

@@ -8,6 +8,7 @@
  */
 
 #pragma once
+#include "SceneInstance.h"
 #include <cstdint>
 
 namespace mir
@@ -52,6 +53,7 @@ namespace mir
     // registration order. A SceneLoad function must not assume SceneUnload ran first
     enum class Stage : uint8_t
     {
+        SceneEnd,
         SceneUnload,
         SceneLoad,
         SceneSaved,
@@ -83,6 +85,8 @@ namespace mir
         uint64_t frame = 0;
 
         float fixedAlpha = 1.0f;
+        SceneInstanceId sceneInstance = kOwnedBySession;
+        bool sceneSwapped = false;
     };
 
     // A unit of per-frame work over the World.

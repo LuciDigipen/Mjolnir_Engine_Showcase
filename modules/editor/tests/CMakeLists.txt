@@ -21,6 +21,7 @@ engine_add_module_tests(editor
     PrefabWorkspace.tests.cpp
     SnapToTerrain.tests.cpp
     ViewPie.tests.cpp
+    WorldSceneOps.tests.cpp
     ShaderHotReload.tests.cpp
 )
 

@@ -12,6 +12,7 @@
 #include <GameBuild.h>
 
 #include <assets/AssetManifest.h>
+#include <project/GameProject.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -351,4 +352,44 @@ TEST_CASE("A one-game cook holds the engine's and that game's assets with the ed
     const std::size_t expected = static_cast<std::size_t>(std::count_if(engine->Entries().begin(),
         engine->Entries().end(), [&](const AssetManifestEntry &entry) { return inScope(engine->LogicalPathOf(entry)); }));
     CHECK(named == expected);
+}
+
+TEST_CASE("Packaged scene IDs survive a source folder rename", "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Demo";
+    fs::rename(game / "scenes" / "default", game / "scenes" / "renamed");
+    Touch(game / "game.json", R"({
+        "startupScene": "intro",
+        "scenes": [
+            { "id": "intro", "path": "scenes/renamed" },
+            { "id": "next", "path": "scenes/second" }
+        ]
+    })");
+    Touch(game / "scenes" / "second" / "scene.json", R"({ "entities": [] })");
+
+    const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+    INFO(report.mError);
+    REQUIRE(report.mOk);
+    const fs::path packaged = fixture.mOut / "games" / "Demo";
+    const GameProject project = LoadGameProject(packaged);
+    CHECK(project.mStartupSceneId == "intro");
+    CHECK(project.mSceneDir == packaged / "scenes" / "renamed");
+    REQUIRE(project.mScenes.size() == 2);
+    CHECK(project.mScenes[1].mId == "next");
+    CHECK(fs::exists(project.mScenes[1].mDirectory / "scene.json"));
+}
+
+TEST_CASE("Invalid scene catalogs fail before packaging", "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Demo";
+    const auto scene = nlohmann::json{ { "id", "intro" }, { "path", "scenes/default" } };
+    for (const auto &scenes : { nlohmann::json::array({ scene, scene }), nlohmann::json::array() })
+    {
+        Touch(game / "game.json", nlohmann::json{ { "startupScene", "intro" }, { "scenes", scenes } }.dump());
+        const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+        CHECK_FALSE(report.mOk);
+        CHECK_FALSE(fs::exists(fixture.mOut));
+    }
 }

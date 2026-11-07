@@ -21,17 +21,22 @@
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
 #include <core/platform/CrashHandler.h>
+#if MIR_WITH_EDITOR
+#include <editor/Selection.h>
+#endif
 #include <input/DefaultInputMap.h>
 #include <input/InputState.h>
 #include <prefab/PrefabCoordinator.h>
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
+#include <serial/JsonFile.h>
 #include <terrain_runtime/TerrainRuntime.h>
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <string>
@@ -160,66 +165,142 @@ namespace mir
                       .mProgress = 0.0f });
     }
 
+    App::WorldState::WorldState(ProjectResources &resources, const GameProject &project, AssetsModule &assets,
+        const AssetResolver &resolver, GameShellSettings shellSettings)
+        : projectShare(world, resources),
+        particles(Context(), assets, resolver),
+        scene(Context(), project.mSceneDir),
+        prefab(Context(), scene, PrefabSourceDir(project), kHasEditor ? nullptr : &assets),
+        gameUI(Context()),
+        gameShell(Context(), gameUI, assets, resolver, shellSettings)
+    {}
+
+    App::SimulationSystems::SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
+        AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
+        ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
+        : physics(context, &jobs),
+        terrainData(context),
+        script(context, assets, resolver),
+        particlesRuntime(context, particles, particlesGpu, rendering),
+        particlesScript(script),
+    #if MIR_WITH_AUDIO
+        audioScript(script),
+    #endif
+        inputScript(script),
+        physicsScript(script),
+        rendererScript(script),
+        terrainScript(script)
+    {}
+
+    struct App::RuntimeSession
+    {
+        explicit RuntimeSession(App &app)
+            : state(app.mProjectResources, app.mProject, app.mAssets, app.mResolver,
+                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
+            rendering(app.mRenderer.BindWorld(state.Context(),
+                RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
+                                        .mEnableValidation = app.mDesc.mEnableValidation,
+                                        .mResolver = &app.mResolver,
+                                        .mAssetService = app.mAssetService.get(),
+                                        .mAdvanceSharedFrame = false })),
+            input(state.Context(), app.mWindow.Get(), {}, &app.mControls),
+            animation(state.Context(), app.mRenderer.Renderer(), app.mAssetService.get(), app.mResolver, &app.mJobs),
+            camera(state.Context()),
+        #if MIR_WITH_AUDIO
+            audio(app.mAudio.BindWorld(state.Context())),
+        #endif
+            simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
+                app.mParticlesGpu, rendering->Rendering()),
+            terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
+        {
+            state.gameShell.SetControlsOptions(&app.mControlsOptions);
+        #if MIR_WITH_AUDIO
+            state.gameShell.SetAudioOptions(&app.mAudioOptions);
+        #endif
+        #if MIR_WITH_EDITOR
+            state.world.EmplaceResource<Selection>();
+        #endif
+            state.prefab.Coordinator().CopyPrefabDefinitionsFrom(app.mWorldState.prefab.Coordinator());
+            state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
+                &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
+            state.scene.SetCatalogId(app.mOpenSceneId);
+            state.scene.SetSceneDir(app.mWorldState.scene.SceneDir());
+            SetEngineMode(state.world, EngineMode::Play);
+        }
+
+        void Begin(double elapsed, uint64_t frame)
+        {
+            SystemContext context = MakeContext(0.0f, elapsed, frame, 0.0f);
+            state.scheduler.RunStage(Stage::SceneLoad, context);
+            state.scheduler.RunStage(Stage::PlayBegin, context);
+        }
+
+        SystemContext MakeContext(float dt, double elapsed, uint64_t frame, float alpha)
+        {
+            return SystemContext{ state.world, state.commands, dt, elapsed, frame, alpha, state.scene.Scene().mInstanceId };
+        }
+
+        SceneInstanceId session = AllocateSceneInstanceId();
+        SceneInstanceId pendingPrimary = kOwnedBySession;
+        WorldState state;
+        std::unique_ptr<RendererModule::WorldBinding> rendering;
+        InputModule input;
+        AnimationModule animation;
+        CameraModule camera;
+    #if MIR_WITH_AUDIO
+        std::unique_ptr<AudioModule::WorldBinding> audio;
+    #endif
+        SimulationSystems simulation;
+        TerrainRuntimeModule terrain;
+    };
+
     App::App(const AppDesc &desc)
         : mDesc(Prepared(desc)),
         mProject(mDesc.mProject),
         mSplash(mDesc),
         mJobs(mDesc.mWorkerThreads),
-        mCore(Context(), mCommands),
         mAssets(CookedAssetsDir()),
         mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
         mResolver(mAssets, mProject.mAssetIdRoot),
-        mParticles(Context(), mAssets, mResolver),
-        mScene(Context(), mProject.mSceneDir),
-        mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
-        mGameUI(Context()),
-        mGameShell(Context(), mGameUI, mAssets, mResolver,
+        mControls(LoadControlsSettings(UserSettingsPath(mProject))),
+        mControlsOptions(mControls, UserSettingsPath(mProject)),
+        mWorldState(mProjectResources, mProject, mAssets, mResolver,
             GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
         mWindow(MakeWindowDesc(mDesc)),
         mRenderer(Context(), mWindow.Get(),
             RendererModuleSettings{ .mAppName = mDesc.mAppName,
                                     .mEnableValidation = mDesc.mEnableValidation,
-                                    .mProjectSettingsPath = mProject.mProjectSettingsPath,
                                     .mResolver = &mResolver,
                                     .mAssetService = mAssetService.get() }),
         mParticlesGpu(mRenderer.Renderer()),
-        mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath, UserSettingsPath(mProject)),
+        mInput(Context(), mWindow.Get(), {}, &mControls),
         mAnimation(Context(), mRenderer.Renderer(), mAssetService.get(), mResolver, &mJobs),
         mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mAssetService.get(), mResolver,
+        mEditor(Context(), mImGui, mWindow, mRenderer, mWorldState.scene, mWorldState.prefab, mAssets, mAssetService.get(), mResolver,
             mProject, mJobs, mDesc.mEnableEditorLayout, mAnimation.Library()),
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO
-        mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+        mAudio(Context(), mProject.mSoundBankDir, mProjectResources.AudioDefaults(), mProject.mProjectSettingsPath,
             UserSettingsPath(mProject)),
     #endif
-        mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
-        mTerrainData(Context()),
-        mScript(Context(), mAssets, mResolver),
-        mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
-        mParticlesScript(mScript),
-    #if MIR_WITH_AUDIO
-        mAudioScript(mScript),
-    #endif
-        mInputScript(mScript),
-        mPhysicsScript(mScript),
-        mRendererScript(mScript),
-        mTerrainScript(mScript),
-        mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
-        mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
+        mSimulation(Context(), mProject, mJobs, mAssets, mResolver, mWorldState.particles,
+            mParticlesGpu, mRenderer.Rendering()),
+        mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
+        mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
-        mGameShell.SetControlsOptions(&mControlsOptions);
+        mWorldState.gameShell.SetControlsOptions(&mControlsOptions);
     #if MIR_WITH_AUDIO
-        mGameShell.SetAudioOptions(&mAudioOptions);
+        mWorldState.gameShell.SetAudioOptions(&mAudioOptions);
     #if MIR_WITH_EDITOR
         mEditor.SetAudio(&mEditorAudio);
     #endif
     #endif
     #if MIR_WITH_EDITOR
         mEditor.SetNonInteractive(mDesc.mNonInteractive);
+        mEditor.Get().SetSceneCatalog(mProject.mScenes, mProject.mStartupSceneId);
     #endif
 
         ReportUncookedGame(mProject, mAssets.Manifest());
@@ -227,12 +308,9 @@ namespace mir
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 
-        // Gate scene resources now; RevealWindow starts gameplay after the first view loads.
+        // Build the runtime before waiting for the first view it will display.
         if (!mDesc.mEnableEditorLayout)
-        {
-            mGateScenes = true;
-            mLoadingDrawer = mImGui.AddDrawer(DrawerGroup::Game, [this] { DrawLoadingOverlay(); });
-        }
+            PlayScene();
 
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
@@ -244,6 +322,8 @@ namespace mir
         {
             mSplash.screen.SetProgress("Loading scene assets...", 0.9f);
             mFirstView.emplace();
+            if (mRuntime)
+                SetPlayState(mRuntime->state.world, PlayState::Paused);
             mFirstViewStart = std::chrono::steady_clock::now();
         }
     }
@@ -252,10 +332,13 @@ namespace mir
     // modules before the scheduler, so a module's system pointers stay valid to the end
     App::~App()
     {
+        StopScene();
         SystemContext stopContext = MakeContext(0.0f);
-        mScheduler.Stop(stopContext);
+        mWorldState.scheduler.Stop(stopContext);
         MIR_LOG_INFO("App shut down");
     }
+
+    World *App::RuntimeWorld() { return mRuntime ? &mRuntime->state.world : nullptr; }
 
     bool App::RequestOpenProject(const std::string &requestedDir)
     {
@@ -282,37 +365,37 @@ namespace mir
 
     void App::NewScene(std::string name, bool incomplete)
     {
-        if (IsPlaying(mWorld))
+        if (IsPlaying(mWorldState.world))
         {
             MIR_LOG_WARN("App::NewScene: ignored while Play is running (Stop first)");
             return;
         }
 
         UnloadCurrentScene();
-        mScene.New(std::move(name), incomplete);
+        mWorldState.scene.New(std::move(name), incomplete);
         RunStage(Stage::SceneLoad);
     }
 
     bool App::SaveScene()
     {
-        if (IsPlaying(mWorld))
+        if (IsPlaying(mWorldState.world))
         {
             MIR_LOG_WARN("App::SaveScene: ignored while Play is running (Stop first)");
             return false;
         }
 
-        if (!mScene.IsBound())
+        if (!mWorldState.scene.IsBound())
         {
             if (!ConfirmBindUntitledScene())
             {
                 MIR_LOG_WARN("App::SaveScene: the untitled scene was not saved, '{}' is left as it is",
-                    mProject.mSceneDir.string());
+                    mWorldState.scene.SceneDir().string());
                 return false;
             }
-            mScene.Bind();
+            mWorldState.scene.Bind();
         }
 
-        const bool saved = mScene.Save(&mPrefab.Coordinator().Resolver());
+        const bool saved = mWorldState.scene.Save(&mWorldState.prefab.Coordinator().Resolver());
         if (saved)
             RunStage(Stage::SceneSaved);
         return saved;
@@ -320,45 +403,151 @@ namespace mir
 
     bool App::LoadScene()
     {
-        if (IsPlaying(mWorld))
+        return OpenScene(mOpenSceneId, false);
+    }
+
+#if MIR_WITH_EDITOR
+    void App::CreateScene(const std::string &id, const std::string &path, bool saveCurrent)
+    {
+        namespace fs = std::filesystem;
+        const auto fail = [this](std::string message)
+            {
+                MIR_LOG_WARN("Create Scene: {}", message);
+                mEditor.Get().SetSceneCreationError(std::move(message));
+            };
+        if (!IsEditing(mWorldState.world))
+            return;
+        if (id.empty() || id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") !=
+            std::string::npos)
+            return fail("Use letters, numbers, underscores or hyphens for the scene name.");
+
+        const fs::path relative = fs::u8path(path).lexically_normal();
+        if (relative.empty() || relative == "." || relative.has_root_path() || *relative.begin() == "..")
+            return fail("Choose a folder inside the game directory.");
+
+        std::error_code ec;
+        const fs::path root = fs::canonical(mProject.mRootDir, ec);
+        if (ec)
+            return fail("Could not resolve the game directory.");
+        const fs::path directory = root / relative;
+        const fs::path resolved = fs::weakly_canonical(directory, ec).lexically_relative(root);
+        if (ec || resolved.empty() || resolved == "." || *resolved.begin() == "..")
+            return fail("Choose a folder inside the game directory.");
+
+        const fs::path manifestPath = root / kGameManifestFileName;
+        auto manifest = ReadJsonFile(manifestPath);
+        if (!manifest || !manifest->is_object())
+            return fail("Could not read game.json.");
+
+        if (!manifest->contains("scenes"))
+        {
+            const auto startup = mProject.mSceneDir.lexically_relative(mProject.mRootDir);
+            if (startup.empty() || startup == "." || *startup.begin() == "..")
+                return fail("Move the startup scene inside the game directory before registering more scenes.");
+            (*manifest)["startupScene"] = mProject.mStartupSceneId;
+            (*manifest)["scenes"] = nlohmann::json::array({
+                { { "id", mProject.mStartupSceneId },{ "path", startup.generic_string() } }
+                });
+        }
+        auto &scenes = (*manifest)["scenes"];
+        if (!scenes.is_array())
+            return fail("The scene catalog in game.json is invalid.");
+        for (const auto &entry : scenes)
+        {
+            if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string() ||
+                !entry.contains("path") || !entry["path"].is_string())
+                return fail("The scene catalog in game.json is invalid.");
+            if (entry["id"] == id)
+                return fail("That scene name is already registered.");
+            if (fs::u8path(entry["path"].get<std::string>()).lexically_normal() == relative)
+                return fail("That folder is already registered.");
+        }
+
+        if (fs::exists(directory, ec) || ec)
+            return fail("Choose a new folder. Existing folders are kept intact.");
+        if (saveCurrent && !SaveScene())
+            return fail("Could not save the current scene.");
+        if (!fs::is_regular_file(SceneManifestPath(mProject.mSceneDir), ec))
+            return fail("Save the startup scene before creating another scene.");
+
+        fs::create_directories(directory.parent_path(), ec);
+        if (ec || !fs::create_directory(directory, ec))
+            return fail("Could not create the new scene folder.");
+
+        const auto utf8Path = relative.generic_u8string();
+        scenes.push_back({ { "id", id },{ "path", std::string(utf8Path.begin(), utf8Path.end()) } });
+        if (!mir::SaveScene(mWorldState.world, directory, mir::NewScene(id), nullptr) ||
+            !WriteJsonFile(manifestPath, *manifest))
+        {
+            fs::remove(SceneManifestPath(directory), ec);
+            fs::remove(directory / "entities", ec);
+            fs::remove(directory, ec);
+            return fail("Could not write the new scene or update game.json.");
+        }
+
+        mProject.mScenes.push_back({ id, mProject.mRootDir / relative });
+        mEditor.Get().SetSceneCatalog(mProject.mScenes, mOpenSceneId);
+        OpenScene(id, false);
+    }
+#endif
+
+    bool App::OpenScene(const std::string &id, bool saveCurrent)
+    {
+        if (IsPlaying(mWorldState.world))
         {
             MIR_LOG_WARN("App::LoadScene: ignored while Play is running (Stop first)");
             return false;
         }
 
-        if (!std::filesystem::exists(SceneManifestPath(mProject.mSceneDir)))
+        const auto target = std::ranges::find(mProject.mScenes, id, &ProjectScene::mId);
+        if (target == mProject.mScenes.end())
+            return false;
+        const auto &directory = target->mDirectory;
+        if (!std::filesystem::exists(SceneManifestPath(directory)))
         {
-            MIR_LOG_ERROR("App::LoadScene: no {} in '{}'", kSceneManifestFileName, mProject.mSceneDir.string());
+            MIR_LOG_ERROR("App::LoadScene: no {} in '{}'", kSceneManifestFileName, directory.string());
             return false;
         }
 
         // probed before unloading, so refusing keeps the current scene intact
-        const SceneProbe probe = ProbeScene(mProject.mSceneDir);
-        switch (ChooseSceneLoad(probe, false))
+        const SceneProbe probe = ProbeScene(directory);
+        const SceneLoadChoice choice = ChooseSceneLoad(probe, directory, false);
+        switch (choice)
         {
         case SceneLoadChoice::Refuse:
             MIR_LOG_WARN("App::LoadScene: kept the current scene over the broken one in '{}'",
-                mProject.mSceneDir.string());
+                directory.string());
             return false;
         case SceneLoadChoice::StartEmpty:
-            NewScene("untitled", true);
-            return true;
         case SceneLoadChoice::Load:
             break;
         }
 
-        ReplaceSceneFromDisk(!probe.Ok());
+        if (saveCurrent && !SaveScene())
+            return false;
+
+        UnloadCurrentScene();
+        mWorldState.scene.SetSceneDir(directory);
+        mOpenSceneId = id;
+    #if MIR_WITH_EDITOR
+        mEditor.Get().SetOpenSceneId(id);
+    #endif
+        if (choice == SceneLoadChoice::StartEmpty)
+            mWorldState.scene.New("untitled", true);
+        else
+            mWorldState.scene.LoadFromDisk(&mWorldState.prefab.Coordinator().Resolver(), !probe.Ok());
+        RunStage(Stage::SceneLoad);
         return true;
     }
 
     void App::ReplaceSceneFromDisk(bool incomplete)
     {
         UnloadCurrentScene();
-        mScene.LoadFromDisk(&mPrefab.Coordinator().Resolver(), incomplete);
+        mWorldState.scene.LoadFromDisk(&mWorldState.prefab.Coordinator().Resolver(), incomplete);
         RunStage(Stage::SceneLoad);
     }
 
-    App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const
+    App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, const std::filesystem::path &directory, bool atStartup) const
     {
         if (probe.Ok())
             return SceneLoadChoice::Load;
@@ -368,7 +557,7 @@ namespace mir
             return SceneLoadChoice::Refuse;
 
         const std::string refuse = atStartup ? "Choose No to quit." : "Choose No to keep the current scene.";
-        const std::string manifest = SceneManifestPath(mProject.mSceneDir).string();
+        const std::string manifest = SceneManifestPath(directory).string();
 
         if (!probe.mManifestError.empty())
         {
@@ -388,7 +577,7 @@ namespace mir
 
     bool App::ConfirmBindUntitledScene() const
     {
-        const std::string sceneDir = mProject.mSceneDir.string();
+        const std::string sceneDir = mWorldState.scene.SceneDir().string();
         const std::string message = "This scene is untitled. It was started empty in place of the scene in " +
             sceneDir + ", which could not be read.\n\nSave it there? That replaces " +
             std::string(kSceneManifestFileName) + " and every entity and instance file in " + sceneDir +
@@ -399,58 +588,281 @@ namespace mir
 
     void App::PlayScene()
     {
-        if (IsPlaying(mWorld))
+        if (IsPlaying(mWorldState.world))
             return;
 
-        // before the snapshot: the prefabs commit and freeze, so it holds what Play runs
-        RunStage(Stage::PlayBegin);
-        mScene.CaptureForPlay(&mPrefab.Coordinator().Resolver());
-
-        SetPlayState(mWorld, PlayState::Running);
-        SetEngineMode(mWorld, EngineMode::Play);
+        // Commit prefab edits before copying the live authoring scene into Play.
+        PrefabCoordinator &prefabs = mWorldState.prefab.Coordinator();
+        prefabs.Commit(mWorldState.world);
+        prefabs.SetFrozen(true);
+    #if MIR_WITH_EDITOR
+        mEditor.PreparePlay();
+    #endif
+        try
+        {
+            mRuntime = std::make_unique<RuntimeSession>(*this);
+            mRuntime->Begin(0.0, 0);
+            if (mWorldState.scheduler.Started())
+            {
+                SystemContext start = MakeRuntimeContext(0.0f);
+                mRuntime->state.scheduler.Start(start);
+            }
+        }
+        catch (const std::exception &error)
+        {
+            // A standalone game has nothing to fall back to. The editor stays open so the unsaved scene survives.
+            if (!mDesc.mEnableEditorLayout)
+                throw;
+            MIR_LOG_ERROR("Play could not start: {}", error.what());
+            mSceneLoader.Cancel();
+            if (mRuntime)
+            {
+                // The stages that already ran get their matching end, then the whole runtime World goes.
+                try
+                {
+                    StopRuntimeStages();
+                }
+                catch (const std::exception &stopError)
+                {
+                    MIR_LOG_ERROR("Play could not stop cleanly after a failed start: {}", stopError.what());
+                }
+                mRuntime.reset();
+            }
+        #if MIR_WITH_EDITOR
+            mEditor.FinishPlay();
+        #endif
+            prefabs.SetFrozen(false);
+            return;
+        }
+        SetPlayState(mWorldState.world, PlayState::Running);
+        SetEngineMode(mWorldState.world, EngineMode::Play);
+        mRenderer.ActivateWorld(mRuntime->rendering.get());
+        mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mImGui.SetInputWorld(&mRuntime->state.world);
+    #if MIR_WITH_EDITOR
+        mEditor.SetPlayWorld(&mRuntime->state.world);
+    #endif
     }
 
     void App::StopScene()
     {
-        if (!IsPlaying(mWorld))
+        mSceneLoader.Cancel();
+        if (!IsPlaying(mWorldState.world))
             return;
 
-        // Play's entities fire their OnRemove as the restore destroys them; the GPU caches,
-        // keyed by asset, stay for the restored scene
-        RunStage(Stage::PlayEnd);
-        mScene.RestoreFromPlay(&mPrefab.Coordinator().Resolver());
+        StopRuntimeStages();
 
-        SetEngineMode(mWorld, EngineMode::Edit);
-        SetPlayState(mWorld, PlayState::Running);
+    #if MIR_WITH_EDITOR
+        mEditor.SetPlayWorld(nullptr);
+    #endif
+        mGameUIImGui.ActivateWorld(nullptr, nullptr);
+        mImGui.SetInputWorld(nullptr);
+        mRenderer.ActivateWorld(nullptr);
+        mRuntime.reset();
 
-        // terrain starts checking a release published during Play
-        RunStage(Stage::SceneLoad);
+    #if MIR_WITH_EDITOR
+        mEditor.FinishPlay();
+    #endif
+        mWorldState.prefab.Coordinator().SetFrozen(false);
+
+        SetEngineMode(mWorldState.world, EngineMode::Edit);
+        SetPlayState(mWorldState.world, PlayState::Running);
+    }
+
+    void App::StopRuntimeStages()
+    {
+        SystemContext runtimeContext = MakeRuntimeContext(0.0f);
+        if (mRuntime->state.scheduler.Started())
+            mRuntime->state.scheduler.RunStage(Stage::PlayEnd, runtimeContext);
+        const auto instances = mRuntime->state.scene.Scenes().Instances();
+        for (size_t i = 0; i < instances.size(); ++i)
+            UnloadRuntimeScene(instances[i], i + 1 != instances.size());
+        if (instances.empty()) mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+        mRuntime->state.scheduler.Stop(runtimeContext);
+    }
+
+    bool App::SwapScene(const std::string &id)
+    {
+        if (!mRuntime)
+            return false;
+
+        const auto target = std::ranges::find(mProject.mScenes, id, &ProjectScene::mId);
+        if (target == mProject.mScenes.end())
+        {
+            MIR_LOG_ERROR("Scene swap: unknown scene ID '{}'", id);
+            return false;
+        }
+
+        mRuntime->pendingPrimary = kOwnedBySession;
+        mSceneLoader.Request(id, target->mDirectory, mRuntime->session);
+        return true;
+    }
+
+    void App::PollSceneLoad()
+    {
+        if (!mRuntime || mWindow.Get().ShouldClose())
+        {
+            mSceneLoader.Cancel();
+            return;
+        }
+        if (const auto completed = mSceneLoader.TakeReady(mRuntime->session))
+            ActivateScene(*completed);
+        for (const auto &completed : mSceneLoader.TakeReadyAdditive(mRuntime->session))
+        {
+            if (!ActivateScene(completed) && mRuntime->pendingPrimary == completed.instance)
+                mRuntime->pendingPrimary = kOwnedBySession;
+        }
+    }
+
+    bool App::ActivateScene(const SceneLoadCompletion &completed)
+    {
+        if (!mRuntime || completed.source != mRuntime->session)
+            return false;
+        const std::string &id = completed.id;
+        const SceneProbe &probe = completed.prepared.probe;
+        if (!completed.error.empty())
+        {
+            MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared ({})", id, completed.error);
+            return false;
+        }
+        if (!probe.Ok())
+        {
+            MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared ({}, {} missing files)", id,
+                probe.mManifestError, MissingFileCount(probe));
+            return false;
+        }
+
+        World &world = mRuntime->state.world;
+        LoadedScene prepared;
+        if (completed.instance != kOwnedBySession) prepared.mInstanceId = completed.instance;
+        try
+        {
+            prepared = mir::LoadPreparedScene(world, completed.prepared,
+                &mRuntime->state.prefab.Coordinator().Resolver(), prepared.mInstanceId);
+            if (!prepared.mComplete)
+            {
+                mir::UnloadScene(world, prepared);
+                world.ClearSceneResources(prepared.mInstanceId);
+                MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared completely", id);
+                return false;
+            }
+        }
+        catch (const std::exception &error)
+        {
+            mir::UnloadScene(world, prepared);
+            world.ClearSceneResources(prepared.mInstanceId);
+            MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared ({})", id, error.what());
+            return false;
+        }
+
+        const auto instance = prepared.mInstanceId;
+        if (completed.instance == kOwnedBySession)
+        {
+            mSceneLoader.Cancel();
+            mRuntime->pendingPrimary = kOwnedBySession;
+            const auto instances = mRuntime->state.scene.Scenes().Instances();
+            for (const auto outgoing : instances) UnloadRuntimeScene(outgoing);
+            mRuntime->state.scene.ReplacePrimaryScene(std::move(prepared), completed.directory, id);
+        }
+        else mRuntime->state.scene.Add(std::move(prepared), completed.directory, id);
+        SystemContext loadedContext = MakeRuntimeContext(0.0f);
+        loadedContext.sceneInstance = instance;
+        loadedContext.sceneSwapped = true;
+        mRuntime->state.scheduler.RunStage(Stage::SceneLoad, loadedContext);
+        if (mRuntime->pendingPrimary == instance) SetPrimaryScene(instance);
+        mRenderer.ActivateWorld(mRuntime->rendering.get());
+        mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mImGui.SetInputWorld(&mRuntime->state.world);
+    #if MIR_WITH_EDITOR
+        mEditor.SetPlayWorld(&mRuntime->state.world);
+    #endif
+        MIR_LOG_INFO("Scene swap: activated '{}'", id);
+        return true;
+    }
+
+    bool App::LoadAdditiveScene(const AdditiveSceneRequest &request)
+    {
+        if (!mRuntime || request.instance == kOwnedBySession ||
+            mRuntime->state.scene.Scenes().Find(request.instance) != nullptr ||
+            mSceneLoader.HasAdditive(request.instance))
+            return false;
+        const auto target = std::ranges::find(mProject.mScenes, request.id, &ProjectScene::mId);
+        if (target == mProject.mScenes.end())
+        {
+            MIR_LOG_ERROR("Additive scene: unknown scene ID '{}'", request.id);
+            return false;
+        }
+        mSceneLoader.RequestAdditive(request.id, target->mDirectory, mRuntime->session, request.instance);
+        return true;
+    }
+
+    void App::RefreshPrimaryScene()
+    {
+        mRuntime->state.prefab.Coordinator().Bind(mRuntime->state.scene.Scene());
+        mRenderer.ActivateWorld(mRuntime->rendering.get());
+    }
+
+    bool App::SetPrimaryScene(SceneInstanceId instance)
+    {
+        if (!mRuntime) return false;
+        if (mSceneLoader.HasAdditive(instance))
+        {
+            mRuntime->pendingPrimary = instance;
+            return true;
+        }
+        if (!mRuntime->state.scene.SetPrimary(instance)) return false;
+        mRuntime->pendingPrimary = kOwnedBySession;
+        RefreshPrimaryScene();
+        return true;
+    }
+
+    bool App::UnloadRuntimeScene(SceneInstanceId instance, bool partial)
+    {
+        if (!mRuntime) return false;
+        const bool pending = mSceneLoader.HasAdditive(instance);
+        mSceneLoader.Cancel(instance);
+        if (mRuntime->pendingPrimary == instance) mRuntime->pendingPrimary = kOwnedBySession;
+        if (mRuntime->state.scene.Scenes().Find(instance) == nullptr) return pending;
+        SystemContext context = MakeRuntimeContext(0.0f);
+        context.sceneInstance = instance;
+        context.sceneSwapped = partial;
+        mRuntime->state.scheduler.RunStage(Stage::SceneEnd, context);
+        mRuntime->state.scene.Remove(instance);
+        mRuntime->state.scheduler.RunStage(Stage::SceneUnload, context);
+    #if MIR_WITH_EDITOR
+        mEditor.ClearPlayHistory();
+    #endif
+        RefreshPrimaryScene();
+        return true;
     }
 
     void App::TogglePause()
     {
-        if (!IsPlaying(mWorld))
+        if (!IsPlaying(mWorldState.world))
             return;
 
-        SetPlayState(mWorld, IsPaused(mWorld) ? PlayState::Running : PlayState::Paused);
+        const PlayState state = IsPaused(mWorldState.world) ? PlayState::Running : PlayState::Paused;
+        SetPlayState(mWorldState.world, state);
+        SetPlayState(mRuntime->state.world, state);
     }
 
     bool App::AwaitSceneResources()
     {
-        SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        WorldState &active = mRuntime ? mRuntime->state : mWorldState;
+        SceneLoadGroup &group = active.world.Resource<SceneLoadGroup>();
         mSceneGated = true;
         // The game UI stays off while the scene prepares, so nothing it draws can be clicked, and what is requested
         // meanwhile is dropped. A request made before the wait is kept.
-        mGameUI.SetSuspended(true);
-        RequestQueue &requests = mWorld.Resource<RequestQueue>();
+        active.gameUI.SetSuspended(true);
+        RequestQueue &requests = active.world.Resource<RequestQueue>();
         RequestQueue::Held held = requests.Hold();
         const auto finish = [&]
-        {
-            mSceneGated = false;
-            mGameUI.SetSuspended(false);
-            if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
-                MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
-        };
+            {
+                mSceneGated = false;
+                active.gameUI.SetSuspended(false);
+                if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
+                    MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
+            };
         uint64_t frames = 0;
         // Wait for resources without starting gameplay. Background I/O sets the pace, so a limited run is bound
         // by time and not by its frame limit.
@@ -467,8 +879,8 @@ namespace mir
             if (mAssetService)
                 mAssetService->DrainCompletions();
             mImGui.RunUI();
-            SystemContext context = MakeContext(0.0f);
-            mScheduler.UpdateLoading(context);
+            SystemContext context = mRuntime ? MakeRuntimeContext(0.0f) : MakeContext(0.0f);
+            active.scheduler.UpdateLoading(context);
             group.EndFrame();
             ++frames;
             if (!group.Ready() && mDesc.mMaxFrames != 0 &&
@@ -490,7 +902,8 @@ namespace mir
     {
         if (!mSceneGated)
             return;
-        const SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        const WorldState &active = mRuntime ? mRuntime->state : mWorldState;
+        const SceneLoadGroup &group = active.world.Resource<SceneLoadGroup>();
         const ImGuiViewport *viewport = ImGui::GetMainViewport();
         ImDrawList *draw = ImGui::GetForegroundDrawList();
         const ImVec2 min = viewport->Pos, max(min.x + viewport->Size.x, min.y + viewport->Size.y);
@@ -510,11 +923,45 @@ namespace mir
 
     void App::ApplyRequests()
     {
-        RequestQueue &queue = mWorld.Resource<RequestQueue>();
+        RequestQueue &queue = mWorldState.world.Resource<RequestQueue>();
         if (const std::optional<std::string> dir = queue.TakeOpenProject(); dir.has_value())
             RequestOpenProject(*dir);
 
-        for (const Request request : queue.Take())
+        if (const auto scene = queue.TakeOpenScene())
+        {
+        #if MIR_WITH_EDITOR
+            if (!scene->newScenePath.empty())
+                CreateScene(scene->id, scene->newScenePath, scene->saveCurrent);
+            else
+            #endif
+                OpenScene(scene->id, scene->saveCurrent);
+        }
+
+        std::vector<Request> actions = queue.Take();
+        std::optional<std::string> nextScene;
+        std::vector<AdditiveSceneRequest> additiveScenes;
+        std::vector<SceneInstanceId> unloadScenes;
+        std::optional<SceneInstanceId> primaryScene;
+        SceneInstanceId sourceSession = kOwnedBySession;
+        if (mRuntime)
+        {
+            sourceSession = mRuntime->session;
+            RequestQueue &runtimeQueue = mRuntime->state.world.Resource<RequestQueue>();
+            nextScene = runtimeQueue.TakeNextScene();
+            additiveScenes = runtimeQueue.TakeAdditiveScenes();
+            unloadScenes = runtimeQueue.TakeUnloadScenes();
+            primaryScene = runtimeQueue.TakePrimaryScene();
+            std::vector<Request> runtimeActions = runtimeQueue.Take();
+            actions.insert(actions.end(), runtimeActions.begin(), runtimeActions.end());
+            // A Lua failure ends Play in the editor so it is fixed before it hides behind later frames. A
+            // standalone game has nowhere to return to, so it logs the error and keeps running.
+            if (mDesc.mEnableEditorLayout && mRuntime->simulation.script.Host().ErrorCount() != 0)
+            {
+                MIR_LOG_WARN("Play stopped: a script failed, see the error above");
+                actions.push_back(Request::Stop);
+            }
+        }
+        for (const Request request : actions)
         {
             switch (request)
             {
@@ -525,11 +972,11 @@ namespace mir
                 StopScene();
                 break;
             case Request::Pause:
-                if (IsSimulating(mWorld))
+                if (IsSimulating(mWorldState.world))
                     TogglePause();
                 break;
             case Request::Resume:
-                if (IsPaused(mWorld))
+                if (IsPaused(mWorldState.world))
                     TogglePause();
                 break;
             case Request::NewScene:
@@ -544,7 +991,7 @@ namespace mir
             case Request::ApplyImportedAssets:
             #if MIR_WITH_EDITOR
                 // the import may have been applied or dropped since it asked
-                if (mEditor.Import().PendingApply() && IsEditing(mWorld))
+                if (mEditor.Import().PendingApply() && IsEditing(mWorldState.world))
                     ApplyImportedAssets();
             #endif
                 break;
@@ -553,6 +1000,14 @@ namespace mir
                 break;
             }
         }
+        if (mRuntime && !mWindow.Get().ShouldClose() && sourceSession == mRuntime->session)
+        {
+            for (const auto &request : additiveScenes) LoadAdditiveScene(request);
+            for (const auto instance : unloadScenes) UnloadRuntimeScene(instance);
+            if (primaryScene) SetPrimaryScene(*primaryScene);
+            if (nextScene) SwapScene(*nextScene);
+        }
+        PollSceneLoad();
     }
 
     void App::ToggleFullscreen()
@@ -586,14 +1041,14 @@ namespace mir
 
     void App::UnloadCurrentScene()
     {
-        mScene.Unload();
+        mWorldState.scene.Unload();
         RunStage(Stage::SceneUnload);
     }
 
     void App::RunStage(Stage stage)
     {
         SystemContext context = MakeContext(0.0f);
-        mScheduler.RunStage(stage, context);
+        mWorldState.scheduler.RunStage(stage, context);
     }
 
     void App::LoadProjectScene()
@@ -604,17 +1059,17 @@ namespace mir
         if (!std::filesystem::exists(manifest, ec))
         {
             MIR_LOG_INFO("No {} in '{}', starting with an empty scene", kSceneManifestFileName, mProject.mSceneDir.string());
-            mScene.New("untitled");
+            mWorldState.scene.New("untitled");
             RunStage(Stage::SceneLoad);
             return;
         }
 
         const SceneProbe probe = ProbeScene(mProject.mSceneDir);
-        switch (ChooseSceneLoad(probe, true))
+        switch (ChooseSceneLoad(probe, mWorldState.scene.SceneDir(), true))
         {
         case SceneLoadChoice::StartEmpty:
             MIR_LOG_WARN("Starting with an untitled empty scene, the corrupt '{}' is left as it is", manifest.string());
-            mScene.New("untitled", true);
+            mWorldState.scene.New("untitled", true);
             RunStage(Stage::SceneLoad);
             return;
         case SceneLoadChoice::Load:
@@ -643,7 +1098,7 @@ namespace mir
 
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - mFirstViewStart).count();
         const size_t before = mFirstView->Pending();
-        const StartupGate::Result result = mFirstView->Update(mTerrain.Runtime().AreasLoading(), seconds);
+        const StartupGate::Result result = mFirstView->Update((mRuntime ? mRuntime->terrain : mTerrain).Runtime().AreasLoading(), seconds);
         if (result == StartupGate::Result::Waiting)
         {
             if (mFirstView->Pending() != before)
@@ -660,16 +1115,14 @@ namespace mir
             MIR_LOG_WARN("Opening the window with {} areas still loading: {} after {:.2f} s", mFirstView->Pending(),
                 result == StartupGate::Result::Stalled ? "no progress" : "time limit reached", seconds);
 
-        mFirstView.reset();
         RevealWindow();
     }
 
     void App::RevealWindow()
     {
-        //without the editor there is no Play button
-        if (!mDesc.mEnableEditorLayout)
-            PlayScene();
-
+        if (mFirstView && mRuntime)
+            SetPlayState(mRuntime->state.world, PlayState::Running);
+        mFirstView.reset();
         // Only now is startup actually done - close explicitly rather than
         // leaning on WS_EX_TOPMOST z-order to hide the swap.
         if (!mDesc.mHidden) mWindow.Get().Show();
@@ -692,21 +1145,33 @@ namespace mir
 
     ModuleContext App::Context()
     {
-        return ModuleContext{ mWorld, mScheduler };
+        return mWorldState.Context();
     }
 
     SystemContext App::MakeContext(float dt)
     {
-        return SystemContext{ mWorld, mCommands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
+        return SystemContext{ mWorldState.world, mWorldState.commands, dt, mElapsed, mFrame,
+            mFixedTimestep.Alpha(), mWorldState.scene.Scene().mInstanceId };
+    }
+
+    SystemContext App::MakeRuntimeContext(float dt)
+    {
+        return mRuntime->MakeContext(dt, mElapsed, mFrame, mFixedTimestep.Alpha());
     }
 
     void App::Run()
     {
-        if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready() && !AwaitSceneResources())
+        if (mGateScenes && !(mRuntime ? mRuntime->state.world : mWorldState.world).Resource<SceneLoadGroup>().Ready() &&
+            !AwaitSceneResources())
             return;
 
         SystemContext startContext = MakeContext(0.0f);
-        mScheduler.Start(startContext);
+        mWorldState.scheduler.Start(startContext);
+        if (mRuntime)
+        {
+            SystemContext runtimeStart = MakeRuntimeContext(0.0f);
+            mRuntime->state.scheduler.Start(runtimeStart);
+        }
 
         auto previous = std::chrono::steady_clock::now();
 
@@ -731,8 +1196,9 @@ namespace mir
             ApplyRequests();
             if (mAssetService)
                 mAssetService->DrainCompletions();
+            mProjectResources.Refresh();
 
-            if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready())
+            if (mGateScenes && !(mRuntime ? mRuntime->state.world : mWorldState.world).Resource<SceneLoadGroup>().Ready())
             {
                 mElapsed -= dt;
                 if (!AwaitSceneResources())
@@ -742,7 +1208,12 @@ namespace mir
             }
 
             SystemContext frameContext = MakeContext(dt);
-            mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
+            mWorldState.scheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
+            if (mRuntime)
+            {
+                SystemContext runtimeFrame = MakeRuntimeContext(dt);
+                mRuntime->state.scheduler.RunFrameSlot(FrameSlot::FrameBegin, runtimeFrame);
+            }
 
             mImGui.RunUI();
 
@@ -750,13 +1221,14 @@ namespace mir
             // themselves, as ScriptSystem does
             const uint32_t fixedSteps = mFixedTimestep.Advance(dt);
 
-            SystemContext context = MakeContext(dt);
+            SystemContext context = mRuntime ? MakeRuntimeContext(dt) : MakeContext(dt);
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
                 mRenderer.Renderer().CaptureNextFrame(mDesc.mCapturePath);
-            mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
-            mWorld.Resource<SceneLoadGroup>().EndFrame();
+            WorldState &active = mRuntime ? mRuntime->state : mWorldState;
+            active.scheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
+            active.world.Resource<SceneLoadGroup>().EndFrame();
 
-            if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
+            if (active.world.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();
 
             ++mFrame;

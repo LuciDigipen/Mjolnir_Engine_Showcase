@@ -14,6 +14,7 @@
 #include <renderer/RenderSettings.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -25,7 +26,7 @@ namespace mir
     public:
 
         void Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath, bool &showInputSettings,
-            PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing, const VulkanRenderer *renderer = nullptr);
+            PhysicsLayerTable *sharedLayers, IEditorAudio *audio, bool editing, const VulkanRenderer *renderer = nullptr);
 
         // The editor forwards these to the renderer; the panel only reads it.
         bool ShowGiVolume() const { return mShowGiVolume; }
@@ -33,44 +34,52 @@ namespace mir
 
         void OnHidden()
         {
-            mLayersLoaded = false;
             mLayersStatus.clear();
-            mDraftLoaded = false;
             mRenderingStatusMessage.clear();
+            mSsgiEdit.reset();
+            mDdgiEdit.reset();
+            mLayerNameEdit.reset();
+            mLayerNameProblem.clear();
             mIdeDraftLoaded = false;
             mIdeStatusMessage.clear();
-            mAudioDraftLoaded = false;
             mAudioStatus.clear();
         }
 
     private:
-        void DrawRendering(RenderSettings &renderSettings, RenderSettings &draftRenderSettings,
-            const std::filesystem::path &savePath);
+        void DrawRendering(RenderSettings &renderSettings, const std::filesystem::path &savePath);
         void DrawAudio(IEditorAudio &audio, bool editing);
         void DrawExternalTools(const std::filesystem::path &savePath);
-        void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsLayerUpdate *layerUpdate, bool editing);
-        void LoadLayers(const std::filesystem::path &savePath);
+        void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsLayerTable *sharedLayers, bool editing);
+        void ReloadLayers(const std::filesystem::path &savePath, PhysicsLayerTable &sharedLayers);
 
         std::string mRenderingStatusMessage;
+        // What Save wrote, so the message clears on the next edit. Nothing else reads it.
+        RenderSettings mRenderingSavedCopy;
+        // The SSGI value being typed, kept only while one of its widgets is active so an invalid value never
+        // reaches the shared settings.
+        std::optional<SsgiSettings> mSsgiEdit;
+        // The same for the DDGI value, whose widgets can also pass through a value it rejects.
+        std::optional<DdgiSettings> mDdgiEdit;
         const VulkanRenderer *mRenderer = nullptr;
         float mGiPadding = 4.0f;
         std::string mGiFitStatus;
         bool mShowGiVolume = false;
         bool mGiSceneBoundsRequested = false;
-        RenderSettings mMessageSnapshot;
 
-        bool mDraftLoaded = false;
-        RenderSettings mDraftRenderSettings;
+        // The layer name being typed, by slot, kept while its field is active. A name another layer already
+        // uses reaches the shared table only once it is valid.
+        struct LayerNameEdit
+        {
+            int slot = 0;
+            std::string text;
+        };
+        std::optional<LayerNameEdit> mLayerNameEdit;
+        std::string mLayerNameProblem;
 
-        bool mLayersLoaded = false;
-        PhysicsLayerTable mDraftLayers;
-        char mLayerNames[kPhysicsLayerCount][64]{};
         std::string mLayersStatus;
 
-        bool mAudioDraftLoaded = false;
-        EditorAudioLevels mDraftAudio;
         std::string mAudioStatus;
-        EditorAudioLevels mAudioStatusSnapshot;
+        EditorAudioLevels mAudioSavedCopy;
 
         std::string mIdeStatusMessage;
         IdeSettings mIdeMessageSnapshot;

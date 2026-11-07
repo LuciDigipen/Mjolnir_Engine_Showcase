@@ -45,7 +45,19 @@ namespace mir::build
 
     namespace
     {
-        
+        void RenameForCommit(const fs::path &from, const fs::path &to, std::error_code &ec)
+        {
+            constexpr int kAttempts = 31;
+            for (int attempt = 0; attempt < kAttempts; ++attempt)
+            {
+                fs::rename(from, to, ec);
+                if (!ec || (ec != std::errc::permission_denied && ec != std::errc::device_or_resource_busy) ||
+                    attempt + 1 == kAttempts)
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+
         constexpr int kReportWriteAttempts = 20;
         constexpr std::chrono::milliseconds kReportWriteRetryDelay{ 10 };
 
@@ -208,7 +220,7 @@ namespace mir::build
                 fs::remove(out, ec);
             else
             {
-                fs::rename(out, previous, ec);
+                RenameForCommit(out, previous, ec);
                 movedAside = !ec;
             }
             if (ec)
@@ -216,12 +228,12 @@ namespace mir::build
                     ec.message() + "); is the game still running from it?");
         }
 
-        fs::rename(staging, out, ec);
+        RenameForCommit(staging, out, ec);
         if (ec)
         {
             std::error_code ignored;
             if (movedAside)
-                fs::rename(previous, out, ignored);
+                RenameForCommit(previous, out, ignored);
             throw std::runtime_error("could not move the new build into " + PathText(out) + ": " + ec.message());
         }
 

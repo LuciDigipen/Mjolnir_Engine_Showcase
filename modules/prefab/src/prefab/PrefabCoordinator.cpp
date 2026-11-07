@@ -54,7 +54,7 @@ namespace mir
             FieldSize(FieldKind::EntityRef),
             FieldSize(FieldKind::Handle),
             FieldSize(FieldKind::String),
-        });
+            });
         static_assert(sizeof(FieldBuffer) >= kMaxFieldSize, "FieldBuffer must hold every FieldKind");
 
         using NodeIndex = std::map<PrefabNodeAddress, std::size_t>;
@@ -150,7 +150,9 @@ namespace mir
         bool NestsPrefab(const PrefabDocument &document, PrefabId id)
         {
             return std::any_of(document.mNodes.begin(), document.mNodes.end(), [id](const PrefabNode &node)
-                { return node.mKind == PrefabNodeKind::Prefab && node.mPrefab == id; });
+                {
+                    return node.mKind == PrefabNodeKind::Prefab && node.mPrefab == id;
+                });
         }
 
         void RecordFieldChange(std::vector<ComponentFieldChange> &changes, Entity entity, const ComponentOps &ops,
@@ -655,6 +657,13 @@ namespace mir
     }
 
     PrefabCoordinator::PrefabCoordinator() : mResolver(mRegistry, mCache) {}
+
+    void PrefabCoordinator::CopyPrefabDefinitionsFrom(const PrefabCoordinator &source)
+    {
+        mRegistry = source.mRegistry;
+        mCache = source.mCache;
+        mPendingDocuments.clear();
+    }
 
     bool PrefabCoordinator::SetDocument(const PrefabDocument &doc, std::vector<PrefabDiagnostic> *diagnostics)
     {

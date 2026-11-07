@@ -38,6 +38,9 @@ namespace mir
         // live instances; a removed ScriptRef that leaves one behind is a leak
         std::size_t InstanceCount() const;
 
+        // Lua failures since the host was made: a script that did not load or a callback that failed.
+        std::size_t ErrorCount() const;
+
         void CallOnStart(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef) override;
         void CallOnUpdate(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef,
                            float dt) override;
