@@ -14,6 +14,9 @@
 
 #include <cstdint>
 #include <fstream>
+#include <iterator>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -210,4 +213,88 @@ TEST_CASE("A template is compared with the editor and the profile", "[build-sett
 
     std::filesystem::remove(game.mEditorInfo);
     CHECK(HasWarning(CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo), "not compared"));
+}
+
+TEST_CASE("A build option choice is kept in project_settings.json, and Reset removes it", "[build-settings]")
+{
+    TempCheckout checkout;
+    const std::filesystem::path settings = checkout.Game().mProjectSettingsPath;
+    checkout.Write(settings, R"({ "rendering": { "rayTracing": true }, "build": { "profile": "development" } })");
+
+    REQUIRE(WriteGameBuildChoice(settings, "dlss", false));
+    REQUIRE(WriteGameBuildChoice(settings, "audio", true));
+    CHECK(checkout.Read(settings) == json::parse(R"({ "rendering": { "rayTracing": true },
+        "build": { "profile": "development", "gameBuildOptions": { "dlss": false, "audio": true } } })"));
+    CHECK(ReadGameBuildChoices(settings).mOn == std::map<std::string, bool, std::less<>>{ { "audio", true }, { "dlss", false } });
+
+    // the last Reset leaves no empty section
+    REQUIRE(WriteGameBuildChoice(settings, "dlss", std::nullopt));
+    CHECK(checkout.Read(settings).at("build").at("gameBuildOptions") == json{ { "audio", true } });
+    REQUIRE(WriteGameBuildChoice(settings, "audio", std::nullopt));
+    CHECK(checkout.Read(settings) ==
+        json::parse(R"({ "rendering": { "rayTracing": true }, "build": { "profile": "development" } })"));
+
+    // a Reset adds nothing to a file without choices, and clears a section that is not an object
+    checkout.Write(settings, R"({ "rendering": {} })");
+    REQUIRE(WriteGameBuildChoice(settings, "rtxgi", std::nullopt));
+    CHECK(checkout.Read(settings) == json::parse(R"({ "rendering": {} })"));
+    checkout.Write(settings, R"({ "build": { "profile": "release", "gameBuildOptions": [ "dlss" ] } })");
+    REQUIRE(WriteGameBuildChoice(settings, "dlss", std::nullopt));
+    CHECK(checkout.Read(settings) == json::parse(R"({ "build": { "profile": "release" } })"));
+
+    // a game without the file gets one; a file that is not JSON is left alone
+    std::filesystem::remove(settings);
+    REQUIRE(WriteGameBuildChoice(settings, "largeWorld", false));
+    CHECK(checkout.Read(settings) == json::parse(R"({ "build": { "gameBuildOptions": { "largeWorld": false } } })"));
+    checkout.Write(settings, "{ not json");
+    CHECK_FALSE(WriteGameBuildChoice(settings, "largeWorld", true));
+    std::ifstream in(settings, std::ios::binary);
+    CHECK(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()) == "{ not json");
+}
+
+TEST_CASE("A template is checked against the game's choices, and a chosen difference from the editor is not warned",
+    "[build-settings]")
+{
+    TempCheckout checkout;
+    const BuildGame game = checkout.Game();
+    const std::filesystem::path dir = checkout.root / "builds" / "game-build" / "release";
+    checkout.Write(dir / "MjolnirEngine.exe", "");
+    json built = Info(false, "1111111111aa", "Release", true);
+    built["dlss"] = true;
+    checkout.Write(dir / "game_build_info.json", built.dump());
+    checkout.Write(game.mEditorInfo, Info(true, "1111111111aa", "Debug", true).dump());
+
+    CHECK(HasWarning(CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo), "the editor with it OFF"));
+
+    GameBuildChoices choices;
+    choices.mOn = { { "dlss", true } };
+    CHECK(CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo, choices).mWarnings.empty());
+
+    choices.mOn = { { "dlss", true }, { "largeWorld", false } };
+    const GameBuildTemplateCheck chosen = CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo, choices);
+    REQUIRE(chosen.mWarnings.size() == 1);
+    CHECK(chosen.mWarnings[0] == "the game build template was built with MIR_LARGE_WORLD ON, but the game chooses it OFF");
+
+    // without the editor's, the choices are still compared
+    std::filesystem::remove(game.mEditorInfo);
+    const GameBuildTemplateCheck alone = CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo, choices);
+    CHECK(HasWarning(alone, "could not read the editor's"));
+    CHECK(HasWarning(alone, "MIR_LARGE_WORLD ON, but the game chooses it OFF"));
+}
+
+TEST_CASE("The options a compile changes are those the template has other than the choices and the editor",
+    "[build-settings]")
+{
+    const json editor = Info(true, "1111111111aa", "Debug", true);
+    json built = Info(false, "1111111111aa", "Release", true);
+    CHECK(ChangedGameBuildOptions(built, {}, editor).empty());
+
+    built["dlss"] = true;
+    GameBuildChoices choices;
+    choices.mOn = { { "audio", false } };
+    CHECK(ChangedGameBuildOptions(built, choices, editor) == std::vector<std::string>{ "Audio", "DLSS" });
+
+    // a template or editor that does not say is no change
+    CHECK(ChangedGameBuildOptions(json::object(), choices, editor).empty());
+    CHECK(ChangedGameBuildOptions(built, {}, json()).empty());
 }

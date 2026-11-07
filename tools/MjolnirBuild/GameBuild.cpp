@@ -62,6 +62,8 @@ namespace mir::build
             GameProject mProject;
             fs::path mGameBuildDir;
             Json mGameBuildInfo;
+            // project_settings.json's build.gameBuildOptions
+            GameBuildChoices mChoices;
             // MjolnirEngine.exe's name in the build
             std::string mExeName;
             fs::path mOutDir;
@@ -209,7 +211,7 @@ namespace mir::build
             return std::nullopt;
         }
 
-        // Warns where the template was built differently from the editor the game is made in
+        // Warns where the template was built differently from the game's choices, or the editor the game is made in
         void WarnAboutTemplate(const GameInputs &inputs, const fs::path &editorInfo, BuildReport &report)
         {
             std::error_code ec;
@@ -220,17 +222,19 @@ namespace mir::build
                 report.mWarnings.push_back("the game has SoundBanks, but the game build template was built with "
                                            "MIR_WITH_AUDIO OFF, so the packaged game plays no sound");
 
-            if (editorInfo.empty())
-                return;
-            const std::optional<Json> editor = ReadJsonFile(editorInfo);
-            if (!editor || !editor->is_object())
+            // the choices are compared even without the editor's
+            Json editor;
+            if (!editorInfo.empty())
             {
-                report.mWarnings.push_back("could not read the editor's " + PathText(editorInfo) +
-                    ", so the game build template was not compared with it");
-                return;
+                if (std::optional<Json> read = ReadJsonFile(editorInfo); read && read->is_object())
+                    editor = std::move(*read);
+                else
+                    report.mWarnings.push_back("could not read the editor's " + PathText(editorInfo) +
+                        ", so the game build template was not compared with it");
             }
 
-            for (const GameBuildInfoMismatch &mismatch : CompareGameBuildInfo(inputs.mGameBuildInfo, *editor))
+            for (const GameBuildInfoMismatch &mismatch :
+                CompareGameBuildInfo(inputs.mGameBuildInfo, editor, inputs.mChoices))
             {
                 if (!(silent && mismatch.mKey == "audio"))
                     report.mWarnings.push_back(mismatch.mMessage);
@@ -259,6 +263,7 @@ namespace mir::build
             inputs.mProject = LoadGameProject(inputs.mGameDir);
             inputs.mProject.mDir = "games/" + inputs.mDirName;
             ResolveAssetIdRoot(inputs.mProject);
+            inputs.mChoices = ReadGameBuildChoices(inputs.mProject.mProjectSettingsPath);
 
             // The package keeps this game.json, so a rooted path would still read from the checkout
             const std::optional<Json> manifest = ReadJsonFile(inputs.mGameDir / kGameManifestFileName);
@@ -494,6 +499,8 @@ namespace mir::build
                 inputs = ResolveGame(request);
                 report.mGame = inputs.mDirName;
                 report.mOutDir = inputs.mOutDir;
+                report.mWarnings.insert(
+                    report.mWarnings.end(), inputs.mChoices.mProblems.begin(), inputs.mChoices.mProblems.end());
                 if (!compile)
                 {
                     CheckTemplate(inputs, request, report);
@@ -501,7 +508,8 @@ namespace mir::build
                 }
 
                 // A bad output or template folder fails here, not after a compile
-                gameBuild = { inputs.mSourceRoot, request.mGameBuildPreset, inputs.mGameBuildDir, request.mEditorInfo };
+                gameBuild = { inputs.mSourceRoot, request.mGameBuildPreset, inputs.mGameBuildDir, request.mEditorInfo,
+                    inputs.mChoices };
                 if (const std::optional<std::string> problem = CheckGameBuildCompile(gameBuild, inputs.mOutDir))
                     throw BuildError(*problem);
                 return true;

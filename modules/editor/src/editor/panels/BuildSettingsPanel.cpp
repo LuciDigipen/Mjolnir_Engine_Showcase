@@ -1,8 +1,8 @@
 /**
  * @file BuildSettingsPanel.cpp
  * @author Quy Dong Ta
- * @brief The "Build Settings" window: profile, game build template and whether Build compiles it, output folder,
- *        Run after build, and Build.
+ * @brief The "Build Settings" window: profile, build options, game build template and whether Build compiles it,
+ *        output folder, Run after build, and Build.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -11,6 +11,7 @@
 
 #include <editortheme/EditorTheme.h>
 #include <project/GameBuildInfo.h>
+#include <serial/JsonFile.h>
 
 #include <imgui.h>
 
@@ -19,7 +20,9 @@
 #include <cfloat>
 #include <cstdio>
 #include <optional>
+#include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace mir
 {
@@ -54,6 +57,21 @@ namespace mir
             if (color)
                 ImGui::PopStyleColor();
         }
+
+        void Note(const std::string &text)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", text.c_str());
+            ImGui::PopStyleColor();
+        }
+
+        std::string Joined(const std::vector<std::string> &items)
+        {
+            std::string text;
+            for (std::size_t i = 0; i < items.size(); ++i)
+                text += (i == 0 ? "" : i + 1 == items.size() ? " and " : ", ") + items[i];
+            return text;
+        }
     }
 
     void BuildSettingsPanel::Load(EditorPreferences &preferences, const BuildGame &game)
@@ -62,9 +80,92 @@ namespace mir
         CopyText(mTemplatePath, TemplateText(preferences, mProfile));
         const auto output = preferences.buildOutputs.find(BuildOutputKey(game));
         CopyText(mOutputPath, output != preferences.buildOutputs.end() ? output->second : std::string());
+
+        mChoices = ReadGameBuildChoices(game.mProjectSettingsPath);
+        mChoicesReadAt = ImGui::GetTime();
+        const std::optional<nlohmann::json> editor = ReadJsonFile(game.mEditorInfo);
+        mEditorInfo = editor && editor->is_object() ? *editor : nlohmann::json();
+        std::error_code ec;
+        mHasSoundBanks = !game.mSoundBankDir.empty() && std::filesystem::is_directory(game.mSoundBankDir, ec) &&
+            !std::filesystem::is_empty(game.mSoundBankDir, ec);
+
         mStatusMessage.clear();
         mCheckedDir.clear();
         mLoaded = true;
+    }
+
+    void BuildSettingsPanel::SaveChoice(const BuildGame &game, std::string_view key, std::optional<bool> on)
+    {
+        if (!WriteGameBuildChoice(game.mProjectSettingsPath, key, on))
+        {
+            mStatusMessage = "Build option not saved - see log.";
+            return;
+        }
+        mChoices = ReadGameBuildChoices(game.mProjectSettingsPath);
+        mStatusMessage.clear();
+        // the template is checked against the choices
+        mCheckedDir.clear();
+    }
+
+    void BuildSettingsPanel::DrawOptions(const BuildGame &game, bool compile)
+    {
+        // a pull can change them while the window is open
+        if (ImGui::GetTime() - mChoicesReadAt > kRecheckSeconds)
+        {
+            mChoices = ReadGameBuildChoices(game.mProjectSettingsPath);
+            mChoicesReadAt = ImGui::GetTime();
+        }
+
+        ImGui::SeparatorText("Build options");
+        std::optional<bool> audio;
+        for (const GameBuildFeature &feature : kGameBuildFeatures)
+        {
+            const std::string key(feature.mKey);
+            const std::string label(feature.mLabel);
+            // copied, since saving reads the choices again
+            const auto found = mChoices.mOn.find(key);
+            const std::optional<bool> chosen =
+                found != mChoices.mOn.end() ? std::optional<bool>(found->second) : std::nullopt;
+            const std::optional<bool> editor = GameBuildInfoFlag(mEditorInfo, feature.mKey);
+            if (feature.mKey == "audio")
+                audio = chosen ? chosen : editor;
+
+            ImGui::PushID(key.c_str());
+            bool on = chosen.value_or(editor.value_or(false));
+            if (ImGui::Checkbox(label.c_str(), &on))
+                SaveChoice(game, key, on);
+            ImGui::SetItemTooltip("%s (%s)", std::string(feature.mAbout).c_str(), std::string(feature.mOption).c_str());
+
+            ImGui::SameLine();
+            if (!chosen)
+            {
+                ImGui::TextDisabled(editor ? "Editor Default" : "The editor's is unknown, so the preset decides");
+            }
+            else
+            {
+                if (editor && *editor != *chosen)
+                {
+                    ImGui::TextDisabled("the editor has %s %s", label.c_str(), *editor ? "ON" : "OFF");
+                    ImGui::SameLine();
+                }
+                if (ImGui::SmallButton("Reset"))
+                    SaveChoice(game, key, std::nullopt);
+                ImGui::SetItemTooltip(editor ? (*editor ? "Follow the editor again, which has it ON"
+                                                        : "Follow the editor again, which has it OFF")
+                                             : "Follow the editor again");
+            }
+            ImGui::PopID();
+        }
+
+        for (const std::string &problem : mChoices.mProblems)
+            Line(problem, EditorTheme::Color(StatusColor::Warning));
+        if (mHasSoundBanks && audio == false)
+            Line("the game has SoundBanks, which the packaged game cannot play with Audio OFF",
+                EditorTheme::Color(StatusColor::Warning));
+
+        Note("Saved in project_settings.json for the whole team. An option left alone follows the editor.");
+        if (!compile)
+            Note("They take effect when Build compiles the game build; until then the template is checked against them.");
     }
 
     void BuildSettingsPanel::DrawTemplateStatus(const std::filesystem::path &dir, const BuildGame &game, bool compile)
@@ -72,7 +173,7 @@ namespace mir
         const double now = ImGui::GetTime();
         if (dir != mCheckedDir || mProfile != mCheckedProfile || now - mCheckedAt > kRecheckSeconds)
         {
-            mCheck = CheckGameBuildTemplate(dir, mProfile, game.mEditorInfo);
+            mCheck = CheckGameBuildTemplate(dir, mProfile, game.mEditorInfo, mChoices);
             std::error_code ec;
             mTemplateMissing = !std::filesystem::exists(dir, ec) || std::filesystem::is_empty(dir, ec);
             mCheckedDir = dir;
@@ -110,11 +211,17 @@ namespace mir
             // the compile makes it match, so a mismatch now does not matter
             if (compile)
             {
-                ImGui::TextDisabled("Build compiles it again from the checkout first.");
+                const std::vector<std::string> changed = ChangedGameBuildOptions(mCheck.mInfo, mChoices, mEditorInfo);
+                if (changed.empty())
+                    ImGui::TextDisabled("Build compiles it again from the checkout first.");
+                else
+                    Note("Build compiles it again from the checkout first, with " + Joined(changed) +
+                        " changed, so it recompiles what they touch.");
                 return;
             }
             if (mCheck.mWarnings.empty())
-                Line("it matches the editor", EditorTheme::Color(ThemeColor::Success));
+                Line(mChoices.mOn.empty() ? "it matches the editor" : "it matches this game's options and the editor",
+                    EditorTheme::Color(ThemeColor::Success));
         }
         else
         {
@@ -287,6 +394,8 @@ namespace mir
         ImGui::TextDisabled(mProfile == BuildProfile::Development ? "Packages the game-debug build."
                                                                   : "Packages the game-release build.");
         ImGui::TextDisabled("Saved in project_settings.json, so the whole team builds the same way.");
+
+        DrawOptions(game, preferences.buildCompileGameBuild);
 
         ImGui::SeparatorText("Game build template");
         const std::string preset(GameBuildPreset(mProfile));

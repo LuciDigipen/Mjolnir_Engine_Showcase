@@ -453,12 +453,12 @@ namespace mir::build
         return std::nullopt;
     }
 
-    std::vector<std::string> FeatureDefines(const Json &editorInfo)
+    std::vector<std::string> FeatureDefines(const Json &editorInfo, const GameBuildChoices &choices)
     {
         std::vector<std::string> defines;
         for (const GameBuildFeature &feature : kGameBuildFeatures)
         {
-            if (const std::optional<bool> on = GameBuildInfoFlag(editorInfo, feature.mKey))
+            if (const std::optional<bool> on = WantedGameBuildFlag(feature, choices, editorInfo))
                 defines.push_back("-D" + std::string(feature.mOption) + "=" + (*on ? "ON" : "OFF"));
         }
         return defines;
@@ -545,12 +545,14 @@ namespace mir::build
 
         try
         {
-            std::vector<std::string> defines;
+            // the game's choices apply even when the editor's options cannot be read
+            Json editorInfo;
             if (!compile.mEditorInfo.empty())
             {
-                if (const std::optional<Json> info = ReadJsonFile(compile.mEditorInfo); info && info->is_object())
-                    defines = FeatureDefines(*info);
+                if (std::optional<Json> info = ReadJsonFile(compile.mEditorInfo); info && info->is_object())
+                    editorInfo = std::move(*info);
             }
+            const std::vector<std::string> defines = FeatureDefines(editorInfo, compile.mChoices);
 
             const GameBuildScript script{ compile.mSourceRoot, compile.mPreset, buildDir, staging, defines, *visualStudio };
 

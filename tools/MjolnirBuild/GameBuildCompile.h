@@ -11,6 +11,8 @@
 #include "CompileLog.h"
 #include "VisualStudio.h"
 
+#include <project/GameBuildInfo.h>
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -41,6 +43,8 @@ namespace mir::build
         std::filesystem::path mGameBuildDir;
         // The editor's game_build_info.json, whose options the game build is configured with, empty keeps the preset's
         std::filesystem::path mEditorInfo;
+        // the game's project_settings.json build.gameBuildOptions, used before the editor's
+        GameBuildChoices mChoices;
     };
 
     // The preset's binaryDir, or nullopt when it sets none or uses a macro other than ${sourceDir} and the like
@@ -61,8 +65,8 @@ namespace mir::build
     // Everything the game build step needs before it compiles, or nullopt
     std::optional<std::string> CheckGameBuildCompile(const GameBuildCompile &compile, const std::filesystem::path &outDir);
 
-    // -DMIR_WITH_AUDIO=ON and the like, for each option editorInfo records
-    std::vector<std::string> FeatureDefines(const nlohmann::json &editorInfo);
+    // -DMIR_WITH_AUDIO=ON and the like: the game's choice for each option, else what @p editorInfo records
+    std::vector<std::string> FeatureDefines(const nlohmann::json &editorInfo, const GameBuildChoices &choices = {});
 
     struct GameBuildScript
     {

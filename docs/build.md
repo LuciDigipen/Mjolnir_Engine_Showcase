@@ -325,10 +325,12 @@ with `cmd /d /c`. The script:
    workload; without `cmake` or `ninja`, the compile fails naming "C++ CMake
    tools for Windows".
 2. Configures with `cmake --preset <preset>`, passing `MIR_LARGE_WORLD`,
-   `MIR_WITH_AUDIO`, `MIR_WITH_DLSS` and `MIR_WITH_RTXGI` as the editor's
-   `game_build_info.json` records them. It configures on every compile, so a
-   preset whose settings changed, such as `CMAKE_BUILD_TYPE`, is never
-   packaged with the old ones.
+   `MIR_WITH_AUDIO`, `MIR_WITH_DLSS` and `MIR_WITH_RTXGI` as the game chose
+   them (see [Build options](#build-options) below), and the rest as the
+   editor's `game_build_info.json` records them. It configures on every
+   compile, so a preset whose settings changed, such as `CMAKE_BUILD_TYPE`,
+   or an option that changed, is never packaged with the old ones; with
+   nothing changed, configure is quick and Ninja has nothing to do.
 3. Compiles only `MjolnirEngine` and `MjolnirErrorReporter`, with
    `cmake --build --preset <preset> --target ...`, not the tests and tools
    the preset also builds.
@@ -369,19 +371,59 @@ missing or empty folder, or a game build template (a `game_build_info.json` with
 refused and left alone. The build folder, the template and the output must
 not overlap, and neither may their `.tmp` and `.old` folders, and the build
 folder must not be the folder this MjolnirBuild was built in. The template checks (the exe, name conflicts, path length, the
-comparison with the editor) run on what was installed, in the `template` step.
+comparison with the game's options and the editor) run on what was installed, in the `template` step.
 
 Without `--game-build-preset`, `game build` is skipped and the template is used as it
 is.
+
+#### Build options
+
+A game chooses its game build's options in its `project_settings.json`, so the
+editor, the command line and CI build the same thing:
+
+```json
+"build": { "profile": "release", "gameBuildOptions": { "dlss": false, "audio": true } }
+```
+
+The keys are those of `game_build_info.json` (`largeWorld`, `audio`, `dlss`,
+`rtxgi`; `kGameBuildFeatures` in `modules/project/include/project/GameBuildInfo.h`),
+each `true` or `false`. An option the game does not choose follows the
+editor's `game_build_info.json`, as before; with no editor info either, the
+preset decides. The choices hold no paths or machine settings. An entry that
+is not one of those keys, or not `true` or `false`, is left out and named in a
+warning; it never stops the build.
+
+The template is compared with the choices first: a template built as the game
+chose is not warned about where the editor differs, and one built otherwise
+is, such as a ready-made template with DLSS ON for a game that chose it OFF.
+The warning about SoundBanks in a game whose template has audio OFF stays,
+chosen or not.
+
+Turning on an option the editor was built without may need what this machine
+lacks: the Wwise SDK (`WWISESDK`) for audio, a download of the NGX SDK for
+DLSS, or the RTXGI SDK and DXC from the Vulkan SDK for RTXGI. Without it,
+configure fails and the build's error quotes CMake's message. Changing large
+world reinstalls Jolt through vcpkg. Every game shares the profile's build
+folder and template, so building games with different options one after the
+other recompiles what the options touch each time.
 
 ### Build Settings in the editor
 
 File > Build Settings... holds what a build from the editor uses:
 
 - **Profile.** Development packages the game-debug build, Release the
-  game-release one. It is the only build setting shared through git, as
+  game-release one. It is shared through git, as
   `"build": { "profile": "development" }` in the game's
   `project_settings.json`; a missing or unknown profile is Release.
+- **Build options**, also shared through git: a checkbox for each of
+  [the game build's options](#build-options), saved per game in
+  `build.gameBuildOptions` when one is clicked. An option the game has not
+  chosen shows "editor default"; one it has chosen shows the editor's own
+  setting where it differs, such as "the editor has DLSS ON", and a **Reset**
+  button that makes it follow the editor again. Each tooltip says what the
+  option builds in and what turning it on needs. An entry the panel cannot
+  use, and Audio OFF for a game with SoundBanks, are shown as warnings. There
+  is no free-text field for CMake or launch arguments.
 - **Game build template**, one per profile, and the **output folder**, one per game.
   Paths differ per machine, so they live in the editor preferences
   (`%LOCALAPPDATA%/Mjolnir/editor/editor_preferences.json`) and never in
@@ -398,13 +440,15 @@ and installs it into the template folder before packaging; see
 [Compiling the game build](#compiling-the-game-build). It works with the editor
 started from Explorer, and never touches the editor's own build folder. A
 missing template never disables Build: the panel says "Not compiled yet; the
-first Build compiles it", or shows the template's engine version and options.
+first Build compiles it", or shows the template's engine version and options,
+and which options the compile will change.
 
-With it off, Build uses the template folder as it is. The panel shows its
-`game_build_info.json` and whether it matches the editor, with the same checks
-MjolnirBuild warns about (`modules/project/include/project/GameBuildInfo.h`),
-plus a template built for the other profile, and a missing or broken one
-disables Build. The panel never shows commands to run by hand; to make a
+With it off, Build uses the template folder as it is, and the build options
+only decide what it is checked against. The panel shows its
+`game_build_info.json` and whether it matches the game's options and the
+editor, with the same checks MjolnirBuild warns about
+(`modules/project/include/project/GameBuildInfo.h`), plus a template built for
+the other profile, and a missing or broken one disables Build. The panel never shows commands to run by hand; to make a
 template without the editor, see [A game build template](#a-game-build-template).
 
 **Build**, at the bottom of the window, runs MjolnirBuild (the `buildTool` in

@@ -12,13 +12,18 @@
 #include <GameBuild.h>
 
 #include <assets/AssetManifest.h>
+#include <project/GameBuildInfo.h>
 #include <project/GameProject.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <functional>
+#include <map>
+#include <string>
 #include <string_view>
+#include <vector>
 
 using namespace mir;
 using namespace mir::build;
@@ -188,6 +193,94 @@ TEST_CASE("A template built differently from the editor is warned about", "[game
     CHECK(HasWarning(differs, "commit 2222222222"));
     CHECK(HasWarning(differs, "MIR_LARGE_WORLD"));
     CHECK(HasWarning(differs, "SoundBanks"));
+}
+
+TEST_CASE("A game's build options are read from project_settings.json, and a bad entry is named and left out",
+    "[game-build]")
+{
+    using Json = nlohmann::json;
+    CHECK(ReadGameBuildChoices(Json::object()).mOn.empty());
+    CHECK(ReadGameBuildChoices(Json{ { "build", { { "profile", "release" } } } }).mProblems.empty());
+    CHECK(ReadGameBuildChoices(fs::path("C:/no/such/project_settings.json")).mOn.empty());
+
+    const GameBuildChoices choices = ReadGameBuildChoices(Json::parse(
+        R"({ "build": { "gameBuildOptions": { "dlss": false, "audio": true, "rtxgi": "yes", "DLSS": true } } })"));
+    CHECK(choices.mOn == std::map<std::string, bool, std::less<>>{ { "audio", true }, { "dlss", false } });
+    REQUIRE(choices.mProblems.size() == 2);
+    CHECK(choices.mProblems[0] == "project_settings.json's build.gameBuildOptions.DLSS is not a build option "
+                                  "(largeWorld, audio, dlss, rtxgi), so it is ignored");
+    CHECK(choices.mProblems[1] == "project_settings.json's build.gameBuildOptions.rtxgi is not true or false, so it "
+                                  "follows the editor");
+
+    const GameBuildChoices broken = ReadGameBuildChoices(Json::parse(R"({ "build": { "gameBuildOptions": [ "dlss" ] } })"));
+    CHECK(broken.mOn.empty());
+    REQUIRE(broken.mProblems.size() == 1);
+    CHECK(broken.mProblems[0].ends_with("is not an object, so every build option follows the editor"));
+}
+
+TEST_CASE("A template is compared with the game's choices first, then the editor", "[game-build]")
+{
+    using Json = nlohmann::json;
+    const Json editor = Json::parse(GameBuildInfo(true, "1111111111aaaa", true, true));
+    Json built = Json::parse(GameBuildInfo(false, "1111111111aaaa", true, true));
+    built["dlss"] = true;
+    built["rtxgi"] = true;
+    const auto keys = [](const std::vector<GameBuildInfoMismatch> &mismatches) {
+        std::vector<std::string> keys;
+        for (const GameBuildInfoMismatch &mismatch : mismatches)
+            keys.push_back(mismatch.mKey);
+        return keys;
+    };
+
+    CHECK(keys(CompareGameBuildInfo(built, editor)) == std::vector<std::string>{ "dlss", "rtxgi" });
+
+    // a difference the game chose is not one
+    GameBuildChoices choices;
+    choices.mOn = { { "dlss", true } };
+    CHECK(keys(CompareGameBuildInfo(built, editor, choices)) == std::vector<std::string>{ "rtxgi" });
+
+    // a template that is not what the game chose is, even where it matches the editor
+    choices.mOn = { { "dlss", true }, { "largeWorld", false } };
+    const std::vector<GameBuildInfoMismatch> chosen = CompareGameBuildInfo(built, editor, choices);
+    REQUIRE(keys(chosen) == std::vector<std::string>{ "largeWorld", "rtxgi" });
+    CHECK(chosen[0].mMessage == "the game build template was built with MIR_LARGE_WORLD ON, but the game chooses it OFF");
+
+    // without the editor, only the choices are compared, and not the version
+    CHECK(keys(CompareGameBuildInfo(built, Json(), choices)) == std::vector<std::string>{ "largeWorld" });
+}
+
+TEST_CASE("A ready-made template that is not what the game chose is warned about, and SoundBanks without audio still are",
+    "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Demo";
+    const fs::path editorInfo = fixture.mSandbox.mRoot / "editor_info.json";
+    Touch(editorInfo, GameBuildInfo(true, "1111111111aaaa", true, true));
+    BuildRequest request = Request(game, fixture.mGameBuildDir, fixture.mOut);
+    request.mEditorInfo = editorInfo;
+
+    // chose large world OFF, but the template has it ON
+    Touch(fixture.mGameBuildDir / "game_build_info.json", GameBuildInfo(false, "1111111111aaaa", true, true));
+    Touch(game / "project_settings.json", R"({ "build": { "gameBuildOptions": { "largeWorld": false } } })");
+    const BuildReport differs = RunGameBuild(request);
+    INFO(differs.mError);
+    REQUIRE(differs.mOk);
+    REQUIRE(differs.mWarnings.size() == 1);
+    CHECK(differs.mWarnings[0] == "the game build template was built with MIR_LARGE_WORLD ON, but the game chooses it OFF");
+
+    // a template built as chosen is not warned about, though the editor differs
+    Touch(fixture.mGameBuildDir / "game_build_info.json", GameBuildInfo(false, "1111111111aaaa", false, true));
+    const BuildReport chosen = RunGameBuild(request);
+    REQUIRE(chosen.mOk);
+    CHECK(chosen.mWarnings.empty());
+
+    // audio OFF by choice still leaves Demo's SoundBanks silent
+    Touch(fixture.mGameBuildDir / "game_build_info.json", GameBuildInfo(false, "1111111111aaaa", true, false));
+    Touch(game / "project_settings.json", R"({ "build": { "gameBuildOptions": { "audio": false } } })");
+    const BuildReport silent = RunGameBuild(request);
+    REQUIRE(silent.mOk);
+    REQUIRE(silent.mWarnings.size() == 1);
+    CHECK(HasWarning(silent, "SoundBanks"));
 }
 
 TEST_CASE("An editor game_build_info.json that cannot be read is warned about", "[game-build]")

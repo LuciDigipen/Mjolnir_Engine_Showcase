@@ -200,7 +200,7 @@ namespace mir
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
         mEditor.SetBuildGame(BuildGame{ ProjectRoot(), mProject.mRootDir.lexically_normal(), mProject.mName,
-            mProject.mProjectSettingsPath, ExecutableDir() / kGameBuildInfoFileName });
+            mProject.mProjectSettingsPath, ExecutableDir() / kGameBuildInfoFileName, mProject.mSoundBankDir });
         mBuildTool = BuildToolPath();
         mMaterialEditor = std::make_unique<MaterialEditor>();
         mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), assetService,
