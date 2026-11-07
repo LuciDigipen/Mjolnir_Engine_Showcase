@@ -65,8 +65,14 @@ namespace mir::build
     // Everything the game build step needs before it compiles, or nullopt
     std::optional<std::string> CheckGameBuildCompile(const GameBuildCompile &compile, const std::filesystem::path &outDir);
 
-    // -DMIR_WITH_AUDIO=ON and the like: the game's choice for each option, else what @p editorInfo records
-    std::vector<std::string> FeatureDefines(const nlohmann::json &editorInfo, const GameBuildChoices &choices = {});
+    // The game build options the preset, or one it inherits from, sets in cacheVariables, which every configure applies
+    std::vector<std::string> PresetCacheOptions(const std::filesystem::path &sourceRoot, std::string_view preset);
+
+    // -DMIR_WITH_AUDIO=ON and the like: the game's choice for each option, else what @p editorInfo records. One neither
+    // names is -UMIR_WITH_AUDIO, so the build folder's cache drops what an earlier build set, unless it is one of
+    // @p presetOptions, which configure sets again anyway
+    std::vector<std::string> FeatureDefines(const nlohmann::json &editorInfo, const GameBuildChoices &choices = {},
+        const std::vector<std::string> &presetOptions = {});
 
     struct GameBuildScript
     {

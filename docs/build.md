@@ -388,8 +388,13 @@ editor, the command line and CI build the same thing:
 The keys are those of `game_build_info.json` (`largeWorld`, `audio`, `dlss`,
 `rtxgi`; `kGameBuildFeatures` in `modules/project/include/project/GameBuildInfo.h`),
 each `true` or `false`. An option the game does not choose follows the
-editor's `game_build_info.json`, as before; with no editor info either, the
-preset decides. The choices hold no paths or machine settings. An entry that
+editor's `game_build_info.json`, as before. With no editor info either, the
+preset decides: configure gets `-U<option>`, so the build folder's cache,
+which every game of the profile shares, drops what an earlier build set and
+the option's default in `CMakeLists.txt` applies. An option the preset sets in
+`cacheVariables`, itself or through `inherits`, gets nothing, since CMake
+applies the preset's value on every configure and `-U` would remove it. The
+choices hold no paths or machine settings. An entry that
 is not one of those keys, or not `true` or `false`, is left out and named in a
 warning; it never stops the build.
 

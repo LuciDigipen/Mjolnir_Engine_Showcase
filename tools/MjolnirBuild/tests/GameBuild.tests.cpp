@@ -461,7 +461,7 @@ TEST_CASE("Packaged scene IDs survive a source folder rename", "[game-build]")
     })");
     Touch(game / "scenes" / "second" / "scene.json", R"({ "entities": [] })");
 
-    const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+    const BuildReport report = RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut));
     INFO(report.mError);
     REQUIRE(report.mOk);
     const fs::path packaged = fixture.mOut / "games" / "Demo";
@@ -481,7 +481,7 @@ TEST_CASE("Invalid scene catalogs fail before packaging", "[game-build]")
     for (const auto &scenes : { nlohmann::json::array({ scene, scene }), nlohmann::json::array() })
     {
         Touch(game / "game.json", nlohmann::json{ { "startupScene", "intro" }, { "scenes", scenes } }.dump());
-        const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+        const BuildReport report = RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut));
         CHECK_FALSE(report.mOk);
         CHECK_FALSE(fs::exists(fixture.mOut));
     }

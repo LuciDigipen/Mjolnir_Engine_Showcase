@@ -14,7 +14,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -67,16 +69,29 @@ int main(int argc, char **argv)
             std::puts("  No CMAKE_CXX_COMPILER could be found.");
             return 1;
         }
-        std::string cache = "# fake\n";
+        // fake_cmake_binary_dir.txt stands in for a binaryDir other than builds/<preset>
+        const std::string binaryDir = Read("fake_cmake_binary_dir.txt");
+        const fs::path dir = binaryDir.empty() ? fs::path("builds") / args[1] : fs::path(binaryDir);
+
+        // As CMake's cache does: an entry stays until -D sets it or -U removes it
+        std::map<std::string, std::string> entries;
+        std::istringstream previous(Read(dir / "CMakeCache.txt"));
+        for (std::string line; std::getline(previous, line);)
+        {
+            if (const std::size_t at = line.find(":BOOL="); at != std::string::npos)
+                entries[line.substr(0, at)] = line.substr(at + 6);
+        }
         for (std::size_t i = 2; i < args.size(); ++i)
         {
             const std::size_t equals = args[i].find('=');
             if (args[i].starts_with("-D") && equals != std::string::npos)
-                cache += args[i].substr(2, equals - 2) + ":BOOL=" + args[i].substr(equals + 1) + "\n";
+                entries[args[i].substr(2, equals - 2)] = args[i].substr(equals + 1);
+            else if (args[i].starts_with("-U"))
+                entries.erase(args[i].substr(2));
         }
-        // fake_cmake_binary_dir.txt stands in for a binaryDir other than builds/<preset>
-        const std::string binaryDir = Read("fake_cmake_binary_dir.txt");
-        const fs::path dir = binaryDir.empty() ? fs::path("builds") / args[1] : fs::path(binaryDir);
+        std::string cache = "# fake\n";
+        for (const auto &[name, value] : entries)
+            cache += name + ":BOOL=" + value + "\n";
         Write(dir / "CMakeCache.txt", cache);
         Write(dir / "build.ninja", "# fake\n");
         return 0;
