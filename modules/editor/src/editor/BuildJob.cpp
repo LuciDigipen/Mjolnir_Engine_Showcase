@@ -1,7 +1,8 @@
 /**
  * @file BuildJob.cpp
  * @author Quy Dong Ta
- * @brief File > Build Settings' Build: MjolnirBuild run in the background, and what it reported.
+ * @brief File > Build and Build Settings' Build: MjolnirBuild run in the background, the game started once it is
+ *        built, and what it reported.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -15,11 +16,13 @@
 
 #include <nlohmann/json.hpp>
 
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace mir
 {
@@ -82,6 +85,10 @@ namespace mir
             case BuildOutcome::Succeeded:
                 MIR_LOG_INFO("Build: built {} in {:.1f} s ({} assets, {:.1f} MB)", PathText(result.mExecutable),
                     result.mSeconds, result.mAssets, static_cast<double>(result.mBytes) / 1e6);
+                if (result.mStarted)
+                    MIR_LOG_INFO("Build: started {}", PathText(result.mExecutable));
+                else if (!result.mStartError.empty())
+                    MIR_LOG_ERROR("Build: {}", result.mStartError);
                 break;
             case BuildOutcome::Failed:
                 MIR_LOG_ERROR("Build failed: {}", result.mError);
@@ -94,6 +101,64 @@ namespace mir
                 break;
             }
         }
+
+        // As a double-click does: in its own folder, and left running when the editor closes
+        void StartGame(BuildResult &result)
+        {
+            const std::vector<std::string> none;
+            if (!result.mExecutable.empty() &&
+                LaunchProcess(result.mExecutable, none, false, result.mExecutable.parent_path()).has_value())
+                result.mStarted = true;
+            else
+                result.mStartError = "could not start " + PathText(result.mExecutable) + "; see the log";
+        }
+
+        // The first two lines, so a compile error's first quoted line is in a toast
+        std::string Opening(const std::string &text)
+        {
+            std::size_t end = text.find('\n');
+            if (end != std::string::npos)
+                end = text.find('\n', end + 1);
+            return end == std::string::npos ? text : text.substr(0, end) + " ...";
+        }
+    }
+
+    BuildNotice BuildNoticeFor(const BuildResult &result, std::string_view game)
+    {
+        const std::string name(game);
+        const std::string seconds = std::format("{:.1f} s", result.mSeconds);
+        BuildNotice notice;
+        switch (result.mOutcome)
+        {
+        case BuildOutcome::Succeeded:
+            notice.mExecutable = result.mExecutable;
+            if (!result.mStartError.empty())
+            {
+                notice = { BuildNotice::Kind::Warning, "Built " + name + " in " + seconds + ", but " + result.mStartError,
+                    result.mExecutable, false, true };
+                break;
+            }
+            notice.mKind = BuildNotice::Kind::Success;
+            notice.mText = (result.mStarted ? "Built and started " : "Built ") + name + " in " + seconds;
+            if (!result.mWarnings.empty())
+            {
+                notice.mKind = BuildNotice::Kind::Warning;
+                notice.mText += ", with " + std::to_string(result.mWarnings.size()) +
+                    (result.mWarnings.size() == 1 ? " warning" : " warnings");
+                notice.mOpenSettings = true;
+            }
+            break;
+        case BuildOutcome::Failed:
+            notice = { BuildNotice::Kind::Failure, "Build failed: " + Opening(result.mError), {}, true, true };
+            break;
+        case BuildOutcome::Canceled:
+            notice = { BuildNotice::Kind::Info, "Build canceled; the previous build is as it was" };
+            break;
+        case BuildOutcome::CanceledTooLate:
+            notice = { BuildNotice::Kind::Warning, "Too late to cancel: the new build of " + name + " is already in place" };
+            break;
+        }
+        return notice;
     }
 
     fs::path BuildToolPath()
@@ -292,7 +357,10 @@ namespace mir
         const std::optional<int> exitCode = mProcess.Poll();
         if (exitCode)
         {
-            Finish(ReadBuildResult(mRequest.mResultFile, *exitCode));
+            BuildResult result = ReadBuildResult(mRequest.mResultFile, *exitCode);
+            if (mRequest.mRun && result.mOutcome == BuildOutcome::Succeeded)
+                StartGame(result);
+            Finish(std::move(result));
             return;
         }
 
@@ -366,6 +434,7 @@ namespace mir
     {
         result.mSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - mStarted).count();
         mRunning = false;
+        ++mFinished;
         mProgress = {};
         std::error_code ec;
         for (const fs::path &file : { mRequest.mResultFile, mRequest.mProgressFile })

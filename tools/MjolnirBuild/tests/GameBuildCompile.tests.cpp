@@ -748,6 +748,20 @@ TEST_CASE("A preset that installs an editor build keeps the previous template", 
     CHECK_FALSE(fs::exists(GameBuildStagingDir(fixture.mGameBuildDir)));
 }
 
+TEST_CASE("A template a program runs from stops the compile in check, before anything compiles", "[game-build-compile]")
+{
+    CompileFixture fixture;
+    MakeGameBuildTemplate(fixture.mGameBuildDir);
+    RunningProgram running(fixture.mGameBuildDir, "MjolnirEngine.exe");
+
+    const BuildReport report = RunGameBuild(fixture.Request());
+    CHECK_FALSE(report.mOk);
+    CHECK(Has(report.mError, "MjolnirEngine.exe is running from " + PathText(fixture.mGameBuildDir)));
+    CHECK(Has(report.mError, "which keeps the game build template locked; close it and build again"));
+    CHECK_FALSE(fs::exists(fixture.mCheckout / "fake_cmake_calls.txt"));
+    CHECK(fs::exists(fixture.mGameBuildDir / "game_build_info.json"));
+}
+
 TEST_CASE("A bad output folder or an unknown preset fails in check, before anything compiles", "[game-build-compile]")
 {
     CompileFixture fixture;

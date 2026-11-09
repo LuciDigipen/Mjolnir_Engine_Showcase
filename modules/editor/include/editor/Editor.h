@@ -271,6 +271,13 @@ namespace mir
         void FinishSnapToTerrain(World &world, DocumentId document, const GroundQuery *ground, bool editing,
             bool transitionRequested);
         void UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode);
+        // File > Build and Build and Run, and Ctrl+B, a build that cannot start says why in the toast
+        void RequestBuild(EditorActions &actions, const BuildJobView &build, bool run);
+        // Ctrl+B builds and runs, Ctrl+Shift+B opens Build Settings
+        void UpdateBuildShortcuts(EditorActions &actions, const EngineModeState &mode, const BuildJobView &build);
+        void ShowBuildNote(std::string note);
+        // At the bottom right: the running build while Build Settings is hidden, then how it ended
+        void DrawBuildToast(const BuildJobView &build, EditorActions &actions);
 
         // Each document keeps its own camera; a document opened first focuses on its root.
         void SwitchDocumentCamera(const EditorDocuments &documents, World &world);
@@ -299,6 +306,14 @@ namespace mir
         bool mShowProfiler = false;
         bool mShowBuildSettings = false;
         bool mFocusBuildSettings = false;
+        // drawn this frame, not collapsed or behind another tab
+        bool mBuildSettingsVisible = false;
+        // the build the toast last noticed ending, when, and whether it was closed
+        std::uint64_t mToastFinished = 0;
+        double mToastAt = -1.0;
+        bool mToastClosed = false;
+        std::string mBuildNote;
+        double mBuildNoteAt = -1.0;
         std::string mImGuiIniPath;
         std::filesystem::path mProjectSettingsPath;
         VkRect2D mSceneViewportRect{};

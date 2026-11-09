@@ -475,6 +475,9 @@ namespace mir::build
             if (std::optional<std::string> problem = GameBuildDirProblem(previous))
                 return *problem + " (the previous template is moved there while the new one replaces it)";
         }
+        if (std::optional<std::string> problem =
+                LockedBuildProblem(NormalizedPath(compile.mGameBuildDir), "the game build template"))
+            return problem;
 
         if (!FindVisualStudio(buildDir, EditorBuildDir(compile)))
             return std::string(kNoVisualStudio);
@@ -654,8 +657,10 @@ namespace mir::build
             fs::rename(gameBuildDir, previous, ec);
             if (ec)
             {
-                const std::string what = "could not move the previous game build template " + PathText(gameBuildDir) +
-                    " aside (" + ec.message() + "); is a game running from it?";
+                const std::optional<std::string> locked = LockedBuildProblem(gameBuildDir, "the game build template");
+                const std::string what = locked ? *locked
+                                                : "could not move the previous game build template " +
+                        PathText(gameBuildDir) + " aside (" + ec.message() + "); is a file in it open in another program?";
                 RemoveMarked(staging, kStagingMarkerFileName, ignored);
                 throw std::runtime_error(what);
             }

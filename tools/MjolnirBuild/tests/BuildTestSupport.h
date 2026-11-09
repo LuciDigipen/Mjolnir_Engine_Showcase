@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -85,6 +86,21 @@ namespace mir::build::test
         REQUIRE(WriteText(file, text));
     }
 
+    // A program left running from dir as name, as a game started from a build is, stopped when it goes
+    struct RunningProgram
+    {
+        ChildProcess mProcess;
+
+        RunningProgram(const fs::path &dir, std::string_view name)
+        {
+            fs::create_directories(dir);
+            const fs::path exe = dir / name;
+            fs::copy_file(fs::path(MJOLNIR_BUILD_FAKE_CMAKE_DIR) / "cmake.exe", exe, fs::copy_options::overwrite_existing);
+            const std::vector<std::string> args{ "--sleep", "60" };
+            REQUIRE(mProcess.Start(exe, args, dir));
+        }
+    };
+
     inline void MakeGameBuildTemplate(const fs::path &dir, bool editor = false)
     {
         Touch(dir / "MjolnirEngine.exe");
@@ -94,7 +110,7 @@ namespace mir::build::test
     }
 
     // A checkout with one engine asset and two games: Demo has assets, sound banks, a Prefab
-    // folder, a second scene and an IDE setting; Quiet has a scene and nothing else
+    // folder, a second scene and an IDE setting, Quiet has a scene and nothing else
     inline void MakeCheckout(const fs::path &root)
     {
         Touch(root / "assets" / "engine.txt");

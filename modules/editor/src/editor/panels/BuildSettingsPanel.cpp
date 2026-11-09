@@ -273,9 +273,9 @@ namespace mir
         ImGui::EndDisabled();
         if (blocked.empty())
         {
-            ImGui::SetItemTooltip(compile ? "Compiles the game build, then packages %s into the output folder"
-                                          : "Packages %s into the output folder",
-                game.mName.c_str());
+            const std::string what = std::string(compile ? "Compiles the game build, then packages " : "Packages ") +
+                game.mName + " into the output folder" + (target.mRun ? ", then starts it" : "");
+            ImGui::SetItemTooltip("%s", what.c_str());
         }
         else
         {
@@ -435,13 +435,20 @@ namespace mir
             CheckoutPath(outDir / (game.mName + ".exe"), game.mSourceRoot).c_str());
 
         request.mSavePreferences |= ImGui::Checkbox("Run after build", &preferences.buildRunAfter);
-        ImGui::SetItemTooltip("Starts the game once a build succeeds");
+        ImGui::SetItemTooltip("Build starts the game once it succeeds, as File > Build and Run (Ctrl+B) always does");
 
         if (!mStatusMessage.empty())
             ImGui::TextColored(EditorTheme::Color(StatusColor::Danger), "%s", mStatusMessage.c_str());
 
         DrawBuild(game, build, request.mBuild,
-            BuildAction{ BuildCommand::None, gameBuildDir, outDir, compile ? preset : std::string() });
+            MakeBuildAction(BuildCommand::None, preferences, game, mProfile, preferences.buildRunAfter));
         return request;
+    }
+
+    BuildAction MakeBuildAction(BuildCommand command, const EditorPreferences &preferences, const BuildGame &game,
+        BuildProfile profile, bool run)
+    {
+        return { command, GameBuildTemplateDir(preferences, game, profile), BuildOutputDir(preferences, game),
+            preferences.buildCompileGameBuild ? std::string(GameBuildPreset(profile)) : std::string(), run };
     }
 }

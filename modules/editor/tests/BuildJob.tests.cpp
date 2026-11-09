@@ -25,11 +25,39 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 using namespace mir;
 
 namespace
 {
     namespace fs = std::filesystem;
+
+#if defined(_WIN32)
+    // Stops what a test left running from dir, such as the game Build and Run started, so its sandbox can go
+    struct StopRunningFrom
+    {
+        fs::path mDir;
+
+        ~StopRunningFrom()
+        {
+            for (const RunningProcess &process : ProcessesRunningFrom(mDir))
+            {
+                if (HANDLE handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, process.mId))
+                {
+                    TerminateProcess(handle, 1);
+                    WaitForSingleObject(handle, 5000);
+                    CloseHandle(handle);
+                }
+            }
+        }
+    };
+#endif
 
     // A checkout with one engine asset and a game, a game build template, and room for the output
     struct BuildSandbox
@@ -147,6 +175,9 @@ TEST_CASE("A build runs in the background and its report is read", "[build-job]"
     CHECK_FALSE(fs::exists(sandbox.Request().mResultFile));
     CHECK_FALSE(fs::exists(sandbox.Request().mProgressFile));
     CHECK(job.Progress().mStep.empty());
+    // a plain Build does not try to run it
+    CHECK_FALSE(result.mStarted);
+    CHECK(result.mStartError.empty());
 }
 
 TEST_CASE("A build that compiles the game build passes the preset on, and MjolnirBuild's check stops a bad one",
@@ -346,6 +377,106 @@ TEST_CASE("Cancel while a compile replaces the template puts the previous one ba
         CHECK(error.find(previous.filename().string()) != std::string::npos);
         CHECK_FALSE(fs::exists(gameBuildDir));
     }
+}
+
+#if defined(_WIN32)
+TEST_CASE("Build and Run starts the built game, which outlives the build, and a rebuild while it runs says it is locked",
+    "[build-job]")
+{
+    BuildSandbox sandbox;
+    const StopRunningFrom stop{ sandbox.Out() };
+    // a real program as the template's exe: the probe, which with no arguments stays up as a game does
+    fs::copy_file(MIR_EDITOR_BUILD_PROBE, sandbox.GameBuildDir() / "MjolnirEngine.exe", fs::copy_options::overwrite_existing);
+    BuildJobRequest request = sandbox.Request();
+    request.mRun = true;
+    {
+        BuildJob job;
+        REQUIRE(job.Start(request));
+        RunToEnd(job);
+        const BuildResult &result = *job.Result();
+        INFO(result.mError);
+        REQUIRE(result.mOutcome == BuildOutcome::Succeeded);
+        CHECK(result.mStarted);
+        CHECK(result.mStartError.empty());
+        CHECK(BuildNoticeFor(result, "Demo").mText.starts_with("Built and started Demo in "));
+    }
+
+    // the job is gone, and the game still runs from the output
+    const std::vector<RunningProcess> running = ProcessesRunningFrom(sandbox.Out());
+    REQUIRE(running.size() == 1);
+    CHECK(running.front().mExecutable.filename() == "Demo.exe");
+
+    BuildJob again;
+    REQUIRE(again.Start(sandbox.Request()));
+    RunToEnd(again);
+    const BuildResult &locked = *again.Result();
+    CHECK(locked.mOutcome == BuildOutcome::Failed);
+    CHECK(locked.mError.starts_with("Demo.exe is running from "));
+    CHECK(locked.mError.ends_with("which keeps the previous build locked; close it and build again"));
+    CHECK(ProcessesRunningFrom(sandbox.Out()).size() == 1);
+}
+#endif
+
+TEST_CASE("Build and Run says when the built game cannot start, and the build still counts", "[build-job]")
+{
+    // the sandbox template's exe is a text file
+    BuildSandbox sandbox;
+    BuildJobRequest request = sandbox.Request();
+    request.mRun = true;
+
+    BuildJob job;
+    REQUIRE(job.Start(request));
+    RunToEnd(job);
+    const BuildResult &result = *job.Result();
+    INFO(result.mError);
+    REQUIRE(result.mOutcome == BuildOutcome::Succeeded);
+    CHECK_FALSE(result.mStarted);
+    CHECK(result.mStartError.starts_with("could not start "));
+
+    const BuildNotice notice = BuildNoticeFor(result, "Demo");
+    CHECK(notice.mKind == BuildNotice::Kind::Warning);
+    CHECK(notice.mStays);
+    CHECK(notice.mExecutable == result.mExecutable);
+}
+
+TEST_CASE("The toast says how a build ended, offering Explorer for a built game and Build Settings for the rest",
+    "[build-job]")
+{
+    BuildResult built;
+    built.mOutcome = BuildOutcome::Succeeded;
+    built.mExecutable = "C:/out/Demo.exe";
+    built.mSeconds = 12.34;
+    BuildNotice notice = BuildNoticeFor(built, "Demo");
+    CHECK(notice.mKind == BuildNotice::Kind::Success);
+    CHECK(notice.mText == "Built Demo in 12.3 s");
+    CHECK(notice.mExecutable == built.mExecutable);
+    CHECK_FALSE(notice.mOpenSettings);
+    CHECK_FALSE(notice.mStays);
+
+    built.mStarted = true;
+    built.mWarnings = { "one", "two" };
+    notice = BuildNoticeFor(built, "Demo");
+    CHECK(notice.mKind == BuildNotice::Kind::Warning);
+    CHECK(notice.mText == "Built and started Demo in 12.3 s, with 2 warnings");
+    CHECK(notice.mOpenSettings);
+
+    BuildResult failed;
+    failed.mError = "compiling the game build with game-release failed:\n  a.cpp(1): error C2065: 'x'\n"
+                    "  b.cpp(2): error C2065: 'y'\nThe whole output is in log.txt";
+    notice = BuildNoticeFor(failed, "Demo");
+    CHECK(notice.mKind == BuildNotice::Kind::Failure);
+    CHECK(notice.mText ==
+        "Build failed: compiling the game build with game-release failed:\n  a.cpp(1): error C2065: 'x' ...");
+    CHECK(notice.mStays);
+    CHECK(notice.mOpenSettings);
+    CHECK(notice.mExecutable.empty());
+
+    BuildResult canceled;
+    canceled.mOutcome = BuildOutcome::Canceled;
+    CHECK(BuildNoticeFor(canceled, "Demo").mKind == BuildNotice::Kind::Info);
+    canceled.mOutcome = BuildOutcome::CanceledTooLate;
+    CHECK(BuildNoticeFor(canceled, "Demo").mKind == BuildNotice::Kind::Warning);
+    CHECK_FALSE(BuildNoticeFor(canceled, "Demo").mStays);
 }
 
 TEST_CASE("A build that cannot start says why", "[build-job]")

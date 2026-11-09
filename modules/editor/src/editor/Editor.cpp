@@ -72,6 +72,22 @@ namespace mir
             return std::string(text.begin(), text.end());
         }
 
+        // Why File > Build cannot start a build now, or empty
+        std::string BuildBlockedText(const BuildJobView &build)
+        {
+            if (build.mRunning)
+                return "A build is already running";
+            if (build.mSaving)
+                return "Saving, then building";
+            return build.mBlocked;
+        }
+
+        void BuildMenuTooltip(const std::string &blocked, const char *what)
+        {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", blocked.empty() ? what : blocked.c_str());
+        }
+
         ImGuizmo::OPERATION ToImGuizmoOperation(GizmoOperation operation)
         {
             switch (operation)
@@ -1464,6 +1480,7 @@ namespace mir
             UpdateViewportPicking(mode, activeWorld);
             FocusSelection(mode, activeWorld);
             UpdateHistoryShortcuts(actions, mode);
+            UpdateBuildShortcuts(actions, mode, build);
             DrawSelectionHighlights(mode, activeWorld);
             DrawComponentGizmos(mode, activeWorld);
             DrawViewportGizmo(mode, activeWorld, actions, documentTab);
@@ -1502,7 +1519,16 @@ namespace mir
                         mNewProjectRequested = true;
                     DrawOpenProjectMenu(projects, currentProject);
                     ImGui::Separator();
-                    if (ImGui::MenuItem("Build Settings..."))
+                    const std::string buildBlocked = BuildBlockedText(build);
+                    if (ImGui::MenuItem("Build", nullptr, false, buildBlocked.empty()))
+                        RequestBuild(actions, build, mPreferences.buildRunAfter);
+                    BuildMenuTooltip(buildBlocked, mPreferences.buildRunAfter
+                            ? "Packages the game into its output folder, then starts it (Run after build is on)"
+                            : "Packages the game into its output folder");
+                    if (ImGui::MenuItem("Build and Run", "Ctrl+B", false, buildBlocked.empty()))
+                        RequestBuild(actions, build, true);
+                    BuildMenuTooltip(buildBlocked, "Packages the game, then starts it");
+                    if (ImGui::MenuItem("Build Settings...", "Ctrl+Shift+B"))
                         mShowBuildSettings = mFocusBuildSettings = true;
                     ImGui::EndMenu();
                 }
@@ -1640,16 +1666,22 @@ namespace mir
                 ImGui::End();
             }
 
+            // the Save or Cancel prompt is drawn there, so a build from the menu or Ctrl+B opens it
+            if (!build.mAskSave.empty() && !mShowBuildSettings)
+                mShowBuildSettings = mFocusBuildSettings = true;
+            mBuildSettingsVisible = false;
             if (mShowBuildSettings)
             {
                 if (std::exchange(mFocusBuildSettings, false))
                     ImGui::SetNextWindowFocus();
                 if (ImGui::Begin("Build Settings", &mShowBuildSettings))
                 {
+                    mBuildSettingsVisible = true;
                     const BuildSettingsRequest request = mBuildSettingsPanel.Draw(mPreferences, mBuildGame, build);
                     if (request.mSavePreferences && !mPreferences.SaveFile(mPreferencesPath))
                         mBuildSettingsPanel.SetStatus("Save failed - see log.");
-                    actions.mBuild = request.mBuild;
+                    if (request.mBuild.mCommand != BuildCommand::None)
+                        actions.mBuild = request.mBuild;
                 }
                 ImGui::End();
             }
@@ -1657,6 +1689,7 @@ namespace mir
             {
                 mBuildSettingsPanel.OnHidden();
             }
+            DrawBuildToast(build, actions);
 
             if (mShowInputSettings)
             {
@@ -1945,6 +1978,133 @@ namespace mir
 
         ImGui::End();
         ImGui::PopStyleVar();
+    }
+
+    void Editor::RequestBuild(EditorActions &actions, const BuildJobView &build, bool run)
+    {
+        if (const std::string blocked = BuildBlockedText(build); !blocked.empty())
+        {
+            ShowBuildNote(blocked);
+            return;
+        }
+        actions.mBuild = MakeBuildAction(
+            BuildCommand::Build, mPreferences, mBuildGame, ReadBuildProfile(mBuildGame.mProjectSettingsPath), run);
+    }
+
+    void Editor::UpdateBuildShortcuts(EditorActions &actions, const EngineModeState &mode, const BuildJobView &build)
+    {
+        // the game has the keys while it plays
+        const ImGuiIO &io = ImGui::GetIO();
+        if (mode.mMode != EngineMode::Edit || io.WantTextInput || !io.KeyCtrl || io.KeyAlt ||
+            !ImGui::IsKeyPressed(ImGuiKey_B, false))
+            return;
+        if (io.KeyShift)
+            mShowBuildSettings = mFocusBuildSettings = true;
+        else
+            RequestBuild(actions, build, true);
+    }
+
+    void Editor::ShowBuildNote(std::string note)
+    {
+        mBuildNote = std::move(note);
+        mBuildNoteAt = ImGui::GetTime();
+    }
+
+    void Editor::DrawBuildToast(const BuildJobView &build, EditorActions &actions)
+    {
+        constexpr double kResultSeconds = 8.0;
+        constexpr double kNoteSeconds = 4.0;
+        constexpr float kWidth = 420.0f;
+        constexpr float kMargin = 16.0f;
+
+        const double now = ImGui::GetTime();
+        if (build.mFinished != mToastFinished)
+        {
+            mToastFinished = build.mFinished;
+            mToastAt = now;
+            mToastClosed = false;
+        }
+
+        // Build Settings shows its own running line
+        const bool running = build.mRunning && !mBuildSettingsVisible;
+        std::optional<BuildNotice> notice;
+        if (!build.mRunning && build.mResult != nullptr && mToastAt >= 0.0 && !mToastClosed)
+        {
+            BuildNotice ended = BuildNoticeFor(*build.mResult, mBuildGame.mName);
+            if (ended.mStays || now - mToastAt < kResultSeconds)
+                notice = std::move(ended);
+        }
+        const bool note = !mBuildNote.empty() && now - mBuildNoteAt < kNoteSeconds;
+        if (!running && !notice && !note)
+            return;
+
+        const ImGuiViewport *viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - kMargin,
+                                    viewport->WorkPos.y + viewport->WorkSize.y - kMargin),
+            ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::SetNextWindowBgAlpha(0.95f);
+        constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking;
+        if (ImGui::Begin("##BuildToast", nullptr, kFlags))
+        {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kWidth);
+            const auto openSettings = [this] {
+                if (ImGui::Button("Build Settings"))
+                    mShowBuildSettings = mFocusBuildSettings = true;
+            };
+
+            if (note)
+                ImGui::TextUnformatted(mBuildNote.c_str());
+            if (running)
+            {
+                ImGui::Text("Building %s... %.0f s", mBuildGame.mName.c_str(), build.mSeconds);
+                const BuildJobProgress &progress = build.mProgress;
+                if (!progress.mStep.empty())
+                    ImGui::TextDisabled("%s", BuildProgressText(progress).c_str());
+                if (progress.mTotal > 0)
+                    ImGui::ProgressBar(std::min(static_cast<float>(progress.mDone) / static_cast<float>(progress.mTotal), 1.0f),
+                        ImVec2(kWidth, 0.0f));
+                if (ImGui::Button("Cancel") && actions.mBuild.mCommand == BuildCommand::None)
+                    actions.mBuild.mCommand = BuildCommand::Cancel;
+                ImGui::SetItemTooltip("Stops the build; the previous template and build stay as they were");
+                ImGui::SameLine();
+                openSettings();
+            }
+            else if (notice)
+            {
+                std::optional<ImVec4> color;
+                if (notice->mKind == BuildNotice::Kind::Success)
+                    color = EditorTheme::Color(ThemeColor::Success);
+                else if (notice->mKind == BuildNotice::Kind::Warning)
+                    color = EditorTheme::Color(StatusColor::Warning);
+                else if (notice->mKind == BuildNotice::Kind::Failure)
+                    color = EditorTheme::Color(StatusColor::Danger);
+                if (color)
+                    ImGui::PushStyleColor(ImGuiCol_Text, *color);
+                ImGui::TextUnformatted(notice->mText.c_str());
+                if (color)
+                    ImGui::PopStyleColor();
+
+                if (!notice->mExecutable.empty())
+                {
+                    if (ImGui::Button("Show in Explorer") && !RevealInFileBrowser(notice->mExecutable))
+                        ShowBuildNote("Could not open Explorer; see the log");
+                    ImGui::SetItemTooltip("%s", ToUtf8(notice->mExecutable).c_str());
+                    ImGui::SameLine();
+                }
+                if (notice->mOpenSettings)
+                {
+                    openSettings();
+                    ImGui::SameLine();
+                }
+                if (ImGui::Button("Close"))
+                    mToastClosed = true;
+            }
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::End();
     }
 
     void Editor::UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode)

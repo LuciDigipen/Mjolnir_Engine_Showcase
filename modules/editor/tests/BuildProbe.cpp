@@ -3,7 +3,7 @@
  * @author Quy Dong Ta
  * @brief Child process for BuildJob.tests.cpp: swaps a build into --out, or a template into --game-build, as
  *        MjolnirBuild does, stops where the --game folder's name says, writes --progress as a compile would, and
- *        waits to be canceled without writing a report.
+ *        waits to be canceled without writing a report. With no arguments it is a game that keeps running.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -17,6 +17,13 @@
 int main(int argc, char **argv)
 {
     namespace fs = std::filesystem;
+
+    // copied in as a template's exe, it is the game Build and Run starts with no arguments
+    if (argc == 1)
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(60));
+        return 0;
+    }
 
     fs::path game;
     fs::path gameBuild;
