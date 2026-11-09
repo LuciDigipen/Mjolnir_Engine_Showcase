@@ -9,11 +9,18 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace mir
 {
+    struct EditorPreferences;
+    struct ContentBrowserPreview
+    {
+        uint64_t mImage = 0;
+        uint32_t mWidth = 0, mHeight = 0;
+    };
     // A Prefab row's content path, as a drag payload for the Hierarchy and the scene viewport.
     inline constexpr const char *kPrefabContentPayload = "MIR_PREFAB_CONTENT";
     inline constexpr const char *kParticleContentPayload = "MIR_PARTICLE_CONTENT";
@@ -35,6 +42,7 @@ namespace mir
 
     struct ContentBrowserView
     {
+        std::function<ContentBrowserPreview(const std::string &)> mPreview;
         std::string mContentRoot; // display only, e.g. "games/HelloWorld"
         std::string mLastError;
         std::vector<ContentBrowserEntryView> mEntries; // every file/dir under the content root, flat
@@ -57,6 +65,7 @@ namespace mir
 
     struct ContentBrowserAction
     {
+        bool mPreferencesChanged = false;
         ContentBrowserActionKind mKind = ContentBrowserActionKind::None;
         std::string mTargetPath;
         std::string mNewName;
@@ -65,11 +74,13 @@ namespace mir
     class ContentBrowserPanel
     {
     public:
-        ContentBrowserAction Draw(const ContentBrowserView &view);
+        ContentBrowserAction Draw(const ContentBrowserView &view, EditorPreferences &preferences);
         const std::string &SelectedPath() const { return mSelectedPath; }
 
     private:
-        void DrawEntries(const ContentBrowserView &view, ContentBrowserAction &action);
+        void DrawEntries(const ContentBrowserView &view, ContentBrowserAction &action, EditorPreferences &preferences);
+        void DrawEntry(const ContentBrowserEntryView &entry, ContentBrowserAction &action, bool grid,
+            float size, const ContentBrowserView &view);
         void DrawDeleteConfirm(ContentBrowserAction &action);
 
         std::string mCurrentFolder;

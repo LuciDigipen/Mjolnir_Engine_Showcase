@@ -166,6 +166,8 @@ namespace mir
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
+        size_t ContentThumbnailCapacity() const { return mPreferences.contentThumbnailCapacity; }
+
         const std::string &ContentBrowserSelection() const { return mContentBrowserPanel.SelectedPath(); }
 
         void UpdateCamera(float dt);

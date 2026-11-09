@@ -7,6 +7,7 @@
  *
  */
 #include <editor/BackgroundImage.h>
+#include <editor/ImageDecode.h>
 
 #include <core/fs/FileIO.h>
 #include <core/log/Log.h>
@@ -15,9 +16,6 @@
 // RegisterUserTexture and UnregisterUserTexture
 #include <imgui_internal.h>
 
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
 
 #include <glm/common.hpp>
 
@@ -154,41 +152,14 @@ namespace mir
             return false;
         }
 
-        const std::optional<std::vector<std::byte>> bytes = ReadBytes(path);
-        if (!bytes || bytes->empty() || bytes->size() > static_cast<size_t>(INT_MAX))
-        {
-            error = "cannot read the file";
+        DecodedImage image;
+        if (!ReadImage(path, kMaxSide, image, error))
             return false;
-        }
-
-        const auto *data = reinterpret_cast<const stbi_uc *>(bytes->data());
-        const int size = static_cast<int>(bytes->size());
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-        if (stbi_info_from_memory(data, size, &width, &height, &channels) == 0 || width <= 0 || height <= 0)
-        {
-            error = std::string("not a supported image (") + stbi_failure_reason() + ")";
-            return false;
-        }
-        if (width > kMaxSide || height > kMaxSide)
-        {
-            error = std::to_string(width) + "x" + std::to_string(height) + " is over " + std::to_string(kMaxSide) +
-                    " px per side";
-            return false;
-        }
-
-        std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> pixels(
-            stbi_load_from_memory(data, size, &width, &height, &channels, 4), stbi_image_free);
-        if (pixels == nullptr)
-        {
-            error = std::string("cannot decode the image (") + stbi_failure_reason() + ")";
-            return false;
-        }
+        const int width = image.mWidth, height = image.mHeight;
 
         auto *texture = new ImTextureData;
         texture->Create(ImTextureFormat_RGBA32, width, height);
-        std::memcpy(texture->GetPixels(), pixels.get(), static_cast<size_t>(width) * height * 4);
+        std::memcpy(texture->GetPixels(), image.mPixels.get(), static_cast<size_t>(width) * height * 4);
         texture->UseColors = true;
         texture->UsedRect = ImTextureRect{0, 0, static_cast<unsigned short>(width), static_cast<unsigned short>(height)};
         ImGui::RegisterUserTexture(texture);
