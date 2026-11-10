@@ -328,6 +328,11 @@ namespace mir
             ImGui::TextColored(EditorTheme::Color(ThemeColor::Success), "Built in %.1f s: %zu assets, %.1f MB.",
                 result.mSeconds, result.mAssets, static_cast<double>(result.mBytes) / 1e6);
             ImGui::TextWrapped("%s starts it.", CheckoutPath(result.mExecutable, game.mSourceRoot).c_str());
+            // Build and Run, or Run after build
+            if (result.mStarted)
+                ImGui::TextDisabled("Started it after the build.");
+            else if (!result.mStartError.empty())
+                Line(result.mStartError, EditorTheme::Color(StatusColor::Warning));
             break;
         case BuildOutcome::Failed:
             Line("build failed: " + result.mError, EditorTheme::Color(StatusColor::Danger));

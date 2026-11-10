@@ -436,6 +436,7 @@ TEST_CASE("Build and Run says when the built game cannot start, and the build st
     const BuildNotice notice = BuildNoticeFor(result, "Demo");
     CHECK(notice.mKind == BuildNotice::Kind::Warning);
     CHECK(notice.mStays);
+    CHECK(notice.mOpenSettings);
     CHECK(notice.mExecutable == result.mExecutable);
 }
 
@@ -459,6 +460,16 @@ TEST_CASE("The toast says how a build ended, offering Explorer for a built game 
     CHECK(notice.mKind == BuildNotice::Kind::Warning);
     CHECK(notice.mText == "Built and started Demo in 12.3 s, with 2 warnings");
     CHECK(notice.mOpenSettings);
+
+    // a game that could not start keeps Build Settings, where its warnings and the start error stay
+    built.mStarted = false;
+    built.mStartError = "could not start C:/out/Demo.exe; see the log";
+    notice = BuildNoticeFor(built, "Demo");
+    CHECK(notice.mKind == BuildNotice::Kind::Warning);
+    CHECK(notice.mText == "Built Demo in 12.3 s, but could not start C:/out/Demo.exe; see the log");
+    CHECK(notice.mOpenSettings);
+    CHECK(notice.mStays);
+    CHECK(notice.mExecutable == built.mExecutable);
 
     BuildResult failed;
     failed.mError = "compiling the game build with game-release failed:\n  a.cpp(1): error C2065: 'x'\n"

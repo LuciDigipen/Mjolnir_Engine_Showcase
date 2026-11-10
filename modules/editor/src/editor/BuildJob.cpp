@@ -132,10 +132,10 @@ namespace mir
         {
         case BuildOutcome::Succeeded:
             notice.mExecutable = result.mExecutable;
+            // Build Settings keeps the start error and any warnings once the toast is closed
             if (!result.mStartError.empty())
             {
-                notice = { BuildNotice::Kind::Warning, "Built " + name + " in " + seconds + ", but " + result.mStartError,
-                    result.mExecutable, false, true };
+                notice = { BuildNotice::Kind::Warning, "Built " + name + " in " + seconds + ", but " + result.mStartError, result.mExecutable, true, true };
                 break;
             }
             notice.mKind = BuildNotice::Kind::Success;

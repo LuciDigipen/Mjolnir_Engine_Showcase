@@ -493,16 +493,19 @@ toast says how: "Built HelloWorld in 12.3 s" with **Show in Explorer**, which
 opens the output folder with the exe selected, or "Built and started" after
 Build and Run. A build with warnings, a failure, or a game that could not start
 also offers Build Settings for the whole message and Log. Successes fade after
-8 s; a failure stays until it is closed.
+8 s; a failure, or a game that could not start, stays until it is closed.
+Build Settings' result keeps it either way: it says when the game was started,
+or why it could not be, next to the warnings.
 
 The build reads the game from disk, so:
 
 - **Unsaved changes** to the scene or any Prefab ask Save and Build or Cancel.
   Save writes every unsaved Prefab and the scene, and the build starts the frame
   after, once the scene is written. If the save fails, nothing is built.
-  `--non-interactive` answers Cancel. A build from the File menu or Ctrl+B
-  opens Build Settings for the question, and Save and Build keeps whether it
-  was Build and Run.
+  `--non-interactive` answers Cancel. The question is asked in Build Settings,
+  so while it waits the window is opened, expanded and brought in front of any
+  tab docked with it; a build from the File menu or Ctrl+B shows it too. Save
+  and Build keeps whether it was Build and Run.
 - **The game still running** from the last build fails the build in `check`,
   saying which program to close; see [Packaging a game](#packaging-a-game).
 - **Play, a running asset import, or an unusable template** with Compile the

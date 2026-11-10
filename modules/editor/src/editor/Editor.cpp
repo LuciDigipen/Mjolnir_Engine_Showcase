@@ -1666,14 +1666,18 @@ namespace mir
                 ImGui::End();
             }
 
-            // the Save or Cancel prompt is drawn there, so a build from the menu or Ctrl+B opens it
-            if (!build.mAskSave.empty() && !mShowBuildSettings)
+            // The Save or Cancel prompt is drawn there, so while one waits the window is shown, expanded and brought
+            // in front: closed, collapsed or behind another tab, it was not drawn last frame
+            if (!build.mAskSave.empty() && !mBuildSettingsVisible)
                 mShowBuildSettings = mFocusBuildSettings = true;
             mBuildSettingsVisible = false;
             if (mShowBuildSettings)
             {
                 if (std::exchange(mFocusBuildSettings, false))
+                {
+                    ImGui::SetNextWindowCollapsed(false);
                     ImGui::SetNextWindowFocus();
+                }
                 if (ImGui::Begin("Build Settings", &mShowBuildSettings))
                 {
                     mBuildSettingsVisible = true;
