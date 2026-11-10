@@ -178,6 +178,8 @@ namespace mir
         std::uint64_t Finished() const { return mFinished; }
 
     private:
+        // reads the report MjolnirBuild left, starting the game only when @p startGame
+        void Complete(int exitCode, bool startGame);
         void Finish(BuildResult result);
 
         ChildProcess mProcess;

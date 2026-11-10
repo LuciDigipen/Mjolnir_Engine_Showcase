@@ -357,10 +357,7 @@ namespace mir
         const std::optional<int> exitCode = mProcess.Poll();
         if (exitCode)
         {
-            BuildResult result = ReadBuildResult(mRequest.mResultFile, *exitCode);
-            if (mRequest.mRun && result.mOutcome == BuildOutcome::Succeeded)
-                StartGame(result);
-            Finish(std::move(result));
+            Complete(*exitCode, mRequest.mRun);
             return;
         }
 
@@ -378,10 +375,11 @@ namespace mir
             return;
 
         mProcess.Terminate();
-        // a report means it finished before it was stopped
+        // a report means it finished before it was stopped: the build stands, but nothing starts, since this is
+        // Cancel or the editor closing
         if (ReadJsonFile(mRequest.mResultFile))
         {
-            Update();
+            Complete(mProcess.Poll().value_or(1), false);
             return;
         }
 
@@ -428,6 +426,19 @@ namespace mir
         if (!mRunning)
             return mResult ? mResult->mSeconds : 0.0;
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - mStarted).count();
+    }
+
+    void BuildJob::Complete(int exitCode, bool startGame)
+    {
+        BuildResult result = ReadBuildResult(mRequest.mResultFile, exitCode);
+        if (result.mOutcome == BuildOutcome::Succeeded)
+        {
+            if (startGame)
+                StartGame(result);
+            else if (mRequest.mRun)
+                MIR_LOG_INFO("Build: it finished before Cancel, so the game was not started");
+        }
+        Finish(std::move(result));
     }
 
     void BuildJob::Finish(BuildResult result)

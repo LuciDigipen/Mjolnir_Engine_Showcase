@@ -522,7 +522,9 @@ The build reads the game from disk, so:
   MjolnirBuild was swapping it out; if it cannot be put back, the result is a
   failure that says so. A Cancel that comes after the new build moved in, but
   before MjolnirBuild finished, says it was too late: the new build is in
-  `<out>`. A half-made `<out>.tmp` stays until the next build removes it.
+  `<out>`. A half-made `<out>.tmp` stays until the next build removes it. A
+  Cancel, or closing the editor, after MjolnirBuild finished but before the
+  editor saw it keeps the finished build, but Build and Run does not start it.
 
 ## Builds without proprietary SDKs and daily CI
 

@@ -415,6 +415,36 @@ TEST_CASE("Build and Run starts the built game, which outlives the build, and a 
     CHECK(locked.mError.ends_with("which keeps the previous build locked; close it and build again"));
     CHECK(ProcessesRunningFrom(sandbox.Out()).size() == 1);
 }
+
+TEST_CASE("A Build and Run canceled after its report is written keeps the build and starts nothing", "[build-job]")
+{
+    BuildSandbox sandbox;
+    const StopRunningFrom stop{ sandbox.Out() };
+    fs::copy_file(MIR_EDITOR_BUILD_PROBE, sandbox.GameBuildDir() / "MjolnirEngine.exe", fs::copy_options::overwrite_existing);
+    BuildJobRequest request = sandbox.Request();
+    request.mRun = true;
+
+    std::optional<BuildJob> job(std::in_place);
+    REQUIRE(job->Start(request));
+    // finished, and not yet seen by Update
+    WaitUntil([&] { return fs::exists(request.mResultFile); });
+
+    SECTION("Cancel")
+    {
+        job->Cancel();
+        REQUIRE(job->Result());
+        const BuildResult &result = *job->Result();
+        INFO(result.mError);
+        CHECK(result.mOutcome == BuildOutcome::Succeeded);
+        CHECK_FALSE(result.mStarted);
+        CHECK(result.mStartError.empty());
+        CHECK(BuildNoticeFor(result, "Demo").mText.starts_with("Built Demo in "));
+    }
+    SECTION("the editor closing") { job.reset(); }
+
+    CHECK(fs::exists(sandbox.Out() / "Demo.exe"));
+    CHECK(ProcessesRunningFrom(sandbox.Out()).empty());
+}
 #endif
 
 TEST_CASE("Build and Run says when the built game cannot start, and the build still counts", "[build-job]")
