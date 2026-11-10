@@ -236,9 +236,13 @@ namespace mir
         return removeAction;
     }
 
-    void InputSettingsPanel::Draw(InputMap &inputMap, const RawInputSnapshot &raw,
+    void InputSettingsPanel::Draw(InputMap &sharedSettings, const RawInputSnapshot &raw,
         const std::filesystem::path &savePath)
     {
+        if (!mDraft)
+            mDraft = sharedSettings;
+        InputMap &inputMap = *mDraft;
+
         ImGui::SetNextItemWidth(160.0f);
         ImGui::InputTextWithHint("##NewActionName", "New action name...", mNewActionName, sizeof(mNewActionName));
 
@@ -263,7 +267,10 @@ namespace mir
         ImGui::SameLine();
         if (ImGui::Button("Save"))
         {
-            mStatusMessage = inputMap.SaveFile(savePath) ? "Saved." : "Save failed - see log.";
+            const bool saved = inputMap.SaveFile(savePath);
+            if (saved)
+                sharedSettings = inputMap;
+            mStatusMessage = saved ? "Saved." : "Save failed - see log.";
             mSavedCopy = inputMap;
         }
 

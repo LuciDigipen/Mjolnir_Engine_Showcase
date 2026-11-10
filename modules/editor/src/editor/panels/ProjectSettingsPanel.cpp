@@ -41,14 +41,18 @@ namespace mir
         }
     }
 
-    void ProjectSettingsPanel::DrawRendering(RenderSettings &renderSettings, const std::filesystem::path &savePath)
+    void ProjectSettingsPanel::DrawRendering(RenderSettings &sharedSettings, const std::filesystem::path &savePath)
     {
+        if (!mRenderingDraft)
+            mRenderingDraft = sharedSettings;
+        RenderSettings &renderSettings = *mRenderingDraft;
+
         ImGui::SeparatorText("Rendering");
 
         ImGui::Checkbox("Ray Tracing", &renderSettings.rayTracing);
 
         // Typing can pass through a value DdgiSettings rejects, so the widgets edit a copy while one is active
-        // and the shared value changes only when the copy is valid.
+        // and the draft changes only when the copy is valid.
         DdgiSettings gi = mDdgiEdit ? *mDdgiEdit : renderSettings.ddgi;
         bool giEdited = false;
         bool giActive = false;
@@ -80,7 +84,7 @@ namespace mir
                 if (ImGui::Button("Fit to resident scene bounds"))
                 {
                     const char *error = gi.FitBounds(bounds->minimum, bounds->maximum, mGiPadding);
-                    // A fit is an edit like any other, so it reaches the shared settings only when valid.
+                    // A fit reaches the draft only when valid and applies when Save succeeds.
                     trackGi(error == nullptr);
                     mGiFitStatus = error ? error : "Fitted. Save to write it to the project file.";
                     if (error)
@@ -138,7 +142,7 @@ namespace mir
             mDdgiEdit.reset();
 
         // Typing can pass through a value SsgiSettings rejects, so the widgets edit a copy while one is active
-        // and the shared value changes only when the copy is valid.
+        // and the draft changes only when the copy is valid.
         SsgiSettings ssgi = mSsgiEdit ? *mSsgiEdit : renderSettings.ssgi;
         bool ssgiEdited = false;
         bool ssgiActive = false;
@@ -186,7 +190,10 @@ namespace mir
         ImGui::BeginDisabled(giError != nullptr || ssgiError != nullptr);
         if (ImGui::Button("Save##Rendering"))
         {
-            mRenderingStatusMessage = renderSettings.SaveFile(savePath) ? "Saved." : "Save failed - see log.";
+            const bool saved = renderSettings.SaveFile(savePath);
+            if (saved)
+                sharedSettings = renderSettings;
+            mRenderingStatusMessage = saved ? "Saved." : "Save failed - see log.";
             mRenderingSavedCopy = renderSettings;
         }
         ImGui::EndDisabled();
@@ -205,28 +212,31 @@ namespace mir
 
         ImGui::BeginDisabled(!editing);
         ImGui::PushID("defaults");
-        EditorAudioLevels defaults = audio.Defaults();
-        bool defaultsChanged = DrawAudioChannel("Music", defaults.mMusic);
-        defaultsChanged |= DrawAudioChannel("SFX", defaults.mSfx);
+        if (!mAudioDraft)
+            mAudioDraft = audio.Defaults();
+        EditorAudioLevels &defaults = *mAudioDraft;
+        DrawAudioChannel("Music", defaults.mMusic);
+        DrawAudioChannel("SFX", defaults.mSfx);
         ImGui::PopID();
-        if (defaultsChanged)
-            audio.SetDefaults(defaults);
 
-        if (!mAudioStatus.empty() && audio.Defaults() != mAudioSavedCopy)
+        if (!mAudioStatus.empty() && defaults != mAudioSavedCopy)
             mAudioStatus.clear();
 
         // Heard by a player with no settings file of their own, through the apply path, not by this session.
         if (ImGui::Button("Save##Audio"))
         {
-            mAudioStatus = audio.SaveDefaults(audio.Defaults()) ? "Saved." : "Save failed - see log.";
-            mAudioSavedCopy = audio.Defaults();
+            mAudioStatus = audio.SaveDefaults(defaults) ? "Saved." : "Save failed - see log.";
+            mAudioSavedCopy = defaults;
         }
         ImGui::SameLine();
         if (ImGui::Button("Reload Saved Audio Defaults##Audio"))
         {
             std::string problem;
-            mAudioStatus = audio.ReloadDefaults(problem) ? "Reloaded." : "Not reloaded: " + problem + ".";
-            mAudioSavedCopy = audio.Defaults();
+            const bool reloaded = audio.ReloadDefaults(problem);
+            mAudioStatus = reloaded ? "Reloaded." : "Not reloaded: " + problem + ".";
+            if (reloaded)
+                defaults = audio.Defaults();
+            mAudioSavedCopy = defaults;
         }
         ImGui::EndDisabled();
 
@@ -298,7 +308,7 @@ namespace mir
     }
 
     // Into a temporary first, so a broken file leaves the project's table as it is.
-    void ProjectSettingsPanel::ReloadLayers(const std::filesystem::path &savePath, PhysicsLayerTable &sharedLayers)
+    bool ProjectSettingsPanel::ReloadLayers(const std::filesystem::path &savePath, PhysicsLayerTable &sharedLayers)
     {
         try
         {
@@ -307,14 +317,16 @@ namespace mir
             if (!problem.empty())
             {
                 mLayersStatus = "Not reloaded: " + problem + ".";
-                return;
+                return false;
             }
             sharedLayers = saved;
             mLayersStatus = "Reloaded.";
+            return true;
         }
         catch (const SetupError &error)
         {
             mLayersStatus = std::string("Not reloaded: ") + std::string(error.Cause()) + ".";
+            return false;
         }
     }
 
@@ -327,7 +339,9 @@ namespace mir
             ImGui::TextDisabled("No physics layers in this scene.");
             return;
         }
-        PhysicsLayerTable &layers = *sharedLayers;
+        if (!mLayersDraft)
+            mLayersDraft = *sharedLayers;
+        PhysicsLayerTable &layers = *mLayersDraft;
         ImGui::TextWrapped("A body is on one layer and collides with the layers ticked below. Layer 0 is Default.");
 
         if (!editing)
@@ -350,7 +364,7 @@ namespace mir
                                   (editingSlot ? mLayerNameEdit->text : layers.names[i]).c_str());
                     if (ImGui::InputTextWithHint("##name", "unused", name, sizeof(name)))
                     {
-                        // A copy takes the name first, so a rejected table never reaches the shared one.
+                        // A copy takes the name first, so a rejected table never reaches the draft.
                         PhysicsLayerTable candidate = layers;
                         candidate.names[i] = name;
                         if (candidate.names[i].empty())
@@ -420,11 +434,17 @@ namespace mir
             else if (!WritePhysicsLayers(savePath, layers))
                 mLayersStatus = "Save failed - see log.";
             else
+            {
+                *sharedLayers = layers;
                 mLayersStatus = "Saved.";
+            }
         }
         ImGui::SameLine();
         if (ImGui::Button("Reload Saved Physics Layers##Layers"))
-            ReloadLayers(savePath, layers);
+        {
+            if (ReloadLayers(savePath, *sharedLayers))
+                layers = *sharedLayers;
+        }
 
         if (!editing)
             ImGui::EndDisabled();

@@ -13,6 +13,7 @@
 #include <renderer/PostProcessingSettings.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace mir
@@ -25,10 +26,12 @@ namespace mir
 
         void OnHidden()
         {
+            mDraft.reset();
             mStatusMessage.clear();
         }
 
     private:
+        std::optional<PostProcessingSettings> mDraft;
         std::string mStatusMessage;
         // The settings as of the last Save; a further edit clears the message before it goes stale.
         PostProcessingSettings mSavedCopy;
