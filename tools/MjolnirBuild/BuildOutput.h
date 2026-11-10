@@ -63,6 +63,10 @@ namespace mir::build
     // An empty, marked staging folder for out, replacing one a failed build left. Throws std::runtime_error
     std::filesystem::path BeginStaging(const std::filesystem::path &out);
 
+    // Why dir, or the .tmp and .old folders beside it, cannot be replaced: a program running from one of them, such as
+    // the game from its previous build, holds its files. @p what names dir, e.g. "the previous build"
+    std::optional<std::string> LockedBuildProblem(const std::filesystem::path &dir, std::string_view what);
+
     // Moves staging into out's place. Throws std::runtime_error, leaving out as it was
     void CommitStaging(const std::filesystem::path &staging, const std::filesystem::path &out);
 

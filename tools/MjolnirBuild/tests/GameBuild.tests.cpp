@@ -283,6 +283,33 @@ TEST_CASE("A ready-made template that is not what the game chose is warned about
     CHECK(HasWarning(silent, "SoundBanks"));
 }
 
+TEST_CASE("A build over a game still running from the output stops in check, and the previous build stays",
+    "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Demo";
+    REQUIRE(RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut)).mOk);
+
+    {
+        RunningProgram running(fixture.mOut, "Demo.exe");
+        const BuildReport locked = RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut));
+        CHECK_FALSE(locked.mOk);
+        CHECK(locked.mError.starts_with("Demo.exe is running from " + PathText(fixture.mOut) + " (process "));
+        REQUIRE_FALSE(locked.mSteps.empty());
+        CHECK(locked.mSteps[0].mName == "check");
+        CHECK(locked.mSteps[0].mStatus == StepStatus::Failed);
+        const BuildStep *cook = FindStep(locked, "cook");
+        CHECK((cook == nullptr || cook->mStatus != StepStatus::Succeeded));
+        CHECK(IsBuildDir(fixture.mOut));
+        CHECK_FALSE(fs::exists(StagingDir(fixture.mOut)));
+    }
+
+    // closed, the same build goes through
+    const BuildReport rebuilt = RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut));
+    INFO(rebuilt.mError);
+    CHECK(rebuilt.mOk);
+}
+
 TEST_CASE("An editor game_build_info.json that cannot be read is warned about", "[game-build]")
 {
     Fixture fixture;

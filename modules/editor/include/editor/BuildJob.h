@@ -1,7 +1,8 @@
 /**
  * @file BuildJob.h
  * @author Quy Dong Ta
- * @brief File > Build Settings' Build: MjolnirBuild run in the background, and what it reported.
+ * @brief File > Build and Build Settings' Build: MjolnirBuild run in the background, the game started once it is
+ *        built, and what it reported.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mir
@@ -49,7 +51,32 @@ namespace mir
         std::size_t mAssets = 0;
         std::uintmax_t mBytes = 0;
         double mSeconds = 0.0;
+        // a build asked to run the game: it started, or why not
+        bool mStarted = false;
+        std::string mStartError;
     };
+
+    // What the editor's toast says when a build ends
+    struct BuildNotice
+    {
+        enum class Kind
+        {
+            Info,
+            Success,
+            Warning,
+            Failure,
+        };
+        Kind mKind = Kind::Info;
+        std::string mText;
+        // the exe to show in Explorer, empty when there is none
+        std::filesystem::path mExecutable;
+        // the whole message and the Log are in Build Settings
+        bool mOpenSettings = false;
+        // stays until it is closed, rather than fading
+        bool mStays = false;
+    };
+
+    BuildNotice BuildNoticeFor(const BuildResult &result, std::string_view game);
 
     struct BuildJobRequest
     {
@@ -64,6 +91,8 @@ namespace mir
         std::string mGameBuildPreset;
         // MjolnirBuild rewrites it as each step starts, beside mResultFile
         std::filesystem::path mProgressFile;
+        // starts the built game, detached, once the build succeeds
+        bool mRun = false;
     };
 
     // What MjolnirBuild's --progress file says
@@ -90,6 +119,8 @@ namespace mir
         std::string mAskSave;
         const BuildResult *mResult = nullptr;
         BuildJobProgress mProgress;
+        // how many builds have ended, so a new result is noticed
+        std::uint64_t mFinished = 0;
     };
 
     // MjolnirBuild beside the editor, from asset_workspace.json; empty when it names none
@@ -144,7 +175,11 @@ namespace mir
         // the running build's, read from its progress file a few times a second
         const BuildJobProgress &Progress() const { return mProgress; }
 
+        std::uint64_t Finished() const { return mFinished; }
+
     private:
+        // reads the report MjolnirBuild left, starting the game only when @p startGame
+        void Complete(int exitCode, bool startGame);
         void Finish(BuildResult result);
 
         ChildProcess mProcess;
@@ -156,5 +191,6 @@ namespace mir
         std::optional<std::filesystem::file_time_type> mPreviousMarker;
         bool mRunning = false;
         std::optional<BuildResult> mResult;
+        std::uint64_t mFinished = 0;
     };
 }

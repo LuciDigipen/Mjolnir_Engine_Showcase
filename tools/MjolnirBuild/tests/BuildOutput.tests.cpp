@@ -286,3 +286,26 @@ TEST_CASE("A report file is written into a folder not made yet, and past a reade
     CHECK(written);
     CHECK(mir::ReadText(file) == "second\n");
 }
+
+TEST_CASE("A folder a program runs from is locked, and the message names the program", "[build-output]")
+{
+    Sandbox sandbox;
+    const fs::path out = sandbox.mRoot / "out";
+    fs::create_directories(out);
+    CHECK_FALSE(LockedBuildProblem(out, "the previous build"));
+
+    {
+        RunningProgram game(out, "Demo.exe");
+        const std::optional<std::string> problem = LockedBuildProblem(out, "the previous build");
+        REQUIRE(problem);
+        CHECK(problem->starts_with("Demo.exe is running from " + PathText(out) + " (process "));
+        CHECK(problem->ends_with("), which keeps the previous build locked; close it and build again"));
+    }
+    CHECK_FALSE(LockedBuildProblem(out, "the previous build"));
+
+    // as is one left in the .old folder beside it
+    RunningProgram previous(PreviousDir(out), "Demo.exe");
+    const std::optional<std::string> problem = LockedBuildProblem(out, "the previous build");
+    REQUIRE(problem);
+    CHECK(problem->find(PathText(PreviousDir(out))) != std::string::npos);
+}
