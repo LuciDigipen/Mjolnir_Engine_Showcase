@@ -262,6 +262,12 @@ CMake build folder and the template. `<out>` must be missing, empty, or a
 previous build, which holds `mjolnir_build.json`, and `<out>.tmp` and
 `<out>.old` must be missing or previous builds. A folder so deep that a file in
 it would pass 259 characters is refused too: the engine cannot open such a path.
+A program running from `<out>`, `<out>.tmp` or `<out>.old`, such as the game
+from the last build, holds files the swap must move, so `check` refuses the
+build in seconds, naming it: `HelloWorld.exe is running from <out> (process
+1234), which keeps the previous build locked; close it and build again`. With
+`--game-build-preset`, the template and its `.tmp` and `.old` are checked the
+same way.
 
 `--result` gets a JSON report, a failed build's included: the status, each
 step's status and time, warnings, the error (or, once built, the exe's path as
@@ -464,15 +470,44 @@ four times a second. While the game build compiles that is Ninja's count, such
 as `Compiling the game build: 412 of 1310`, with a progress bar. The result
 replaces them when the build ends. The result is
 the exe that starts the game, or MjolnirBuild's error, then its warnings and a
-Log of the steps and their times. The same lines go to the Output log. Build
-only packages; it does not start the game.
+Log of the steps and their times. The same lines go to the Output log. With
+**Run after build** on, a successful Build also starts the game.
+
+The File menu starts the same build without opening the window:
+
+- **Build** packages the game, and starts it when Run after build is on.
+- **Build and Run** (Ctrl+B) packages the game and always starts it.
+- **Build Settings...** (Ctrl+Shift+B) opens the window.
+
+The shortcuts work in Edit mode only, so a game in Play keeps its keys. A build
+that cannot start, because one is already running or for one of the reasons
+below, says why in a note at the bottom right instead. The game starts as a
+double-click starts it: with no arguments, in its own folder, and with
+`LaunchProcess(..., false)`, not a `ChildProcess`, so it keeps running when the
+editor closes. Where the editor itself runs in a job object that would end its
+processes with it, the game is started outside it if the job allows that.
+
+A toast at the bottom right shows a build the Build Settings window is not
+showing: the time, the step and Ninja's count, with Cancel. When it ends, the
+toast says how: "Built HelloWorld in 12.3 s" with **Show in Explorer**, which
+opens the output folder with the exe selected, or "Built and started" after
+Build and Run. A build with warnings, a failure, or a game that could not start
+also offers Build Settings for the whole message and Log. Successes fade after
+8 s; a failure, or a game that could not start, stays until it is closed.
+Build Settings' result keeps it either way: it says when the game was started,
+or why it could not be, next to the warnings.
 
 The build reads the game from disk, so:
 
 - **Unsaved changes** to the scene or any Prefab ask Save and Build or Cancel.
   Save writes every unsaved Prefab and the scene, and the build starts the frame
   after, once the scene is written. If the save fails, nothing is built.
-  `--non-interactive` answers Cancel.
+  `--non-interactive` answers Cancel. The question is asked in Build Settings,
+  so while it waits the window is opened, expanded and brought in front of any
+  tab docked with it; a build from the File menu or Ctrl+B shows it too. Save
+  and Build keeps whether it was Build and Run.
+- **The game still running** from the last build fails the build in `check`,
+  saying which program to close; see [Packaging a game](#packaging-a-game).
 - **Play, a running asset import, or an unusable template** with Compile the
   game build off disable Build; the reason shows beside the button and in its
   tooltip.
@@ -487,7 +522,9 @@ The build reads the game from disk, so:
   MjolnirBuild was swapping it out; if it cannot be put back, the result is a
   failure that says so. A Cancel that comes after the new build moved in, but
   before MjolnirBuild finished, says it was too late: the new build is in
-  `<out>`. A half-made `<out>.tmp` stays until the next build removes it.
+  `<out>`. A half-made `<out>.tmp` stays until the next build removes it. A
+  Cancel, or closing the editor, after MjolnirBuild finished but before the
+  editor saw it keeps the finished build, but Build and Run does not start it.
 
 ## Builds without proprietary SDKs and daily CI
 

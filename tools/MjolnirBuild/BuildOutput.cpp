@@ -9,12 +9,14 @@
 #include "BuildOutput.h"
 
 #include <core/fs/FileIO.h>
+#include <core/platform/Process.h>
 
 #include <chrono>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace mir::build
 {
@@ -198,6 +200,21 @@ namespace mir::build
         return staging;
     }
 
+    std::optional<std::string> LockedBuildProblem(const fs::path &dir, std::string_view what)
+    {
+        for (const fs::path &each : { dir, StagingDir(dir), PreviousDir(dir) })
+        {
+            const std::vector<RunningProcess> running = ProcessesRunningFrom(each);
+            if (running.empty())
+                continue;
+            const RunningProcess &process = running.front();
+            return PathText(process.mExecutable.filename()) + " is running from " +
+                PathText(process.mExecutable.parent_path()) + " (process " + std::to_string(process.mId) +
+                "), which keeps " + std::string(what) + " locked; close it and build again";
+        }
+        return std::nullopt;
+    }
+
     void CommitStaging(const fs::path &staging, const fs::path &outDir)
     {
         const fs::path out = NormalizedPath(outDir);
@@ -224,8 +241,13 @@ namespace mir::build
                 movedAside = !ec;
             }
             if (ec)
+            {
+                // started after check, or something else holding a file open
+                if (std::optional<std::string> locked = LockedBuildProblem(out, "the previous build"))
+                    throw std::runtime_error(*locked);
                 throw std::runtime_error("could not move the previous build in " + PathText(out) + " aside (" +
-                    ec.message() + "); is the game still running from it?");
+                    ec.message() + "); is a file in it open in another program?");
+            }
         }
 
         RenameForCommit(staging, out, ec);

@@ -4,13 +4,15 @@
  * @brief A test-only cmake.exe for the game build step: configures, compiles and installs without a compiler,
  *        and appends each call to fake_cmake_calls.txt in the checkout. fake_cmake_fail.txt there names
  *        a phase to fail ("configure", "compile", "install") or "editor" to install an editor build, and
- *        fake_cmake_slow.txt makes the compile take a couple of seconds.
+ *        fake_cmake_slow.txt makes the compile take a couple of seconds. With --sleep <seconds> it only waits, as a
+ *        game left running in a build's folder.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -18,6 +20,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -51,6 +54,13 @@ namespace
 
 int main(int argc, char **argv)
 {
+    // stands in for a game left running in a folder a build replaces
+    if (argc == 3 && std::string_view(argv[1]) == "--sleep")
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(std::atoi(argv[2])));
+        return 0;
+    }
+
     const std::vector<std::string> args(argv + 1, argv + argc);
     std::string call;
     for (const std::string &arg : args)

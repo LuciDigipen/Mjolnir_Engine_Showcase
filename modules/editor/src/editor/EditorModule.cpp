@@ -633,7 +633,7 @@ namespace mir
                 mBuild.Fail("the save failed, so nothing was built; see the log");
                 return;
             }
-            mPendingBuild = action;
+            // mPendingBuild is the Build that asked, which says whether to run the game
             mBuildAfterSave = true;
             break;
         case BuildCommand::DeclineSave:
@@ -661,7 +661,7 @@ namespace mir
             (ec ? ExecutableDir() : temp) / ("mjolnir-editor-build-" + std::to_string(CurrentProcessId()));
         mBuild.Start(BuildJobRequest{ mBuildTool, mProject.mRootDir, action.mGameBuildDir, action.mOutDir,
             std::filesystem::path(stem).concat(".json"), action.mGameBuildPreset,
-            std::filesystem::path(stem).concat(".progress.json") });
+            std::filesystem::path(stem).concat(".progress.json"), action.mRun });
     }
 
     std::string EditorModule::BuildBlockedReason() const
@@ -721,6 +721,7 @@ namespace mir
         view.mAskSave = mBuildAskSave;
         view.mResult = mBuild.Result() ? &*mBuild.Result() : nullptr;
         view.mProgress = mBuild.Progress();
+        view.mFinished = mBuild.Finished();
         return view;
     }
 

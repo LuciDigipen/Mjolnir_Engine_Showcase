@@ -7,6 +7,7 @@
  *
  */
 #include <editor/BuildSettings.h>
+#include <editor/panels/BuildSettingsPanel.h>
 
 #include <serial/JsonFile.h>
 
@@ -297,4 +298,26 @@ TEST_CASE("The options a compile changes are those the template has other than t
     // a template or editor that does not say is no change
     CHECK(ChangedGameBuildOptions(json::object(), choices, editor).empty());
     CHECK(ChangedGameBuildOptions(built, {}, json()).empty());
+}
+
+TEST_CASE("File > Build starts what Build Settings would, and Build and Run runs the game", "[build-settings]")
+{
+    TempCheckout checkout;
+    const BuildGame game = checkout.Game();
+    EditorPreferences preferences;
+    preferences.buildReleaseTemplate = "D:/Templates/release";
+
+    BuildAction action = MakeBuildAction(BuildCommand::Build, preferences, game, BuildProfile::Release, true);
+    CHECK(action.mCommand == BuildCommand::Build);
+    CHECK(action.mGameBuildDir == GameBuildTemplateDir(preferences, game, BuildProfile::Release));
+    CHECK(action.mOutDir == BuildOutputDir(preferences, game));
+    CHECK(action.mGameBuildPreset == "windows-msvc-game-release");
+    CHECK(action.mRun);
+
+    // with Compile the game build off, the template is used as it is
+    preferences.buildCompileGameBuild = false;
+    action = MakeBuildAction(BuildCommand::Build, preferences, game, BuildProfile::Development, false);
+    CHECK(action.mGameBuildDir == DefaultGameBuildTemplate(checkout.root, BuildProfile::Development));
+    CHECK(action.mGameBuildPreset.empty());
+    CHECK_FALSE(action.mRun);
 }

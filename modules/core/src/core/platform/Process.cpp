@@ -1,7 +1,7 @@
 /**
  * @file Process.cpp
  * @author Jackey Cen
- * @brief Starting another process.
+ * @brief Starting another process, finding the ones running from a folder, and showing a file in the file browser.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -13,6 +13,8 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <psapi.h>
+#include <shlobj.h>
+#include <tlhelp32.h>
 #elif defined(__linux__)
 #include <csignal>
 #include <spawn.h>
@@ -382,7 +384,7 @@ namespace mir
 
 #if defined(_WIN32)
     std::optional<int> LaunchProcess(const std::filesystem::path &program, std::span<const std::string> args,
-                                     bool waitForExit)
+                                     bool waitForExit, const std::filesystem::path &workingDirectory)
     {
         std::wstring commandLine = Quote(std::wstring_view(program.native()));
         for (const std::string &arg : args)
@@ -395,12 +397,24 @@ namespace mir
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
         PROCESS_INFORMATION process{};
+        const wchar_t *directory = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
 
-        // CreateProcessW needs a mutable command line
-        if (!CreateProcessW(program.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup,
-                            &process))
+        // Out of a job that would kill it with this process, such as one a debugger or launcher made, a job that
+        // allows no breaking away refuses the flag, so it is started inside the job then
+        const auto start = [&](DWORD flags) -> DWORD {
+            // CreateProcessW needs a mutable command line
+            std::wstring mutableLine = commandLine;
+            if (CreateProcessW(program.c_str(), mutableLine.data(), nullptr, nullptr, FALSE, flags, nullptr, directory,
+                               &startup, &process))
+                return ERROR_SUCCESS;
+            return GetLastError();
+        };
+        DWORD error = start(waitForExit ? 0 : CREATE_BREAKAWAY_FROM_JOB);
+        if (error == ERROR_ACCESS_DENIED && !waitForExit)
+            error = start(0);
+        if (error != ERROR_SUCCESS)
         {
-            MIR_LOG_ERROR("LaunchProcess: could not start '{}' (error {})", program.string(), GetLastError());
+            MIR_LOG_ERROR("LaunchProcess: could not start '{}' (error {})", program.string(), error);
             return std::nullopt;
         }
 
@@ -419,10 +433,88 @@ namespace mir
         CloseHandle(process.hProcess);
         return exitCode;
     }
+
+    namespace
+    {
+        // Lower case with backslashes, for comparing Windows paths
+        std::wstring FoldedPath(const std::filesystem::path &path)
+        {
+            std::wstring text = path.lexically_normal().make_preferred().native();
+            if (!text.empty())
+                CharLowerBuffW(text.data(), static_cast<DWORD>(text.size()));
+            return text;
+        }
+    }
+
+    std::vector<RunningProcess> ProcessesRunningFrom(const std::filesystem::path &dir)
+    {
+        std::vector<RunningProcess> found;
+        // the long names Windows reports an executable by, not a short C:\PROGRA~1 one
+        std::error_code ec;
+        std::filesystem::path base = std::filesystem::weakly_canonical(dir, ec);
+        if (ec)
+            base = std::filesystem::absolute(dir, ec);
+        std::wstring prefix = FoldedPath(base);
+        if (ec || prefix.empty())
+            return found;
+        if (prefix.back() != L'\\')
+            prefix.push_back(L'\\');
+
+        const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snapshot == INVALID_HANDLE_VALUE)
+        {
+            MIR_LOG_ERROR("ProcessesRunningFrom: could not list processes (error {})", GetLastError());
+            return found;
+        }
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        std::wstring image(32768, L'\0');
+        for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
+        {
+            // the system's own processes cannot be opened, and run from nowhere a build writes
+            const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+            if (process == nullptr)
+                continue;
+            DWORD size = static_cast<DWORD>(image.size());
+            const bool named = QueryFullProcessImageNameW(process, 0, image.data(), &size) != FALSE;
+            CloseHandle(process);
+
+            const std::filesystem::path executable(std::wstring_view(image.data(), named ? size : 0));
+            if (named && FoldedPath(executable).starts_with(prefix))
+                found.push_back({ static_cast<uint32_t>(entry.th32ProcessID), executable });
+        }
+        CloseHandle(snapshot);
+        return found;
+    }
+
+    bool RevealInFileBrowser(const std::filesystem::path &file)
+    {
+        std::error_code ec;
+        const std::filesystem::path absolute = std::filesystem::absolute(file, ec).lexically_normal().make_preferred();
+
+        // the shell needs COM on this thread; it may already be there
+        const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        HRESULT shown = E_FAIL;
+        if (PIDLIST_ABSOLUTE item = ILCreateFromPathW(absolute.c_str()))
+        {
+            shown = SHOpenFolderAndSelectItems(item, 0, nullptr, 0);
+            ILFree(item);
+        }
+        if (SUCCEEDED(com))
+            CoUninitialize();
+
+        if (FAILED(shown))
+        {
+            MIR_LOG_ERROR("RevealInFileBrowser: could not show '{}' (HRESULT {:#010x})", absolute.string(),
+                          static_cast<unsigned long>(shown));
+            return false;
+        }
+        return true;
+    }
 #elif defined(__linux__)
     // Untested: no preset builds Linux. A failed exec shows up as exit status 127.
     std::optional<int> LaunchProcess(const std::filesystem::path &program, std::span<const std::string> args,
-                                     bool waitForExit)
+                                     bool waitForExit, const std::filesystem::path &workingDirectory)
     {
         std::vector<std::string> storage;
         storage.reserve(args.size() + 1);
@@ -435,8 +527,14 @@ namespace mir
             argv.push_back(value.data());
         argv.push_back(nullptr);
 
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        if (!workingDirectory.empty())
+            posix_spawn_file_actions_addchdir_np(&actions, workingDirectory.c_str());
         pid_t pid = 0;
-        if (posix_spawn(&pid, storage.front().c_str(), nullptr, nullptr, argv.data(), environ) != 0)
+        const int spawned = posix_spawn(&pid, storage.front().c_str(), &actions, nullptr, argv.data(), environ);
+        posix_spawn_file_actions_destroy(&actions);
+        if (spawned != 0)
         {
             MIR_LOG_ERROR("LaunchProcess: could not start '{}'", program.string());
             return std::nullopt;
@@ -455,10 +553,21 @@ namespace mir
         return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
 #else
-    std::optional<int> LaunchProcess(const std::filesystem::path &program, std::span<const std::string>, bool)
+    std::optional<int> LaunchProcess(
+        const std::filesystem::path &program, std::span<const std::string>, bool, const std::filesystem::path &)
     {
         MIR_LOG_ERROR("LaunchProcess: not supported on this platform, cannot start '{}'", program.string());
         return std::nullopt;
+    }
+#endif
+
+#if !defined(_WIN32)
+    std::vector<RunningProcess> ProcessesRunningFrom(const std::filesystem::path &) { return {}; }
+
+    bool RevealInFileBrowser(const std::filesystem::path &file)
+    {
+        MIR_LOG_ERROR("RevealInFileBrowser: not supported on this platform, cannot show '{}'", file.string());
+        return false;
     }
 #endif
 } // namespace mir

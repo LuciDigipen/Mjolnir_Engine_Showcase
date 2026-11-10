@@ -301,6 +301,9 @@ namespace mir::build
                     CheckOutputDir(request.mOutDir, { inputs.mSourceRoot, inputs.mGameBuildDir }))
                 throw BuildError(*problem);
             inputs.mOutDir = NormalizedPath(request.mOutDir);
+            // the game from the last build, started by Build and Run or a double-click, would fail the swap at the end
+            if (const std::optional<std::string> problem = LockedBuildProblem(inputs.mOutDir, "the previous build"))
+                throw BuildError(*problem);
 
             // The whole game folder, terrain releases included, lands under games/<name>/
             inputs.mLongestGamePath = std::max({ inputs.mExeName.size(),

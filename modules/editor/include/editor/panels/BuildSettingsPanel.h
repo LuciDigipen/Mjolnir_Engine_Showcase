@@ -38,7 +38,13 @@ namespace mir
         std::filesystem::path mOutDir;
         // set when Compile the game build is on
         std::string mGameBuildPreset;
+        // starts the game once it is built: Build and Run, or Run after build
+        bool mRun = false;
     };
+
+    // The Build that Build Settings would start, from the preferences and the profile, for File > Build and Ctrl+B
+    BuildAction MakeBuildAction(BuildCommand command, const EditorPreferences &preferences, const BuildGame &game,
+        BuildProfile profile, bool run);
 
     struct BuildSettingsRequest
     {
