@@ -1,0 +1,1246 @@
+{
+  "aircraft": "Cirrus Vision Jet G2",
+  "configuration": "Family",
+  "livery": "Arrivee Stellar",
+  "parts": [
+    {
+      "name": "part_exterior_caps",
+      "source": "attachments/microsoft/part_exterior_caps/model/sf50_caps_lod00.gltf",
+      "animations": 29,
+      "meshes": 11
+    },
+    {
+      "name": "part_exterior_cargo",
+      "source": "attachments/microsoft/part_exterior_cargo/model/sf50_cargo_lod00.gltf",
+      "animations": 29,
+      "meshes": 9
+    },
+    {
+      "name": "part_exterior_engine",
+      "source": "attachments/microsoft/part_exterior_engine/model/sf50_engine_lod00.gltf",
+      "animations": 29,
+      "meshes": 9
+    },
+    {
+      "name": "part_exterior_fuselage",
+      "source": "attachments/microsoft/part_exterior_fuselage/model/sf50_lod00.gltf",
+      "animations": 29,
+      "meshes": 69
+    },
+    {
+      "name": "part_exterior_fuselage_details",
+      "source": "attachments/microsoft/part_exterior_fuselage_details/model/sf50_details_lod00.gltf",
+      "animations": 29,
+      "meshes": 52
+    },
+    {
+      "name": "part_exterior_gear_bays",
+      "source": "attachments/microsoft/part_exterior_gear_bays/model/sf50_gear_bays_lod00.gltf",
+      "animations": 29,
+      "meshes": 17
+    },
+    {
+      "name": "part_exterior_gear_left",
+      "source": "attachments/microsoft/part_exterior_gear_left/model/sf50_lgear_left_lod00.gltf",
+      "animations": 29,
+      "meshes": 35
+    },
+    {
+      "name": "part_exterior_gear_nose",
+      "source": "attachments/microsoft/part_exterior_gear_nose/model/sf50_lgear_front_lod00.gltf",
+      "animations": 29,
+      "meshes": 38
+    },
+    {
+      "name": "part_exterior_gear_right",
+      "source": "attachments/microsoft/part_exterior_gear_right/model/sf50_lgear_right_lod00.gltf",
+      "animations": 29,
+      "meshes": 38
+    },
+    {
+      "name": "part_exterior_wing_left",
+      "source": "attachments/microsoft/part_exterior_wing_left/model/sf50_wing_l_lod00.gltf",
+      "animations": 29,
+      "meshes": 48
+    },
+    {
+      "name": "part_exterior_wing_right",
+      "source": "attachments/microsoft/part_exterior_wing_right/model/sf50_wing_r_lod00.gltf",
+      "animations": 29,
+      "meshes": 49
+    },
+    {
+      "name": "part_interior_cabin",
+      "source": "attachments/microsoft/part_interior_cabin/model/sf50_cockpit_lod00.gltf",
+      "animations": 167,
+      "meshes": 330
+    },
+    {
+      "name": "part_interior_doors",
+      "source": "attachments/microsoft/part_interior_doors/model/sf50_doors_lod00.gltf",
+      "animations": 96,
+      "meshes": 33
+    },
+    {
+      "name": "part_interior_seats_cockpit",
+      "source": "attachments/microsoft/part_interior_seats_cockpit/model/sf50_seats_pilot_lod00.gltf",
+      "animations": 96,
+      "meshes": 1
+    },
+    {
+      "name": "part_interior_seats_family",
+      "source": "attachments/microsoft/part_interior_seats_family/model/sf50_seats_family_lod00.gltf",
+      "animations": 0,
+      "meshes": 1
+    },
+    {
+      "name": "part_interior_seats_rear",
+      "source": "attachments/microsoft/part_interior_seats_rear/model/sf50_seats_rear_lod00.gltf",
+      "animations": 0,
+      "meshes": 1
+    }
+  ],
+  "excluded": [
+    "part_exterior_extras",
+    "part_exterior_extras_gpu",
+    "part_exterior_registration",
+    "part_interior_seats_executive"
+  ],
+  "notes": [
+    "Shared external tablet and mount attachments are outside the copied airplane folder.",
+    "MSFS-specific wear, rain, detail and visibility shaders require manual review.",
+    "PNG conversion quantizes original RGBA16 UNORM textures to RGBA8; originals remain untouched."
+  ],
+  "texture_count": 653,
+  "material_extensions": {
+    "SF50_CAPS_Details": {},
+    "SF50_CAPS_Decals": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 4
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0
+      }
+    },
+    "Thread_Decals": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 2
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.0,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      }
+    },
+    "SF50_CAPS_Panels": {},
+    "SF50_CAPS_Carbon": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 10.0,
+        "detailNormalTexture": {
+          "index": 13,
+          "scale": 0.3
+        }
+      }
+    },
+    "SF50_Insects": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 50
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendMaskTexture": {
+          "index": 15
+        },
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "mode": "blendMasked",
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0
+      }
+    },
+    "SF50_Dust_Tileable": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 62
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0
+      }
+    },
+    "SF50_Leaks": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 35
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0
+      }
+    },
+    "SF50_Regular_Dirt": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 30
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0
+      }
+    },
+    "SF50_Ext_Invisible_mat": {
+      "ASOBO_material_invisible": {}
+    },
+    "SF50_Cargo_Details": {},
+    "SF50_Cargo_Paint_And_Floor": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailNormalTexture": {
+          "index": 6
+        }
+      }
+    },
+    "SF50_Ext_Decals": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 20
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      },
+      "ASOBO_material_shadow_options": {
+        "noCastShadow": true
+      }
+    },
+    "SF50_Cargo_Paint_And_Floor_NonPainted": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailNormalTexture": {
+          "index": 13
+        }
+      }
+    },
+    "SF50_Rubber": {},
+    "SF50_Cargo_Carbon": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailNormalTexture": {
+          "index": 19,
+          "scale": 0.2
+        }
+      }
+    },
+    "SF50_Cargo_Stitches": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_Engine01": {},
+    "SF50_Engine02": {},
+    "SF50_Engine03": {},
+    "SF50_Engine04": {},
+    "SF50_Engine05": {},
+    "SF50_Engine06": {},
+    "SF50_Engine_Decals": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 15
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_Engine07": {},
+    "SF50_Engine08": {},
+    "SF50_Engine11": {},
+    "SF50_Detail_Decals_Normals_Only": {
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.0,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      }
+    },
+    "SF50_Engine10": {},
+    "SF50_Engine09": {},
+    "SF50_Nacelle_Interior": {},
+    "SF50_Engine_Glass": {
+      "ASOBO_material_glass_v2": {},
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "Collision": {
+      "ASOBO_material_invisible": {},
+      "ASOBO_tags": {
+        "tags": [
+          "Collision"
+        ]
+      }
+    },
+    "SF50_Wings_2": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "IceSystm_mat": {},
+    "SF50_Ext_Decals_Ribbons_mat": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 5
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_Ext_Decals_Ribbons_Norm_Only_mat": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 10
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.0,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      }
+    },
+    "SF50_Ext_Glass_mat": {},
+    "SF50_Fuselage_3": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "SF50_Fuselage_1_NonPainted": {},
+    "SF50_Fuselage_3_NonPainted": {},
+    "LIGHTS": {},
+    "SF50_Fuselage_2": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "FROST": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 2.0,
+        "blendThreshold": 0.1,
+        "detailMetalRoughAOTexture": {
+          "index": 35
+        },
+        "detailNormalTexture": {
+          "index": 34
+        }
+      },
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 30
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.99,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.99,
+        "mode": "frosted",
+        "normalBlendFactor": 0.81,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.99
+      }
+    },
+    "SF50_Mud": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 40
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendMaskTexture": {
+          "index": 38
+        },
+        "blendSharpnessFactor": 1.0,
+        "mode": "blendMasked"
+      }
+    },
+    "WINDSHIELD": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 6.0,
+        "blendThreshold": 0.1,
+        "detailColorTexture": {
+          "index": 45
+        },
+        "detailNormalTexture": {
+          "index": 46
+        }
+      },
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 15
+      },
+      "ASOBO_material_rain_options": {
+        "rainDropScale": 0.5
+      },
+      "ASOBO_material_windshield_v3": {
+        "detail1Opacity": 0.5,
+        "detail1Rough": 0.1,
+        "detail2Opacity": 0.5,
+        "detail2Rough": 0.1,
+        "wiperLines": true
+      },
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "SF50_FLGear_Shell02": {},
+    "SF50_FLGear_Bolt02": {},
+    "SF50_FLGear_Shell02_Non_Paint": {},
+    "SF50_FLGear_04_Non_Paint": {},
+    "SF50_FLGear_02_Non_Paint": {},
+    "SF50_Rivets_Metallic": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 15
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_Rivets_Painted": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 20
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.0,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.3,
+        "roughnessBlendFactor": 0.2
+      }
+    },
+    "SF50_Int_RIBBONS_mat": {
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.0,
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.5
+      }
+    },
+    "FROST_MELT": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 2.0,
+        "blendThreshold": 0.1,
+        "detailMetalRoughAOTexture": {
+          "index": 74
+        },
+        "detailNormalTexture": {
+          "index": 73
+        }
+      },
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 31
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.99,
+        "blendSharpnessFactor": 1.0,
+        "metallicBlendFactor": 0.99,
+        "mode": "frosted",
+        "normalBlendFactor": 0.81,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.99
+      }
+    },
+    "SF50_Ext_Decals_Ribbons_std": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 5
+      }
+    },
+    "FROST_BLAST": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 2.0,
+        "blendThreshold": 0.1,
+        "detailMetalRoughAOTexture": {
+          "index": 87
+        },
+        "detailNormalTexture": {
+          "index": 86
+        }
+      },
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 31
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.99,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.99,
+        "mode": "frosted",
+        "normalBlendFactor": 0.81,
+        "normalOverrideFactor": 0.0,
+        "roughnessBlendFactor": 0.99
+      }
+    },
+    "SF50_Fuselage_1": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "SF50_Fuselage_4": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "SF50_Wings_1": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "SF50_Tail_1": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "SF50_Tail_2": {
+      "ASOBO_material_clear_coat_v2": {},
+      "KHR_materials_clearcoat": {
+        "clearcoatFactor": 0.8,
+        "clearcoatRoughnessFactor": 0.12
+      }
+    },
+    "SF50_Ext-Engine_Inside_mat": {},
+    "SF50_Fuselage_2_NonPainted": {},
+    "SF50_Wings_2_NonPainted": {},
+    "SF50_Runway_Dirt": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 60
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0
+      }
+    },
+    "SF50_Dust_Splash": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 65
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0
+      }
+    },
+    "SF50_ExteriorParts_03": {},
+    "SF50_Livery_Color_3": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 14
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      }
+    },
+    "SF50_Livery_Color_2": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 12
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      }
+    },
+    "SF50_LiveryDecal": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 15
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0
+      }
+    },
+    "SF50_ExteriorParts_01": {},
+    "SF50_Tail_2_NonPainted": {},
+    "SF50_ExteriorParts_Bolts_NonPainted": {},
+    "SF50_ExteriorParts_01_NonPainted": {},
+    "SF50_ExteriorParts_02": {},
+    "SF50_Ext_Decals_Ribbons_top": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 15
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_ExteriorParts_02_NonPainted": {},
+    "SF50_Tail_1_NonPainted": {},
+    "SF50_Engine_Blur": {},
+    "SF50_ExteriorParts_03_NonPainted": {},
+    "SF50_ExteriorParts_Bolts": {},
+    "SF50_FLGear_Shell01": {},
+    "SF50_FLGear_02": {},
+    "SF50_FLGear_Shell01_Non_Paint": {},
+    "SF50_FLGear_Decals02": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_FLGear_Bolt01": {},
+    "SF50_RLGear_Bay": {},
+    "SF50_RLGear_Bolts": {},
+    "SF50_RLGear_02_Non_Paint": {},
+    "SF50_RLGear_04_Non_Paint": {},
+    "SF50_RLGear_Bay_Non_Paint": {},
+    "SF50_RLGear_ScrewDecal": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_RLGear_Decal03": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_RLGear_04": {},
+    "SF50_Tire_Mud": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 38
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendMaskTexture": {
+          "index": 8
+        },
+        "blendSharpnessFactor": 1.0,
+        "mode": "blendMasked"
+      }
+    },
+    "SF50_RLGear_WheelBreak": {},
+    "SF50_LeftGear_Tyre": {},
+    "SF50_RLGear_Decal01": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_RLGear_01_Non_Paint": {},
+    "SF50_RLGear_01": {},
+    "SF50_RLGear_Decal02": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_RLGear_02": {},
+    "SF50_RLGear_03": {},
+    "SF50_RLGear_03_Non_Paint": {},
+    "SF50_FLGear_Bolt03": {},
+    "SF50_FLGear_05_Non_Paint": {},
+    "SF50_FLGear_01": {},
+    "SF50_FLGear_05": {},
+    "SF50_FGear": {},
+    "SF50_FLGear_Decals01": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_FLGear_03": {},
+    "SF50_FLGear_04": {},
+    "SF50_FLGear_Decals04": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_FLGear_Glass": {
+      "ASOBO_material_glass_v2": {},
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "SF50_RightGear_Tyre": {},
+    "SF50_FuelCap": {},
+    "SF50_Livery_Color_1": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 10
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      }
+    },
+    "SF50_Wings_1_NonPainted": {},
+    "SF50_Interior_15": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 13.0,
+        "detailColorTexture": {
+          "index": 4
+        }
+      }
+    },
+    "SF50_OnlyNormal": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 6
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.0,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      }
+    },
+    "SF50_Interior_Decal_01": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 4
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0
+      },
+      "ASOBO_material_shadow_options": {
+        "noCastShadow": true
+      }
+    },
+    "SF50_Interior_13": {},
+    "SF50_Yoke_Detail": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 2.0,
+        "detailNormalTexture": {
+          "index": 16,
+          "scale": 0.65
+        }
+      }
+    },
+    "SF50_Interior_Stitches": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_Cockpit_Screens_Dirt_mat": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 6
+      },
+      "ASOBO_material_glass_v2": {},
+      "ASOBO_material_shadow_options": {
+        "noCastShadow": true
+      },
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "SF50_Cockpit_OCCLUDER_mat": {
+      "ASOBO_material_environment_occluder": {}
+    },
+    "Hitboxes_mat": {
+      "ASOBO_material_invisible": {}
+    },
+    "SF50_Floor02": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 3.0,
+        "detailNormalTexture": {
+          "index": 25
+        }
+      }
+    },
+    "SF50_Emissive_Only": {
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.0,
+        "blendSharpnessFactor": 1.0,
+        "metallicBlendFactor": 0.0,
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      },
+      "ASOBO_material_shadow_options": {
+        "noCastShadow": true
+      }
+    },
+    "$RegistrationNumberInt": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 10
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "normalBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0
+      }
+    },
+    "SF50_Interior_12": {},
+    "SF50_WindShield": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailColorTexture": {
+          "index": 32
+        },
+        "detailNormalTexture": {
+          "index": 33
+        }
+      },
+      "ASOBO_material_disable_motion_blur": {},
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 1
+      },
+      "ASOBO_material_rain_options": {
+        "rainDropScale": 0.5
+      },
+      "ASOBO_material_shadow_options": {
+        "noCastShadow": true
+      },
+      "ASOBO_material_windshield_v3": {
+        "detail1Opacity": 0.5,
+        "detail1Rough": 0.1,
+        "detail2Opacity": 0.5,
+        "detail2Rough": 0.1,
+        "wiperLines": true
+      },
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "SF50_SunVisor01": {
+      "ASOBO_material_disable_motion_blur": {},
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 10
+      },
+      "ASOBO_material_glass_v2": {},
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "SF50_SunVisor02": {
+      "ASOBO_material_disable_motion_blur": {},
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 10
+      },
+      "ASOBO_material_glass_v2": {},
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "$Hourmeter": {},
+    "SF50_Door01": {},
+    "SF50_Door03": {},
+    "SF50_Interior_01": {},
+    "SF50_Interior_02": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 14.0,
+        "detailNormalTexture": {
+          "index": 50,
+          "scale": 0.4
+        }
+      }
+    },
+    "SF50_Interior_03": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 4.0,
+        "detailNormalTexture": {
+          "index": 54,
+          "scale": 0.4
+        }
+      }
+    },
+    "SF50_Interior_04": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 15.0,
+        "detailNormalTexture": {
+          "index": 58,
+          "scale": 0.8
+        }
+      }
+    },
+    "SF50_Interior_05": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 15.0,
+        "detailNormalTexture": {
+          "index": 62,
+          "scale": 0.8
+        }
+      }
+    },
+    "SF50_Interior_06": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailNormalTexture": {
+          "index": 66
+        }
+      }
+    },
+    "SF50_Interior_07": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 15.0,
+        "detailNormalTexture": {
+          "index": 70,
+          "scale": 0.8
+        }
+      }
+    },
+    "SF50_Interior_08": {},
+    "SF50_Interior_09": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 4.0,
+        "detailNormalTexture": {
+          "index": 77,
+          "scale": 0.3
+        }
+      }
+    },
+    "SF50_Interior_10": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 4.0,
+        "detailNormalTexture": {
+          "index": 81,
+          "scale": 0.3
+        }
+      }
+    },
+    "SF50_Floor01": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 2.0,
+        "detailNormalTexture": {
+          "index": 85
+        }
+      }
+    },
+    "SF50_Interior_11": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 6.0,
+        "detailNormalTexture": {
+          "index": 89,
+          "scale": 0.4
+        }
+      }
+    },
+    "SF50_Panel01": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 5.0,
+        "detailNormalTexture": {
+          "index": 93,
+          "scale": 0.3
+        }
+      }
+    },
+    "SF50_Panel02": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 5.0,
+        "detailNormalTexture": {
+          "index": 97,
+          "scale": 0.3
+        }
+      }
+    },
+    "SF50_Interior_14": {},
+    "SF50_Interior_16": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 16.0,
+        "detailColorTexture": {
+          "index": 104
+        },
+        "detailNormalTexture": {
+          "index": 105,
+          "scale": 0.4
+        }
+      }
+    },
+    "SF50_Interior_03_Detail_Map": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 15.0,
+        "detailNormalTexture": {
+          "index": 109,
+          "scale": 0.8
+        }
+      }
+    },
+    "SF50_Interior_09_Detail_Map": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 14.0,
+        "detailMetalRoughAOTexture": {
+          "index": 114
+        },
+        "detailNormalTexture": {
+          "index": 113,
+          "scale": 0.4
+        }
+      }
+    },
+    "SF50_Interior_10_Detail_Map": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 14.0,
+        "detailMetalRoughAOTexture": {
+          "index": 119
+        },
+        "detailNormalTexture": {
+          "index": 118,
+          "scale": 0.4
+        }
+      }
+    },
+    "SF50_Interior_02_Detail": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 4.0,
+        "detailNormalTexture": {
+          "index": 123,
+          "scale": 0.2
+        }
+      }
+    },
+    "SF50_DoorSupport": {},
+    "LIGHTS_MS": {},
+    "SF50_Interior_Decal_02": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "$AS1000_PFD_2": {},
+    "$AS1000_PFD_1": {},
+    "$AS3000_TSC_2": {},
+    "$AS3000_TSC_3": {},
+    "$AS3000_TSC_1": {},
+    "SF50_Pedals": {},
+    "SF50_Cockpit_Ribbons": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 12
+      },
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_Ribbons_NormOnly": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 12
+      },
+      "ASOBO_material_geometry_decal": {
+        "baseColorBlendFactor": 0.05,
+        "blendSharpnessFactor": 1.0,
+        "emissiveBlendFactor": 0.0,
+        "metallicBlendFactor": 0.0,
+        "normalOverrideFactor": 0.0,
+        "occlusionBlendFactor": 0.0,
+        "roughnessBlendFactor": 0.0
+      },
+      "ASOBO_material_shadow_options": {
+        "noCastShadow": true
+      }
+    },
+    "SF50_Interior_15_Detail": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 10.0,
+        "detailMetalRoughAOTexture": {
+          "index": 144
+        },
+        "detailNormalTexture": {
+          "index": 143
+        }
+      }
+    },
+    "Text_Decal_New": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0
+      }
+    },
+    "Material #71167": {
+      "ASOBO_material_invisible": {},
+      "ASOBO_tags": {
+        "tags": [
+          "Collision"
+        ]
+      }
+    },
+    "SF50_Red_Glass": {
+      "ASOBO_material_glass_v2": {},
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "SF50_Interior_Glass": {
+      "ASOBO_material_glass_v2": {},
+      "KHR_materials_transmission": {
+        "transmissionFactor": 0.9
+      },
+      "KHR_materials_ior": {
+        "ior": 1.45
+      }
+    },
+    "COLLISION": {
+      "ASOBO_material_invisible": {},
+      "ASOBO_tags": {
+        "tags": [
+          "Collision"
+        ]
+      }
+    },
+    "New_Battery_Panels": {},
+    "Text_Decal_New_2": {},
+    "SF50_Screen": {},
+    "SF50_Door04": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 2.0,
+        "detailMetalRoughAOTexture": {
+          "index": 20
+        },
+        "detailNormalTexture": {
+          "index": 19,
+          "scale": 0.5
+        }
+      }
+    },
+    "SF50_Door02": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 0.8,
+        "detailMetalRoughAOTexture": {
+          "index": 31
+        },
+        "detailNormalTexture": {
+          "index": 30
+        }
+      }
+    },
+    "SF50_Door_Lock_open": {
+      "ASOBO_material_draw_order": {
+        "drawOrderOffset": 5
+      }
+    },
+    "SF50_Door_Lock_Closed": {},
+    "SF50_Seat_01": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailMetalRoughAOTexture": {
+          "index": 4
+        },
+        "detailNormalTexture": {
+          "index": 3,
+          "scale": 0.5
+        }
+      }
+    },
+    "SF50_Seat_02": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailMetalRoughAOTexture": {
+          "index": 9
+        },
+        "detailNormalTexture": {
+          "index": 8,
+          "scale": 0.5
+        }
+      }
+    },
+    "SF50_Seat_03": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailMetalRoughAOTexture": {
+          "index": 14
+        },
+        "detailNormalTexture": {
+          "index": 13
+        }
+      }
+    },
+    "SF50_Seat_Stiches_Decal": {
+      "ASOBO_material_geometry_decal": {
+        "blendSharpnessFactor": 1.0,
+        "normalOverrideFactor": 0.0
+      }
+    },
+    "SF50_Seat_01_Family": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailMetalRoughAOTexture": {
+          "index": 17
+        },
+        "detailNormalTexture": {
+          "index": 16,
+          "scale": 0.5
+        }
+      }
+    },
+    "SF50_Seat_03_Family": {
+      "ASOBO_material_detail_map": {
+        "UVScale": 8.0,
+        "detailMetalRoughAOTexture": {
+          "index": 22
+        },
+        "detailNormalTexture": {
+          "index": 21,
+          "scale": 0.5
+        }
+      }
+    }
+  },
+  "external_source_root": "../microsoft_sf50"
+}

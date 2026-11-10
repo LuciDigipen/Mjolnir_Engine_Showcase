@@ -1,0 +1,51 @@
+{
+  "id": 1144,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          -539.0086729866339,
+          23.57240954417677,
+          534.362258202911
+        ],
+        "rotation": [
+          0,
+          -0.4067286903285611,
+          0,
+          0.9135489983923213
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {}
+    },
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Cirrus SF50 - Arrivee Stellar"
+      }
+    },
+    {
+      "type": "ModelPlayer",
+      "fields": {
+        "modelName": "models/sf50/sf50.glb",
+        "modelAsset": "",
+        "animationAsset": "",
+        "scene": -1,
+        "clip": 0,
+        "time": 4.625,
+        "playing": false,
+        "loop": false,
+        "speed": 1.0
+      }
+    }
+  ]
+}

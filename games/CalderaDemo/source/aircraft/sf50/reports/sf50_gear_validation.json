@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "objects": 17,
+  "static_meshes": 13,
+  "rigged_meshes": 3,
+  "armatures": 1,
+  "actions": 1,
+  "gear_travel_coordinate_m": {
+    "Landing gear - left": 1.1549983024597168,
+    "Landing gear - nose": 1.285932183265686,
+    "Landing gear - right": 1.1553955078125
+  },
+  "static_geometry_unchanged": true,
+  "missing_textures": []
+}
