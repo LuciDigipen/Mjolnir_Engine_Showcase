@@ -233,6 +233,7 @@ namespace mir
 
         TextureHandle CreateTexture(const TextureDesc &desc);
         TextureHandle QueueTexture(TextureUploadSource source) override;
+        std::size_t TextureSlotsAvailable() const override;
         TextureUploadState TextureState(TextureHandle handle) const override;
         bool RetireTexture(TextureHandle handle) override;
         uint64_t TextureFootprint(TextureHandle handle) const override;

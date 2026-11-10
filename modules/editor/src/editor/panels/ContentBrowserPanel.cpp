@@ -8,6 +8,7 @@
  */
 #include <editor/panels/ContentBrowserPanel.h>
 
+#include <editor/ContentThumbnailCache.h>
 #include <editor/EditorWidgets.h>
 #include <editor/EditorPreferences.h>
 #include <editortheme/EditorTheme.h>
@@ -248,6 +249,9 @@ namespace mir
 
         ImGui::Separator();
 
+        preferences.contentThumbnailSize = std::clamp(preferences.contentThumbnailSize, 48, 128);
+        preferences.contentThumbnailCapacity = std::clamp(preferences.contentThumbnailCapacity, 0,
+            static_cast<int>(ContentThumbnailCache::kMaxThumbnails));
         const bool wasGrid = preferences.contentGrid;
         bool changed = false;
         if (ImGui::RadioButton("List", !preferences.contentGrid))
@@ -265,7 +269,7 @@ namespace mir
         {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(140);
-            changed |= ImGui::SliderInt("Size", &preferences.contentThumbnailSize, 48, 128);
+            changed |= ImGui::SliderInt("Size", &preferences.contentThumbnailSize, 48, 128, "%d", ImGuiSliderFlags_AlwaysClamp);
         }
         ImGui::SameLine();
         if (ImGui::Button("Options"))
@@ -273,7 +277,8 @@ namespace mir
         if (ImGui::BeginPopup("preview-options"))
         {
             ImGui::SetNextItemWidth(180);
-            changed |= ImGui::SliderInt("Cached thumbnails", &preferences.contentThumbnailCapacity, 0, 1024);
+            changed |= ImGui::SliderInt("Cached thumbnails", &preferences.contentThumbnailCapacity, 0,
+                static_cast<int>(ContentThumbnailCache::kMaxThumbnails), "%d", ImGuiSliderFlags_AlwaysClamp);
             ImGui::TextDisabled("Zero disables texture previews.");
             ImGui::EndPopup();
         }

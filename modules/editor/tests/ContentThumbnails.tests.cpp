@@ -11,6 +11,8 @@
 #include <editor/TextureThumbnailDecoder.h>
 #include <editor/panels/ContentBrowserPanel.h>
 
+#include <renderer/TextureLoadTracker.h>
+
 #include <assets/AssetsModule.h>
 #include <assets/ModelAsset.h>
 #include <jobs/JobExecutor.h>
@@ -308,4 +310,117 @@ TEST_CASE("Material source images preview on the editor lane without a standalon
     f.Frame({});
     CHECK(f.mCache.Size() == 0);
     CHECK(f.mUploader.mRetired.size() == 1);
+}
+
+TEST_CASE("Scene texture pressure reclaims thumbnails retained in List in LRU order", "[editor][thumbnails][texture-slots]")
+{
+    Fixture f;
+    const auto a = f.Ready("a");
+    const auto b = f.Ready("b");
+    f.Frame({"a"});
+    f.Frame({});
+    while (f.mUploader.TextureSlotsAvailable() != 0)
+        REQUIRE_FALSE(f.mUploader.QueueTexture({}).IsNull());
+    // b is older, a was revisited before switching to List.
+    const auto scene = f.mUploader.QueueTexture({});
+    REQUIRE_FALSE(scene.IsNull());
+    CHECK(f.mUploader.TextureState(b) == TextureUploadState::Stale);
+    CHECK(f.mUploader.TextureState(a) == TextureUploadState::Ready);
+    CHECK(f.mCache.Size() == 1);
+    REQUIRE_FALSE(f.mUploader.QueueTexture({}).IsNull());
+    CHECK(f.mUploader.TextureState(a) == TextureUploadState::Stale);
+    CHECK(f.mCache.Size() == 0);
+}
+
+TEST_CASE("Scene texture requests wait for a slot and retry without an asset reload", "[editor][thumbnails][texture-slots]")
+{
+    Fixture f;
+    const auto thumbnail = f.Ready("a");
+    while (f.mUploader.TextureSlotsAvailable() != 0)
+        REQUIRE_FALSE(f.mUploader.QueueTexture({}).IsNull());
+    auto scenes = f.mUploader.TextureLoads(&f.mService);
+    const auto id = MakeAssetId("b");
+    scenes->Request(id, "b");
+    TextureLoadLease claim(scenes, id);
+    f.mService.DrainCompletions();
+    scenes->Update();
+    REQUIRE(claim.Get());
+    CHECK(claim.Get()->phase == AssetUploadPhase::Decoding);
+    CHECK(f.mUploader.TextureState(thumbnail) == TextureUploadState::Ready);
+    // The visible thumbnail is pinned by the current UI draw data. List unpins it.
+    f.Frame({});
+    scenes->Update();
+    REQUIRE(claim.Get());
+    CHECK(claim.Get()->phase == AssetUploadPhase::Uploading);
+    CHECK_FALSE(claim.Get()->texture.IsNull());
+    CHECK(f.mUploader.TextureState(thumbnail) == TextureUploadState::Stale);
+    CHECK(f.mAssets.ReloadEpoch() == 0);
+}
+
+TEST_CASE("Thumbnail admission preserves scene slots and retries ready decodes", "[editor][thumbnails][texture-slots]")
+{
+    Fixture f;
+    f.Frame({"a"});
+    std::vector<TextureHandle> scenes;
+    while (f.mUploader.TextureSlotsAvailable() > ContentThumbnailCache::kSceneSlotReserve)
+        scenes.push_back(f.mUploader.QueueTexture({}));
+    const auto queued = f.mUploader.mQueued;
+    f.Frame({"a"});
+    CHECK(f.mUploader.mQueued == queued);
+    CHECK(f.mUploader.TextureSlotsAvailable() == ContentThumbnailCache::kSceneSlotReserve);
+    REQUIRE(f.mUploader.RetireTexture(scenes.back()));
+    f.Frame({"a"});
+    CHECK(f.mUploader.mQueued == queued + 1);
+    CHECK(f.mUploader.TextureSlotsAvailable() == ContentThumbnailCache::kSceneSlotReserve);
+    CHECK(f.mAssets.ReloadEpoch() == 0);
+}
+
+TEST_CASE("Unused thumbnails participate in shared byte residency", "[editor][thumbnails][texture-slots]")
+{
+    Fixture f;
+    const auto handle = f.Ready("a");
+    CHECK(f.mUploader.Residency().Held(GpuCategory::Texture) == f.mUploader.TextureFootprint(handle));
+    f.mUploader.Residency().SetCategoryLimit(GpuCategory::Texture, 0);
+    f.Frame({"a"});
+    CHECK(f.mUploader.TextureState(handle) == TextureUploadState::Ready);
+    f.Frame({});
+    CHECK(f.mUploader.TextureState(handle) == TextureUploadState::Stale);
+    CHECK(f.mUploader.Residency().Held(GpuCategory::Texture) == 0);
+}
+
+TEST_CASE("Thumbnail settings enforce the slot cap and safe grid dimensions", "[editor][thumbnails][texture-slots]")
+{
+    test::CookedDir dir;
+    EditorPreferences preferences;
+    preferences.contentThumbnailCapacity = 1024;
+    const auto path = dir.Path() / "preferences.json";
+    REQUIRE(preferences.SaveFile(path));
+    CHECK(EditorPreferences::LoadFile(path).contentThumbnailCapacity == ContentThumbnailCache::kMaxThumbnails);
+
+    struct Context
+    {
+        Context()
+        {
+            ImGui::CreateContext();
+            auto &io = ImGui::GetIO();
+            io.IniFilename = nullptr;
+            io.DisplaySize = ImVec2(800, 600);
+            io.DeltaTime = 1.0f / 60;
+            io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+        }
+        ~Context() { ImGui::DestroyContext(); }
+    } context;
+    ContentBrowserPanel panel;
+    ContentBrowserView view;
+    view.mEntries.push_back({"script.lua", "script.lua"});
+    preferences.contentGrid = true;
+    preferences.contentThumbnailSize = 0;
+    ImGui::NewFrame();
+    ImGui::SetNextWindowSize(ImVec2(700, 350));
+    ImGui::Begin("browser");
+    panel.Draw(view, preferences);
+    ImGui::End();
+    ImGui::Render();
+    CHECK(preferences.contentThumbnailSize == 48);
+    CHECK(preferences.contentThumbnailCapacity == ContentThumbnailCache::kMaxThumbnails);
 }

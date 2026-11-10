@@ -9,6 +9,7 @@
 #pragma once
 
 #include <renderer/ITextureUploader.h>
+#include <renderer/TextureTable.h>
 
 #include <unordered_map>
 #include <vector>
@@ -26,13 +27,17 @@ namespace mir::test
         };
         TextureHandle QueueTexture(TextureUploadSource source) override
         {
-            if (mReject)
+            if (mReject || !EnsureTextureSlot())
                 return {};
             const TextureHandle handle{ mNext++, 1 };
             const uint64_t bytes = source.Bytes();
             mEntries.emplace(handle.mIndex, Entry{ TextureUploadState::Pending, std::move(source), bytes });
             ++mQueued;
             return handle;
+        }
+        std::size_t TextureSlotsAvailable() const override
+        {
+            return mEntries.size() >= mSlotCapacity ? 0 : mSlotCapacity - mEntries.size();
         }
         TextureUploadState TextureState(TextureHandle handle) const override
         {
@@ -67,6 +72,7 @@ namespace mir::test
         void Complete(TextureHandle handle) { mEntries.at(handle.mIndex).mState = TextureUploadState::Ready; }
         void Fail(TextureHandle handle) { mEntries.at(handle.mIndex).mState = TextureUploadState::Failed; }
 
+        std::size_t mSlotCapacity = TextureTable::kDefaultCapacity;
         bool mReject = false;
         uint64_t mQueued = 0;
         std::unordered_map<uint32_t, Entry> mEntries;

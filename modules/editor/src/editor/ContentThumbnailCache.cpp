@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file ContentThumbnailCache.cpp
  * @author sumin.park
  * @brief Visibility-driven thumbnail requests and bounded GPU caching.
@@ -25,14 +25,27 @@ namespace mir
         }
     }
     ContentThumbnailCache::ContentThumbnailCache(AsyncAssetService *assets, ITextureUploader &uploader, JobExecutor *jobs)
-        : mAssets(assets), mUploader(uploader)
+        : mAssets(assets), mUploader(uploader), mResidency(uploader.SharedResidency())
     {
         if (jobs)
             mSourceJobs = std::make_unique<BackgroundJobQueue>(*jobs, 1);
+        if (mResidency)
+        {
+            mResidencyHolder = mResidency->AddHolder(GpuCategory::Texture, [this] { return HeldBytes(); });
+            mResidency->SetRetiring(GpuCategory::Texture, [&uploader] { return uploader.TextureRetiringBytes(); });
+        }
+        mSlotReclaimer = mUploader.AddTextureSlotReclaimer([this]
+            {
+                if (mUploader.TextureSlotsAvailable() == 0)
+                    EvictUnused();
+            });
     }
     ContentThumbnailCache::~ContentThumbnailCache()
     {
+        mSlotReclaimer.Reset();
         Clear();
+        if (mResidency)
+            mResidency->RemoveHolder(mResidencyHolder);
         if (mSourceJobs)
             mSourceJobs->CloseAndWait();
     }
@@ -49,6 +62,29 @@ namespace mir
         mEntries.erase(found);
     }
 
+    uint64_t ContentThumbnailCache::HeldBytes() const
+    {
+        uint64_t bytes = 0;
+        for (const auto &[id, entry] : mEntries)
+            if (!entry.mPreview.mTexture.IsNull())
+                bytes += mUploader.TextureFootprint(entry.mPreview.mTexture);
+        return bytes;
+    }
+
+    bool ContentThumbnailCache::EvictUnused()
+    {
+        auto oldest = mEntries.end();
+        for (auto it = mEntries.begin(); it != mEntries.end(); ++it)
+            if (!mVisible.contains(it->first) && !it->second.mPreview.mTexture.IsNull() &&
+                mUploader.TextureState(it->second.mPreview.mTexture) == TextureUploadState::Ready &&
+                (oldest == mEntries.end() || it->second.mUse < oldest->second.mUse))
+                oldest = it;
+        if (oldest == mEntries.end())
+            return false;
+        Remove(oldest->first);
+        return true;
+    }
+
     void ContentThumbnailCache::Clear()
     {
         while (!mEntries.empty())
@@ -58,7 +94,7 @@ namespace mir
 
     void ContentThumbnailCache::BeginFrame(size_t capacity)
     {
-        mCapacity = std::min(capacity, size_t(1024));
+        mCapacity = std::min(capacity, kMaxThumbnails);
         mVisible.clear();
         mSources.clear();
         if (mAssets && mRevision != mAssets->Revision())
@@ -104,18 +140,8 @@ namespace mir
                 remove.push_back(id);
         for (auto id : remove)
             Remove(id);
-        const auto evict = [this]()
-        {
-            auto oldest = mEntries.end();
-            for (auto it = mEntries.begin(); it != mEntries.end(); ++it)
-                if (!mVisible.contains(it->first) && (oldest == mEntries.end() || it->second.mUse < oldest->second.mUse))
-                    oldest = it;
-            if (oldest == mEntries.end())
-                return false;
-            Remove(oldest->first);
-            return true;
-        };
-        while (mEntries.size() > mCapacity && evict()) {}
+        while ((mEntries.size() > mCapacity ||
+            (mResidency && mResidency->Excess(GpuCategory::Texture) != 0)) && EvictUnused()) {}
         if (!mAssets)
             return;
         size_t active = 0;
@@ -134,7 +160,7 @@ namespace mir
                 // Admit a small amount only while the scene asset lane is idle.
                 if (active >= 2 || admissions >= 1 || !mAssets->Idle())
                     continue;
-                while (mEntries.size() >= mCapacity && evict()) {}
+                while (mEntries.size() >= mCapacity && EvictUnused()) {}
                 if (mEntries.size() >= mCapacity)
                     continue;
                 auto &entry = mEntries[id];
@@ -172,7 +198,7 @@ namespace mir
                 }
                 continue;
             }
-            if (uploads >= 2)
+            if (uploads >= 2 || mUploader.TextureSlotsAvailable() <= kSceneSlotReserve)
                 continue;
             std::shared_ptr<const TextureUploadSource> source;
             if (entry.mSource.valid())

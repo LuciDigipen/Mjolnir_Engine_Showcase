@@ -21,7 +21,7 @@ The Size slider sets grid images from 48 to 128 pixels. Images preserve their
 aspect ratio, transparent areas show a checkerboard, and hovering shows the full
 filename. Selection and file actions work in either view.
 
-Options sets the thumbnail cache capacity, 256 by default, up to 1024. Zero
+Options sets the thumbnail cache capacity, 256 by default and at most 256. Zero
 turns texture previews off. View, size and capacity are local editor preferences,
 not project settings. Only visible grid cells request previews, excess visible
 cells use their type icon when capacity is exhausted.
@@ -40,8 +40,13 @@ scene asset service is busy. With `--workers 0`, the
 asset service runs decoding inline.
 
 Leaving view cancels unneeded decode leases and retires incomplete uploads.
-Ready previews remain in an LRU until eviction. Current visible entries are
-protected, changed cooked content invalidates old previews, and failed previews
+Ready previews remain in an LRU until eviction. Thumbnail uploads leave 64 image
+table slots free for scene allocations. When the table fills, scene allocations
+reclaim the least recently used unused thumbnails, including those retained in
+List. Visible previews stay pinned through the current UI frame. Texture loads
+that cannot obtain a slot remain pending and retry without an asset reload.
+Thumbnail bytes also participate in the shared GPU residency budget. Changed cooked
+content invalidates old previews, and failed previews
 are remembered until reload. No disk thumbnail cache is written. Texture and
 ImGui descriptor retirement both respect frames in flight. Mesh/model rendering
 and real-time previews are outside this feature.

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file ContentThumbnailCache.h
  * @author sumin.park
  * @brief Visibility-driven thumbnail requests and bounded GPU caching.
@@ -31,6 +31,9 @@ namespace mir
     class ContentThumbnailCache
     {
     public:
+        static constexpr size_t kMaxThumbnails = 256;
+        static constexpr size_t kSceneSlotReserve = 64;
+
         ContentThumbnailCache(AsyncAssetService *assets, ITextureUploader &uploader, JobExecutor *jobs = nullptr);
         ~ContentThumbnailCache();
         ContentThumbnailCache(const ContentThumbnailCache &) = delete;
@@ -56,6 +59,8 @@ namespace mir
             std::future<SourceResult> mSource;
         };
         void Remove(uint64_t id);
+        bool EvictUnused();
+        uint64_t HeldBytes() const;
         AsyncAssetService *mAssets;
         ITextureUploader &mUploader;
         size_t mCapacity = 256;
@@ -66,5 +71,8 @@ namespace mir
         std::unordered_set<uint64_t> mVisible;
         std::unordered_map<uint64_t, std::filesystem::path> mSources;
         std::unique_ptr<BackgroundJobQueue> mSourceJobs;
+        std::shared_ptr<GpuResidency> mResidency;
+        uint32_t mResidencyHolder = 0;
+        Registration mSlotReclaimer;
     };
 }

@@ -716,12 +716,17 @@ namespace mir
 
     TextureHandle VulkanRenderer::CreateTexture(const TextureDesc &desc)
     {
-        return mResources->CreateTexture(desc);
+        return EnsureTextureSlot() ? mResources->CreateTexture(desc) : kNullTexture;
     }
 
     TextureHandle VulkanRenderer::QueueTexture(TextureUploadSource source)
     {
-        return mMeshUploads->QueueTexture(*mResources, std::move(source));
+        return EnsureTextureSlot() ? mMeshUploads->QueueTexture(*mResources, std::move(source)) : kNullTexture;
+    }
+
+    std::size_t VulkanRenderer::TextureSlotsAvailable() const
+    {
+        return mResources->TextureSlotsAvailable();
     }
 
     TextureUploadState VulkanRenderer::TextureState(TextureHandle handle) const

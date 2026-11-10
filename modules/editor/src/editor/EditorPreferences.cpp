@@ -7,6 +7,7 @@
  *
  */
 #include <editor/EditorPreferences.h>
+#include <editor/ContentThumbnailCache.h>
 
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
@@ -97,7 +98,7 @@ namespace mir
             if (const auto it = browser->find("size"); it != browser->end() && it->is_number_integer())
                 prefs.contentThumbnailSize = static_cast<int>(std::clamp(it->get<int64_t>(), int64_t(48), int64_t(128)));
             if (const auto it = browser->find("capacity"); it != browser->end() && it->is_number_integer())
-                prefs.contentThumbnailCapacity = static_cast<int>(std::clamp(it->get<int64_t>(), int64_t(0), int64_t(1024)));
+                prefs.contentThumbnailCapacity = static_cast<int>(std::clamp(it->get<int64_t>(), int64_t(0), int64_t(ContentThumbnailCache::kMaxThumbnails)));
         }
 
         const auto background = root->find("background");
