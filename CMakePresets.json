@@ -84,6 +84,7 @@
             "cacheVariables": {
                 "MIR_WITH_AUDIO": "OFF",
                 "MIR_WITH_DLSS": "OFF",
+                "MIR_WITH_RTXGI": "OFF",
                 "BUILD_TESTING": "ON"
             }
         },
@@ -93,6 +94,7 @@
             "cacheVariables": {
                 "MIR_WITH_AUDIO": "OFF",
                 "MIR_WITH_DLSS": "OFF",
+                "MIR_WITH_RTXGI": "OFF",
                 "BUILD_TESTING": "ON"
             }
         }

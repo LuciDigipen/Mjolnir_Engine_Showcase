@@ -40,15 +40,14 @@ option(MJOLNIR_WITH_EDITOR "Build the editor into MjolnirEngine" ON)
 
 option(MIR_WITH_AUDIO "Build Wwise audio and Lua audio bindings" ON)
 
-# OFF (default): no network fetch, no NVIDIA SDK dependency - DLSS Ray
-# Reconstruction anti-aliasing stays unreachable, same as unsupported hardware.
-# ON: fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
+# ON (default): fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
 # time (cmake/FindNGX.cmake), pinned to an exact release tag - never committed.
-option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" OFF)
+# Pass -DMIR_WITH_DLSS=OFF to omit the SDK and DLSS Ray Reconstruction support.
+option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" ON)
 
 # Optional DDGI SDK and offline-compiled probe update shaders. OFF does not
 # fetch RTXGI or require DXC; runtime GI is integrated separately.
-option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" OFF)
+option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" ON)
 if(BUILD_TESTING)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)

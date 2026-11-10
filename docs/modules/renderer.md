@@ -720,7 +720,7 @@ Off, the panel stops offering Dlss, and that mode change frees its resources.
 The frame whose evaluation failed shows the raw (jittered, one-ray) trace.
 Each failure is logged.
 
-**`MIR_WITH_DLSS` is a CMake option, off by default.** Off: no network fetch, no
+**`MIR_WITH_DLSS` is a CMake option, on by default.** Set `-DMIR_WITH_DLSS=OFF` for no network fetch, no
 NVIDIA SDK, `DlssRayReconstruction.cpp` isn't compiled and `DlssAvailable()` is
 always false - the same behaviour as unsupported hardware. On:
 `cmake/FindNGX.cmake` fetches the public NVIDIA DLSS SDK at a pinned tag,

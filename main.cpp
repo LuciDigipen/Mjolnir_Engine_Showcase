@@ -33,7 +33,7 @@
 namespace
 {
     constexpr std::string_view kUsage = "[--game <dir>] [--frames <N>] [--capture <png>] [--no-editor] [--ui-demo] "
-        "[--non-interactive] [--hidden] [--workers <0..32>] [--switch-to <dir>]...";
+        "[--non-interactive] [--hidden] [--validation | --no-validation] [--workers <0..32>] [--switch-to <dir>]...";
 
     struct LaunchOptions
     {
@@ -50,6 +50,7 @@ namespace
         // for agents and CI: every prompt takes its safe answer instead of waiting for a click
         bool mNonInteractive = false;
         bool mHidden = false;
+        std::optional<bool> mValidation;
 
         // test hook: games to restart into, in order
         std::vector<std::string> mProjectSwitches;
@@ -107,6 +108,10 @@ namespace
             {
                 options.mHidden = true;
             }
+            else if (arg == "--validation" || arg == "--no-validation")
+            {
+                options.mValidation = arg == "--validation";
+            }
             else if (arg == "--switch-to" && i + 1 < argc)
             {
                 options.mProjectSwitches.emplace_back(argv[++i]);
@@ -142,6 +147,8 @@ namespace
             args.emplace_back("--non-interactive");
         if (options.mHidden)
             args.emplace_back("--hidden");
+        if (options.mValidation.has_value())
+            args.emplace_back(*options.mValidation ? "--validation" : "--no-validation");
         if (!options.mCapturePath.empty())
         {
             args.emplace_back("--capture");
@@ -199,6 +206,8 @@ namespace
         mir::ResolveAssetIdRoot(project);
 
         mir::AppDesc desc{};
+        if (options.mValidation.has_value())
+            desc.mEnableValidation = *options.mValidation;
         desc.mProject = project;
         desc.mMaxFrames = options.mMaxFrames;
         desc.mCapturePath = options.mCapturePath;

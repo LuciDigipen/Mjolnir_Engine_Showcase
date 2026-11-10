@@ -66,16 +66,16 @@ ones are fast. If you already cloned without `--recurse-submodules`, run
 
 Then build and check it: [Build loop](#build-loop) and [Verify](#verify).
 
-## Optional RTXGI DDGI SDK
+## RTXGI DDGI SDK
 
-Enable GI support before building:
+GI support is enabled by default. To explicitly omit it:
 
 ```powershell
-cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=ON
+cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=OFF
 cmake --build --preset windows-msvc-debug
 ```
 
-The default is `OFF`. Enabling it fetches RTXGI-DDGI SDK 1.3.6 at commit
+The default is `ON`. Enabling it fetches RTXGI-DDGI SDK 1.3.6 at commit
 `f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6`, without samples or submodules.
 It requires DXC with SPIR-V support from the Vulkan SDK or PATH; override its
 location with `-DRTXGI_DXC_EXECUTABLE=<path>`. Review the SDK's `License.txt`
@@ -497,11 +497,13 @@ Set it to `OFF` to omit `audio`, `audio_script`, their tests, and the app's
 audio registration and Lua bindings. Games run silently; saved audio components
 are skipped as unknown components. Scripts that call audio bindings should
 check that those methods exist first, as the HelloWorld audio demo does.
-`MIR_WITH_DLSS` defaults to `OFF`, which avoids fetching or linking NVIDIA NGX.
+`MIR_WITH_DLSS` and `MIR_WITH_RTXGI` default to `ON`. Pass
+`-DMIR_WITH_DLSS=OFF` and/or `-DMIR_WITH_RTXGI=OFF` to omit their SDKs.
+Existing build directories retain their cached values until explicitly changed.
 
 The `ci-windows-editor-debug` and `ci-windows-game-release` presets explicitly
-disable both options and enable tests. Each has matching configure, build and
-test presets, so no Wwise or NVIDIA SDK is needed:
+disable audio, DLSS and RTXGI and enable tests. Each has matching configure,
+build and test presets, so no Wwise or NVIDIA SDK is needed:
 
 ```powershell
 cmake --preset ci-windows-editor-debug
