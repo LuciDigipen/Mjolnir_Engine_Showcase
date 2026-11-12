@@ -9,12 +9,21 @@
 #include <terrain_editor/panels/TerrainEditPanel.h>
 
 #include <editor/EditorWidgets.h>
+#include <editor/history/History.h>
 #include <terrain_editor/TerrainEditMode.h>
+#include <terrain_editor/TerrainLayerCommands.h>
+#include <terrain_editor/TerrainLayerDocument.h>
+#include <terrain_editor/TerrainLayerWorkspace.h>
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <array>
 #include <cfloat>
+#include <cstdio>
+#include <memory>
+#include <span>
+#include <vector>
 
 namespace mir
 {
@@ -42,19 +51,34 @@ namespace mir
             }
             return kBrushLabels.front().mLabel;
         }
-    }
 
-    void TerrainEditPanel::Draw(TerrainEditMode &mode)
+        const char *BlendLabel(TerrainEditBlend blend)
+        {
+            return blend == TerrainEditBlend::AlphaBlend ? "Alpha Blend" : "Additive";
+        }
+
+        const ImVec4 kErrorColor(1.0f, 0.4f, 0.4f, 1.0f);
+
+        void TextError(const std::string &text)
+        {
+            if (!text.empty())
+                ImGui::TextColored(kErrorColor, "%s", text.c_str());
+        }
+
+        std::size_t OrderPosition(const std::vector<std::size_t> &order, std::optional<uint32_t> sequence,
+            const TerrainLayerDocument &document)
+        {
+            if (!sequence)
+                return order.size();
+            const auto found = std::find(order.begin(), order.end(), document.IndexOf(*sequence));
+            return found == order.end() ? order.size() : static_cast<std::size_t>(found - order.begin());
+        }
+    } // namespace
+
+    void TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history)
     {
         if (widgets::CategoryHeader("Edit Layers"))
-        {
-            ImGui::TextDisabled("No edit layers.");
-            ImGui::BeginDisabled();
-            ImGui::Button("Add Layer");
-            ImGui::SameLine();
-            ImGui::Button("Remove Layer");
-            ImGui::EndDisabled();
-        }
+            DrawLayers(layers, history);
 
         if (widgets::CategoryHeader("Brush"))
         {
@@ -92,4 +116,183 @@ namespace mir
             ImGui::ProgressBar(0.0f, ImVec2(-FLT_MIN, 0.0f), "Idle");
         }
     }
-}
+
+    void TerrainEditPanel::DrawLayers(TerrainLayerWorkspace &layers, History &history)
+    {
+        const std::span<const TerrainEditAsset> assets = layers.Assets();
+        if (assets.empty())
+        {
+            ImGui::TextDisabled("No terrain assets in the scene.");
+            return;
+        }
+
+        if (assets.size() > 1)
+        {
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::BeginCombo("##terrain-asset", assets[layers.SelectedAsset()].logicalPath.c_str()))
+            {
+                for (std::size_t i = 0; i < assets.size(); ++i)
+                {
+                    if (ImGui::Selectable(assets[i].logicalPath.c_str(), i == layers.SelectedAsset()))
+                    {
+                        layers.SelectAsset(i);
+                        mRenameSequence.reset();
+                        mRenameError.clear();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        else
+            ImGui::TextDisabled("%s", assets.front().logicalPath.c_str());
+
+        TerrainLayerDocument *document = layers.SelectedDocument();
+        if (document == nullptr)
+            return;
+
+        if (!document->Editable())
+        {
+            ImGui::PushTextWrapPos(0.0f);
+            TextError(document->LoadError());
+            ImGui::PopTextWrapPos();
+            return;
+        }
+
+        std::optional<uint32_t> selected = layers.SelectedLayer();
+        if (selected && document->Find(*selected) == nullptr)
+            selected.reset();
+        const std::vector<std::size_t> order = document->CompositingOrder();
+        if (!selected && !order.empty())
+            selected = document->Layers()[order.back()].info.sequence;
+        layers.SelectLayer(selected);
+
+        DrawLayerTable(*document, layers, history);
+
+        const std::size_t position = OrderPosition(order, selected, *document);
+        const bool canMoveUp = position + 1 < order.size();
+        const bool canMoveDown = position < order.size() && position > 0;
+
+        ImGui::BeginDisabled(!selected);
+        if (ImGui::Button("Delete"))
+            history.Submit(std::make_unique<DeleteTerrainLayerCommand>(*document, *selected), true);
+        ImGui::SameLine();
+        if (ImGui::Button("Rename"))
+        {
+            const TerrainEditLayer *layer = document->Find(*selected);
+            std::snprintf(mRenameBuffer, sizeof(mRenameBuffer), "%s", layer->info.name.c_str());
+            mRenameSequence = selected;
+            mRenameError.clear();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!canMoveUp);
+        if (ImGui::Button("Move Up"))
+            history.Submit(std::make_unique<MoveTerrainLayerCommand>(*document, *selected, TerrainLayerMove::Up), true);
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!canMoveDown);
+        if (ImGui::Button("Move Down"))
+            history.Submit(std::make_unique<MoveTerrainLayerCommand>(*document, *selected, TerrainLayerMove::Down), true);
+        ImGui::EndDisabled();
+
+        int blend = static_cast<int>(mNewLayerBlend);
+        ImGui::SetNextItemWidth(130.0f);
+        if (ImGui::Combo("New Layer Blend", &blend, "Additive\0Alpha Blend\0"))
+            mNewLayerBlend = static_cast<TerrainEditBlend>(blend);
+        ImGui::SameLine();
+        if (ImGui::Button("Add Layer"))
+            history.Submit(std::make_unique<AddTerrainLayerCommand>(*document, mNewLayerBlend), true);
+
+        ImGui::BeginDisabled(!document->Unsaved());
+        if (ImGui::Button("Save Layers"))
+            document->Save();
+        ImGui::EndDisabled();
+        if (document->Unsaved())
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(unsaved)");
+        }
+
+        TextError(document->SaveError());
+        TextError(mRenameError);
+    }
+
+    void TerrainEditPanel::DrawLayerTable(TerrainLayerDocument &document, TerrainLayerWorkspace &layers,
+        History &history)
+    {
+        const std::vector<std::size_t> order = document.CompositingOrder();
+        if (order.empty())
+            ImGui::TextDisabled("No edit layers.");
+
+        const std::optional<uint32_t> selected = layers.SelectedLayer();
+        if (!ImGui::BeginTable("##edit-layers", 4,
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp))
+            return;
+
+        ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Layer");
+        ImGui::TableSetupColumn("Blend", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Priority", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableHeadersRow();
+
+        for (auto it = order.rbegin(); it != order.rend(); ++it)
+        {
+            const TerrainEditLayer &layer = document.Layers()[*it];
+            ImGui::PushID(static_cast<int>(layer.info.sequence));
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            bool enabled = layer.info.enabled;
+            if (ImGui::Checkbox("##enabled", &enabled))
+            {
+                history.Submit(
+                    std::make_unique<SetTerrainLayerEnabledCommand>(document, layer.info.sequence, enabled), true);
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            if (mRenameSequence == layer.info.sequence)
+            {
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                const bool submitted = ImGui::InputText("##rename", mRenameBuffer, sizeof(mRenameBuffer),
+                    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+                    mRenameSequence.reset();
+                else if (submitted)
+                {
+                    if (!document.CanRename(layer.info.sequence, mRenameBuffer))
+                        mRenameError = "The name is empty or another layer already uses it.";
+                    else
+                    {
+                        history.Submit(std::make_unique<RenameTerrainLayerCommand>(document, layer.info.sequence,
+                            mRenameBuffer), true);
+                        mRenameSequence.reset();
+                        mRenameError.clear();
+                    }
+                }
+            }
+            else if (ImGui::Selectable(layer.info.name.c_str(), selected == layer.info.sequence))
+            {
+                layers.SelectLayer(layer.info.sequence);
+                mRenameSequence.reset();
+                mRenameError.clear();
+            }
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextDisabled("%s", BlendLabel(layer.info.heightBlend));
+
+            ImGui::TableSetColumnIndex(3);
+            int32_t priority = layer.info.priority;
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::InputInt("##priority", &priority, 0, 0))
+            {
+                history.Submit(
+                    std::make_unique<SetTerrainLayerPriorityCommand>(document, layer.info.sequence, priority), true);
+            }
+
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+} // namespace mir

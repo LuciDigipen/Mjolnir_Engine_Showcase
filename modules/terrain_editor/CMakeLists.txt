@@ -8,15 +8,19 @@ engine_add_module(terrain_editor)
 target_sources(engine_terrain_editor PRIVATE
     src/terrain_editor/TerrainEditMode.cpp
     src/terrain_editor/TerrainEditorModule.cpp
+    src/terrain_editor/TerrainLayerCommands.cpp
+    src/terrain_editor/TerrainLayerDocument.cpp
+    src/terrain_editor/TerrainLayerWorkspace.cpp
     src/terrain_editor/panels/TerrainEditPanel.cpp
 )
 
-# PUBLIC: TerrainEditorModule.h takes an EditorModule and holds the edit mode and its panel
+# PUBLIC: TerrainEditorModule.h takes an EditorModule and the GameProject its assets come from
 target_link_libraries(engine_terrain_editor
     PUBLIC mir::editor
            mir::terrain
     PRIVATE imgui::imgui
             iconfontcppheaders::iconfontcppheaders
+            mir::project
 )
 
 if(BUILD_TESTING)

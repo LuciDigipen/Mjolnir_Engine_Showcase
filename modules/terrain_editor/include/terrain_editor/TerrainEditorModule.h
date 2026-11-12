@@ -9,6 +9,7 @@
 #pragma once
 
 #include <terrain_editor/TerrainEditMode.h>
+#include <terrain_editor/TerrainLayerWorkspace.h>
 #include <terrain_editor/panels/TerrainEditPanel.h>
 
 #include <core/Registration.h>
@@ -19,11 +20,12 @@
 namespace mir
 {
     class EditorModule;
+    struct GameProject;
 
     class TerrainEditorModule
     {
     public:
-        TerrainEditorModule(ModuleContext context, EditorModule &editor);
+        TerrainEditorModule(ModuleContext context, EditorModule &editor, const GameProject &project);
         ~TerrainEditorModule();
 
         TerrainEditorModule(const TerrainEditorModule &) = delete;
@@ -34,6 +36,7 @@ namespace mir
 
         TerrainEditMode mMode;
         TerrainEditPanel mPanel;
+        TerrainLayerWorkspace mWorkspace;
         std::unique_ptr<Extension> mExtension;
         Registration mRegistration;
     };

@@ -15,8 +15,10 @@
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/GroundQuery.h>
 #include <core/ecs/World.h>
+#include <project/GameProject.h>
 #include <renderer/CameraMath.h>
 #include <renderer/ViewSubmission.h>
+#include <terrain/TerrainScene.h>
 
 #include <IconsFontAwesome6.h>
 #include <imgui.h>
@@ -48,11 +50,18 @@ namespace mir
     class TerrainEditorModule::Extension final : public IEditorExtension
     {
     public:
-        Extension(TerrainEditMode &mode, TerrainEditPanel &panel) : mMode(mode), mPanel(panel) {}
+        Extension(TerrainEditMode &mode, TerrainEditPanel &panel, TerrainLayerWorkspace &workspace)
+            : mMode(mode), mPanel(panel), mWorkspace(workspace)
+        {
+        }
 
         void Update(const EditorExtensionContext &context) override
         {
             mMode.Update(context.mMode.mMode == EngineMode::Edit, context.mDocument);
+            if (const TerrainWorld *world = context.mWorld.TryResource<TerrainWorld>())
+                mWorkspace.Sync(*world);
+            else
+                mWorkspace.Clear();
         }
 
         std::span<const char *const> WindowNames() const override
@@ -61,12 +70,12 @@ namespace mir
             return kWindows;
         }
 
-        void DrawWindows(const EditorExtensionContext &) override
+        void DrawWindows(const EditorExtensionContext &context) override
         {
             if (!mMode.Active())
                 return;
             if (ImGui::Begin("Terrain"))
-                mPanel.Draw(mMode);
+                mPanel.Draw(mMode, mWorkspace, context.mHistory);
             ImGui::End();
         }
 
@@ -87,6 +96,7 @@ namespace mir
     private:
         TerrainEditMode &mMode;
         TerrainEditPanel &mPanel;
+        TerrainLayerWorkspace &mWorkspace;
     };
 
     void TerrainEditorModule::Extension::DrawOverlay(const EditorExtensionContext &context)
@@ -167,8 +177,8 @@ namespace mir
         drawList->PopClipRect();
     }
 
-    TerrainEditorModule::TerrainEditorModule(ModuleContext, EditorModule &editor)
-        : mExtension(std::make_unique<Extension>(mMode, mPanel))
+    TerrainEditorModule::TerrainEditorModule(ModuleContext, EditorModule &editor, const GameProject &project)
+        : mWorkspace(project.mAssetsDir), mExtension(std::make_unique<Extension>(mMode, mPanel, mWorkspace))
     {
         mRegistration = editor.Get().AddExtension(*mExtension);
     }

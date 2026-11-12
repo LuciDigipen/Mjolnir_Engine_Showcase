@@ -8,13 +8,31 @@
  */
 #pragma once
 
+#include <terrain/TerrainEditLayer.h>
+
+#include <cstdint>
+#include <optional>
+#include <string>
+
 namespace mir
 {
+    class History;
     class TerrainEditMode;
+    class TerrainLayerDocument;
+    class TerrainLayerWorkspace;
 
     class TerrainEditPanel
     {
     public:
-        void Draw(TerrainEditMode &mode);
+        void Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history);
+
+    private:
+        void DrawLayers(TerrainLayerWorkspace &layers, History &history);
+        void DrawLayerTable(TerrainLayerDocument &document, TerrainLayerWorkspace &layers, History &history);
+
+        TerrainEditBlend mNewLayerBlend = TerrainEditBlend::Additive;
+        std::optional<uint32_t> mRenameSequence;
+        char mRenameBuffer[128] = {};
+        std::string mRenameError;
     };
-}
+} // namespace mir
