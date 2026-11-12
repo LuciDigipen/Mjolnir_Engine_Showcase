@@ -440,7 +440,7 @@ TEST_CASE("Sync replaces the previous filtered v2 current after the final seam v
     CHECK(result.publish->published);
     CHECK(result.publish->previous == oldInfo.release);
     CHECK(result.publish->current != oldInfo.release);
-    CHECK(fs::is_directory(dir));
+    CHECK_FALSE(fs::exists(dir));
     const auto again = RunTerrainSync(request);
     CHECK(again.Ok());
     CHECK_FALSE(again.publish->published);

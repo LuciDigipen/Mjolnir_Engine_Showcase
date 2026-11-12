@@ -14,6 +14,7 @@
 #include <terrain/TerrainLod.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainRegion.h>
+#include <terrain/TerrainReleaseLock.h>
 #include <terrain/TileHeights.h>
 #include <terrain/TileKey.h>
 
@@ -46,7 +47,8 @@ namespace mir
     class TerrainReleaseHandle
     {
       public:
-        // Reads and checks the whole index; packs are read a tile at a time.
+        // Reads and checks the whole index; packs are read a tile at a time. The source's release lock, if it has
+        // one, is held until the last copy of this handle is destroyed.
         [[nodiscard]] static TerrainResult<TerrainReleaseHandle> Open(std::shared_ptr<TerrainByteSource> source);
 
         const TerrainReleaseInfo &Info() const
@@ -91,13 +93,16 @@ namespace mir
         TerrainPackError VerifyPack(size_t pack) const;
 
       private:
-        TerrainReleaseHandle(std::shared_ptr<const TerrainIndex> index, std::shared_ptr<TerrainByteSource> source);
+        TerrainReleaseHandle(std::shared_ptr<const TerrainIndex> index, std::shared_ptr<TerrainByteSource> source,
+                             std::shared_ptr<const TerrainReleaseLock> lock);
 
         std::shared_ptr<const TerrainIndex> mIndex;
         std::shared_ptr<TerrainByteSource> mSource;
+        // Keeps a pruner out while any copy of this handle lives.
+        std::shared_ptr<const TerrainReleaseLock> mLock;
     };
 
-    // Refuses an index that names another asset or release.
+    // Refuses an index that names another asset or release. Fails with NotFound while a pruner removes that release.
     TerrainResult<TerrainReleaseHandle> OpenTerrainRelease(const std::filesystem::path &releasesRoot, AssetId asset,
                                                            TerrainReleaseId release);
 

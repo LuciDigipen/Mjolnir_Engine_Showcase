@@ -45,11 +45,12 @@ namespace
         return MakeAssetId(ExampleAssetPath());
     }
 
-    // Without the lock file, which exists only while held on Windows.
+    // Without the lock files: the publish lock exists only while held, the reader locks only for open handles.
     std::vector<std::string> AssetDirNames(const fs::path &assetDir)
     {
         std::vector<std::string> names = FileNames(assetDir);
         std::erase(names, std::string(kTerrainPublishLockFileName));
+        std::erase(names, std::string(kTerrainReleaseLocksDirName));
         return names;
     }
 

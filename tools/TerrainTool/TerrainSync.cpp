@@ -9,6 +9,7 @@
 #include "TerrainSync.h"
 
 #include "TerrainCandidate.h"
+#include "TerrainPrune.h"
 
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainPackFormat.h>
@@ -146,7 +147,7 @@ namespace mir::terrainbake
                               check::kEncode,    check::kWrite,    check::kCandidate, check::kFormat,  check::kIndex,
                               check::kPacks,     check::kCoverage, check::kPayloads,  check::kFinite,  check::kEdges,
                               check::kCorners,   check::kRegions,  check::kIdentity,  check::kTarget,  check::kCopy,
-                              check::kVerify,    check::kRename,   check::kPointer});
+                              check::kVerify,    check::kRename,   check::kPointer,   check::kPrune});
         report.recipePath = request.recipePath;
         report.candidateDir = request.candidateDir;
         const fs::path releases = request.gameDir.empty() ? fs::path() : TerrainReleasesRoot(request.gameDir);
@@ -210,6 +211,8 @@ namespace mir::terrainbake
                                                 TerrainIdHex(current->value));
             report.Ran(check::kCurrent, why + "; nothing to publish");
             SkipAll(report, kAfterCurrent, "not needed: " + why);
+            opened.reset();
+            PruneTerrainReleases(releases, asset->asset, report);
             return report;
         }
         report.Ran(check::kCurrent, "publishing: " + *mismatch);
@@ -217,6 +220,7 @@ namespace mir::terrainbake
         if (!RemoveOwnCandidate(request.candidateDir, error))
         {
             Fail(report, check::kWrite, "--candidate", error);
+            report.Skip(check::kPrune, "nothing was published, so nothing was removed");
             return report;
         }
         TerrainBakeRequest bake;
@@ -234,6 +238,7 @@ namespace mir::terrainbake
         if (!BakeTerrainCandidate(bake, report))
         {
             report.publish->current = PeekTerrainCurrent(releases, asset->asset);
+            report.Skip(check::kPrune, "nothing was published, so nothing was removed");
             return report;
         }
 
@@ -241,7 +246,14 @@ namespace mir::terrainbake
         publish.candidateDir = request.candidateDir;
         publish.releasesRoot = releases;
         publish.fault = request.fault;
-        PublishTerrainCandidate(publish, &recipe, &*lock, report);
+        const bool published = PublishTerrainCandidate(publish, &recipe, &*lock, report);
+        opened.reset();
+        if (!published)
+        {
+            report.Skip(check::kPrune, "nothing was published, so nothing was removed");
+            return report;
+        }
+        PruneTerrainReleases(releases, asset->asset, report);
         return report;
     }
 }

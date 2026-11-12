@@ -55,7 +55,7 @@ namespace mir::terrainbake
             return text;
         }
 
-        // Keeps current, the release it names and the held lock.
+        // Keeps current, the release it names, the held lock and the reader locks.
         void Prune(const fs::path &assetDir, TerrainReleaseId keep, TerrainReport &report)
         {
             const std::string keepHex = TerrainIdHex(keep.value);
@@ -64,7 +64,8 @@ namespace mir::terrainbake
             for (const fs::directory_entry &entry : fs::directory_iterator(assetDir, ec))
             {
                 const std::string name = PathUtf8(entry.path().filename());
-                if (name != kTerrainCurrentPointerFileName && name != keepHex && name != kTerrainPublishLockFileName)
+                if (name != kTerrainCurrentPointerFileName && name != keepHex && name != kTerrainPublishLockFileName &&
+                    name != kTerrainReleaseLocksDirName)
                     extra.push_back(entry.path());
             }
             std::vector<std::string> removed;

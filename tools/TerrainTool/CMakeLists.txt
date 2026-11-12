@@ -18,6 +18,7 @@ add_library(terrain_bake STATIC
     TerrainNoise.cpp
     TerrainPackage.cpp
     TerrainProgress.cpp
+    TerrainPrune.cpp
     TerrainPublish.cpp
     TerrainRecipe.cpp
     TerrainRegions.cpp
@@ -50,6 +51,7 @@ if(BUILD_TESTING)
         tests/TerrainOverlayMesh.tests.cpp
         tests/TerrainPackage.tests.cpp
         tests/TerrainPrecision.tests.cpp
+        tests/TerrainPrune.tests.cpp
         tests/TerrainPublish.tests.cpp
         tests/TerrainRecipe.tests.cpp
         tests/TerrainRegions.tests.cpp

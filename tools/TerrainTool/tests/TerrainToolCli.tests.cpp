@@ -75,6 +75,14 @@ namespace
         return "absent";
     }
 
+    std::string CheckDetailOf(const Json &report, std::string_view name)
+    {
+        for (const Json &c : report.at("checks"))
+            if (c.at("name").get<std::string>() == name)
+                return c.at("detail").get<std::string>();
+        return "absent";
+    }
+
     std::vector<Json> DiagnosticsOf(const Json &report, std::string_view check)
     {
         std::vector<Json> found;
@@ -539,7 +547,9 @@ TEST_CASE("TerrainTool sync publishes into the game's releases once per recipe c
     const Json changed = ReadJson(reportPath);
     CHECK(changed.at("publish").at("published") == true);
     CHECK(changed.at("publish").at("previous") == id);
-    CHECK(ReleaseDirNames(assetDir).size() == 2);
+    CHECK(CheckStatusOf(changed, "prune") == "passed");
+    const std::string next = changed.at("publish").at("current").get<std::string>();
+    CHECK(ReleaseDirNames(assetDir) == std::vector<std::string>{next});
 
     std::vector<std::string> broken = sync;
     broken[2] = (recipe.parent_path() / "absent.terrain.json").string();
@@ -548,7 +558,65 @@ TEST_CASE("TerrainTool sync publishes into the game's releases once per recipe c
     std::vector<std::string> missing(sync.begin(), sync.begin() + 7);
     missing.insert(missing.end(), {"--report", reportPath.string()});
     CHECK(Run(missing) == 2);
+    CHECK(ReleaseDirNames(assetDir) == std::vector<std::string>{next});
+}
+
+TEST_CASE("TerrainTool prune removes old releases and keeps one a reader holds", "[terraintool][cli][prune]")
+{
+    ScratchDir scratch("cli_prune");
+    const fs::path gameDir = scratch.path / "games" / "G";
+    const fs::path releases = TerrainReleasesRoot(gameDir);
+    const AssetId asset = MakeAssetId(ExampleAssetPath());
+    const fs::path assetDir = TerrainAssetReleasesDir(releases, asset);
+    const fs::path reportPath = scratch.path / "reports" / "prune.json";
+
+    auto publish = [&](const char *name, uint64_t nonce)
+    {
+        const fs::path candidate = scratch.path / name;
+        WriteCraftedCandidate(candidate,
+                              [](auto &)
+                              {
+                              },
+                              nonce);
+        TerrainPublishRequest request;
+        request.candidateDir = candidate;
+        request.releasesRoot = releases;
+        const TerrainReport report = RunTerrainPublish(request);
+        for (const TerrainDiagnostic &d : report.diagnostics)
+            UNSCOPED_INFO(FormatDiagnostic(d));
+        REQUIRE(report.Ok());
+        return *report.publish->current;
+    };
+    const TerrainReleaseId a = publish("a", 0xA);
+    const TerrainReleaseId b = publish("b", 0xB);
+    REQUIRE(a != b);
+    REQUIRE(ReleaseDirNames(assetDir).size() == 2);
+
+    const std::vector<std::string> prune{"prune",      "--id-root", std::string(kIdRoot),
+                                         "--source-path", std::string(kSourcePath), "--game-dir",
+                                         gameDir.string(), "--report",  reportPath.string()};
+
+    TerrainResult<TerrainReleaseHandle> held = OpenTerrainRelease(releases, asset, a);
+    REQUIRE(held);
+    CHECK(Run(prune) == 0);
+    const Json blocked = ReadJson(reportPath);
+    CHECK(blocked.at("command") == "prune");
+    CHECK(blocked.at("ok") == true);
+    CHECK(CheckStatusOf(blocked, "prune") == "passed");
+    CHECK(CheckDetailOf(blocked, "prune").find("(in use)") != std::string::npos);
     CHECK(ReleaseDirNames(assetDir).size() == 2);
+    CHECK(PeekTerrainCurrent(releases, asset) == b);
+
+    held.value.reset();
+    CHECK(Run(prune) == 0);
+    const Json freed = ReadJson(reportPath);
+    CHECK(CheckStatusOf(freed, "prune") == "passed");
+    CHECK(ReleaseDirNames(assetDir) == std::vector<std::string>{TerrainIdHex(b.value)});
+
+    // Usage errors exit 2 and never leave a report inside the release tree.
+    CHECK(Run({"prune", "--id-root", std::string(kIdRoot), "--report", reportPath.string()}) == 2);
+    CHECK(Run({"prune", "--id-root", std::string(kIdRoot), "--source-path", std::string(kSourcePath), "--game-dir",
+               gameDir.string(), "--report", (releases / "report.json").string()}) == 2);
 }
 
 TEST_CASE("TerrainTool package copies the game's current release into another game directory",

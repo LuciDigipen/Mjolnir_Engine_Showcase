@@ -130,8 +130,9 @@ namespace mir
     }
 
     TerrainReleaseHandle::TerrainReleaseHandle(std::shared_ptr<const TerrainIndex> index,
-                                               std::shared_ptr<TerrainByteSource> source)
-        : mIndex(std::move(index)), mSource(std::move(source))
+                                               std::shared_ptr<TerrainByteSource> source,
+                                               std::shared_ptr<const TerrainReleaseLock> lock)
+        : mIndex(std::move(index)), mSource(std::move(source)), mLock(std::move(lock))
     {
     }
 
@@ -149,9 +150,10 @@ namespace mir
         if (!index)
             return Failure<TerrainReleaseHandle>(index.error, where);
 
+        std::shared_ptr<const TerrainReleaseLock> lock = source->Lock();
         TerrainResult<TerrainReleaseHandle> result;
-        result.value =
-            TerrainReleaseHandle(std::make_shared<const TerrainIndex>(std::move(*index.value)), std::move(source));
+        result.value = TerrainReleaseHandle(std::make_shared<const TerrainIndex>(std::move(*index.value)),
+                                            std::move(source), std::move(lock));
         return result;
     }
 
@@ -342,8 +344,17 @@ namespace mir
             return Fail<TerrainReleaseHandle>(Code::InvalidInput, "asset and release ids must be set");
 
         const std::filesystem::path dir = TerrainReleaseDir(releasesRoot, asset, release);
-        TerrainResult<TerrainReleaseHandle> opened =
-            TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(dir));
+        std::shared_ptr<TerrainFileSource> source = std::make_shared<TerrainFileSource>(dir);
+        std::shared_ptr<const TerrainReleaseLock> lock;
+        const TerrainReleaseLockStatus status = TerrainReleaseLock::AcquireShared(
+            TerrainAssetReleasesDir(releasesRoot, asset), release, lock);
+        if (status == TerrainReleaseLockStatus::Busy)
+            return Fail<TerrainReleaseHandle>(Code::NotFound,
+                                              "{}: release {} is being removed (a pruner holds its lock)",
+                                              dir.generic_string(), Hex(release.value));
+        source->HoldLock(std::move(lock));
+
+        TerrainResult<TerrainReleaseHandle> opened = TerrainReleaseHandle::Open(source);
         if (!opened)
             return opened;
 
