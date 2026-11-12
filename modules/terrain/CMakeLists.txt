@@ -7,6 +7,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainCollision.cpp
     src/terrain/TerrainCollisionResidency.cpp
     src/terrain/TerrainEditLayer.cpp
+    src/terrain/TerrainEditStore.cpp
     src/terrain/TerrainAssetPath.cpp
     src/terrain/TerrainByteSource.cpp
     src/terrain/TerrainExecutor.cpp

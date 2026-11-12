@@ -6,6 +6,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainCollisionResidency.tests.cpp
     TerrainCollisionResidencyJolt.tests.cpp
     TerrainEditLayer.tests.cpp
+    TerrainEditStore.tests.cpp
     TerrainGround.tests.cpp
     TerrainHeightQuery.tests.cpp
     TerrainIdentity.tests.cpp

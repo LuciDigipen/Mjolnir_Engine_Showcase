@@ -90,9 +90,10 @@ function(engine_cook_assets target)
         # CONFIGURE_DEPENDS: a newly added asset file needs a reconfigure to
         # join this list, same reasoning as vcpkg.json in the root CMakeLists.
         file(GLOB_RECURSE root_files CONFIGURE_DEPENDS "${root_abs}/*")
-        # AssetCooker skips terrain recipes and release files (IsTerrainFileExcludedFromCook);
+        # AssetCooker skips terrain recipes, releases and edit layer files (IsTerrainFileExcludedFromCook);
         # TerrainTool sync handles them, so editing a recipe must not rerun the cook.
-        list(FILTER root_files EXCLUDE REGEX "(\\.terrain\\.json|\\.tindex|\\.tpack)$")
+        list(FILTER root_files EXCLUDE REGEX "(\\.terrain\\.json|\\.tindex|\\.tpack|\\.tedit)$")
+        list(FILTER root_files EXCLUDE REGEX "(^|/)[^/]*\\.terrain\\.layers(/|$)")
         list(APPEND source_files ${root_files})
         _engine_material_cook_dependencies("${root_abs}" material_dependencies)
         list(APPEND source_files ${material_dependencies})
