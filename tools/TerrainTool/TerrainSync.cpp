@@ -225,6 +225,12 @@ namespace mir::terrainbake
         bake.sourcePath = request.sourcePath;
         bake.candidateDir = request.candidateDir;
         bake.options = request.options;
+        if (opened)
+        {
+            TerrainBaseRelease base;
+            base.handle = *opened;
+            bake.base = std::move(base);
+        }
         if (!BakeTerrainCandidate(bake, report))
         {
             report.publish->current = PeekTerrainCurrent(releases, asset->asset);

@@ -8,7 +8,7 @@
  */
 #include "TerrainBake.h"
 #include "TerrainDerivatives.h"
-#include <unordered_map>
+#include "TerrainIncremental.h"
 
 #include "TerrainGenerator.h"
 #include "TerrainHeightSource.h"
@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <format>
 #include <system_error>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace mir::terrainbake
@@ -267,7 +269,9 @@ namespace mir::terrainbake
 
     std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
                                                           const TerrainRecipe &recipe, std::vector<TileHeights> tiles,
-                                                          const TerrainBakeOptions &options, TerrainReport &report)
+                                                          const TerrainBakeOptions &options, TerrainReport &report,
+                                                          const TerrainReleaseHandle *baseRelease,
+                                                          std::string baseUnavailable)
     {
         if (recipe.recipeVersion != 1 && !report.seams)
         {
@@ -282,12 +286,75 @@ namespace mir::terrainbake
             Fail(report, check::kEncode, "seams", "prototype seam options cannot be encoded as a production candidate");
             return std::nullopt;
         }
+
+        std::optional<std::vector<TileCoord>> affected;
+        std::string mode = "full bake";
+        if (baseRelease)
+        {
+            if (baseRelease->Info().asset != asset)
+                mode = "full bake because the base release belongs to another asset";
+            else if (const std::optional<std::string> mismatch =
+                         TerrainBaseMismatch(*baseRelease, recipe, tiles, options.regions))
+                mode = "full bake because " + *mismatch;
+            else
+            {
+                std::size_t changed = 0;
+                affected = TerrainAffectedTiles(*baseRelease, tiles, changed);
+                mode = std::format("incremental: {} changed, {} tiles rederived, {} reused", changed,
+                                   affected->size(), tiles.size() - affected->size());
+            }
+        }
+        else if (!baseUnavailable.empty())
+            mode = "full bake because " + baseUnavailable;
+        std::unordered_set<TileCoord> onlySet;
+        const std::unordered_set<TileCoord> *onlyTiles = nullptr;
+        if (affected)
+        {
+            onlySet.insert(affected->begin(), affected->end());
+            onlyTiles = &onlySet;
+        }
+
         std::string derivativeError;
-        auto derivatives = BakeTerrainDerivatives(recipe, tiles, derivativeError, &options.regions);
+        auto derivatives =
+            BakeTerrainDerivatives(recipe, tiles, derivativeError, &options.regions, std::nullopt, onlyTiles);
         if (!derivatives)
         {
             Fail(report, check::kEncode, "derivatives", derivativeError);
             return {};
+        }
+        std::vector<TerrainPayloadWrite> payloads = std::move(derivatives->payloads);
+        std::vector<TileHeights> queryHeights = std::move(derivatives->queryHeights);
+        std::vector<uint32_t> queryLayers = std::move(derivatives->queryLayers);
+        std::vector<double> queryErrors = std::move(derivatives->queryErrors);
+        if (baseRelease && affected)
+        {
+            for (const TerrainTileRecord &record : baseRelease->Index().tiles)
+            {
+                if (record.source || record.kind == TerrainPayloadKind::Region || onlySet.contains(record.tile))
+                    continue;
+                if (record.kind == TerrainPayloadKind::Height)
+                {
+                    TerrainResult<TileHeights> query = baseRelease->ReadTileRecord(record);
+                    if (!query)
+                    {
+                        Fail(report, check::kEncode, "derivatives", query.error.message);
+                        return std::nullopt;
+                    }
+                    queryHeights.push_back(std::move(*query.value));
+                    queryLayers.push_back(record.layer);
+                    queryErrors.push_back(record.maxDeviation.value_or(0.0));
+                }
+                else
+                {
+                    TerrainResult<std::vector<std::byte>> bytes = baseRelease->ReadPayload(record);
+                    if (!bytes)
+                    {
+                        Fail(report, check::kEncode, "derivatives", bytes.error.message);
+                        return std::nullopt;
+                    }
+                    payloads.push_back({record, std::move(*bytes.value)});
+                }
+            }
         }
         const auto &layers = derivatives->layers;
         std::vector<TerrainTileWrite> records;
@@ -309,27 +376,27 @@ namespace mir::terrainbake
         std::unordered_map<TileCoord, uint64_t> sourceChecksums;
         for (const auto &tile : tiles)
             sourceChecksums.emplace(tile.Tile(), TerrainFinalHeightChecksum(tile));
-        for (size_t i = 0; i < derivatives->queryHeights.size(); ++i)
-            records.push_back({&derivatives->queryHeights[i], derivatives->queryLayers[i], false,
-                               derivatives->queryErrors[i], sourceChecksums.at(derivatives->queryHeights[i].Tile())});
+        for (size_t i = 0; i < queryHeights.size(); ++i)
+            records.push_back({&queryHeights[i], queryLayers[i], false, queryErrors[i],
+                               sourceChecksums.at(queryHeights[i].Tile())});
         const uint64_t heightsHash =
-            TerrainPayloadsHash(layers, records, derivatives->payloads, derivatives->regions->writes);
+            TerrainPayloadsHash(layers, records, payloads, derivatives->regions->writes);
         const uint64_t nonce = options.nonce ? *options.nonce : MakeTerrainReleaseNonce();
         const TerrainReleaseInfo info{asset, source, kTerrainFormatVersion,
                                       MintTerrainReleaseId(asset, source, heightsHash, nonce)};
         TerrainProgressStage("encode");
-        auto encoded = EncodeTerrainRelease(info, layers, records, derivatives->payloads, derivatives->regions->writes,
+        auto encoded = EncodeTerrainRelease(info, layers, records, payloads, derivatives->regions->writes,
                                             options.pack);
         if (!encoded)
         {
             Fail(report, check::kEncode, "", encoded.error.message);
             return std::nullopt;
         }
-        report.Ran(check::kEncode, std::format("release {}: {} source tiles, {} sparse layers, {} packs",
+        report.Ran(check::kEncode, std::format("release {}: {} source tiles, {} sparse layers, {} packs; {}",
                                                TerrainIdHex(info.release.value), tiles.size(), layers.size(),
-                                               encoded.value->packs.size()));
+                                               encoded.value->packs.size(), mode));
         return TerrainBakedRelease{info,        recipe.layout, nonce, std::move(tiles), std::move(*encoded.value),
-                                   report.seams};
+                                   report.seams, baseRelease && affected.has_value()};
     }
 
     TerrainCandidateManifest MakeCandidateManifest(const TerrainBakedRelease &baked, std::string assetPath,
@@ -395,8 +462,30 @@ namespace mir::terrainbake
         std::optional<std::vector<TileHeights>> tiles = BakeFinalHeights(recipe, report);
         if (!tiles)
             return false;
-        std::optional<TerrainBakedRelease> baked =
-            EncodeBakedRelease(MakeAssetId(assetPath), fingerprint, recipe, std::move(*tiles), request.options, report);
+
+        std::optional<TerrainReleaseHandle> baseRelease;
+        std::string baseUnavailable;
+        if (request.base)
+        {
+            if (request.base->handle)
+                baseRelease = *request.base->handle;
+            else if (!request.base->releasesRoot.empty() && request.base->asset)
+            {
+                const std::filesystem::path releases = request.base->releasesRoot;
+                const AssetId baseAsset = *request.base->asset;
+                TerrainResult<TerrainReleaseHandle> opened = OpenCurrentTerrainRelease(releases, baseAsset);
+                if (opened)
+                    baseRelease = std::move(*opened.value);
+                else
+                    baseUnavailable = "the base release does not open: " + opened.error.message;
+            }
+            else
+                baseUnavailable = "the base release has no open handle or releases root and asset";
+        }
+
+        std::optional<TerrainBakedRelease> baked = EncodeBakedRelease(
+            MakeAssetId(assetPath), fingerprint, recipe, std::move(*tiles), request.options, report,
+            baseRelease ? &*baseRelease : nullptr, std::move(baseUnavailable));
         if (!baked)
             return false;
         report.release = baked->info;
@@ -428,7 +517,9 @@ namespace mir::terrainbake
         }
 
         TerrainProgressStage("validate");
-        ValidateTerrainCandidate(staging, {&recipe, true}, report);
+        ValidateTerrainCandidate(
+            staging,
+            {&recipe, true, false, baked->incremental && baseRelease ? &*baseRelease : nullptr}, report);
         if (!report.Ok())
         {
             report.Skip(check::kWrite, std::format("the written files failed validation; {} was removed and {} "

@@ -18,6 +18,7 @@
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainPackWriter.h>
+#include <terrain/TerrainRelease.h>
 #include <terrain/TileHeights.h>
 
 #include <cstdint>
@@ -45,6 +46,8 @@ namespace mir::terrainbake
         std::vector<TileHeights> tiles;
         TerrainEncodedRelease encoded;
         std::optional<TerrainSeamSummary> seams;
+        // True when unchanged payloads came from a compatible base release.
+        bool incremental = false;
     };
 
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report);
@@ -56,10 +59,21 @@ namespace mir::terrainbake
 
     std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
                                                           const TerrainRecipe &recipe, std::vector<TileHeights> tiles,
-                                                          const TerrainBakeOptions &options, TerrainReport &report);
+                                                          const TerrainBakeOptions &options, TerrainReport &report,
+                                                          const TerrainReleaseHandle *baseRelease = nullptr,
+                                                          std::string baseUnavailable = {});
 
     TerrainCandidateManifest MakeCandidateManifest(const TerrainBakedRelease &baked, std::string assetPath,
                                                    std::string recipePath);
+
+    struct TerrainBaseRelease
+    {
+        // Takes precedence over the path form.
+        std::optional<TerrainReleaseHandle> handle;
+        // Opens <releasesRoot>/<asset>/current when handle is absent.
+        std::filesystem::path releasesRoot;
+        std::optional<AssetId> asset;
+    };
 
     struct TerrainBakeRequest
     {
@@ -69,6 +83,8 @@ namespace mir::terrainbake
         std::string sourcePath;
         std::filesystem::path candidateDir;
         TerrainBakeOptions options;
+        // Reuses unchanged payloads; absent or unusable runs a full bake.
+        std::optional<TerrainBaseRelease> base;
     };
 
     // Builds a .partial sibling, then renames it, so candidateDir is absent or complete.

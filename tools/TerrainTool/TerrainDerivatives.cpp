@@ -144,14 +144,36 @@ namespace mir::terrainbake
             return lod;
         }
     }
+    std::vector<TerrainLayout> TerrainDerivativeLayers(const TerrainRecipe &recipe,
+                                                       std::span<const TileHeights> heights)
+    {
+        std::vector<TerrainLayout> layers{recipe.layout};
+        double maxSource = recipe.layout.SampleSpacing();
+        for (const auto &tile : heights)
+        {
+            const auto layout = recipe.SourceLayout(tile.Tile());
+            if (layout)
+                maxSource = std::max(maxSource, layout->SampleSpacing());
+        }
+        const double maxSpacing = std::max(maxSource, kTerrainInitialMaxLodSpacing);
+        while (layers.back().IntervalsPerTile() % 2 == 0 && layers.back().SampleSpacing() * 2 <= maxSpacing)
+        {
+            const auto &prev = layers.back();
+            auto next = TerrainLayout::Create(prev.SampleSpacing() * 2, prev.IntervalsPerTile() / 2, prev.Bounds());
+            if (!next || !TerrainLayersNest(prev, *next))
+                break;
+            layers.push_back(*next);
+        }
+        return layers;
+    }
+
     std::optional<TerrainDerivatives> BakeTerrainDerivatives(const TerrainRecipe &recipe,
                                                              std::span<const TileHeights> heights, std::string &error,
                                                              const TerrainRegionSettings *regions,
-                                                             std::optional<std::size_t> workers)
+                                                             std::optional<std::size_t> workers,
+                                                             const std::unordered_set<TileCoord> *onlyTiles)
     {
         TerrainDerivatives result;
-        result.layers.push_back(recipe.layout);
-        double maxSource = recipe.layout.SampleSpacing();
         FinalSurface final{recipe, {}};
         for (const auto &tile : heights)
         {
@@ -171,18 +193,8 @@ namespace mir::terrainbake
                 error = "final source tile is duplicated";
                 return {};
             }
-            maxSource = std::max(maxSource, layout->SampleSpacing());
         }
-        const double maxSpacing = std::max(maxSource, kTerrainInitialMaxLodSpacing);
-        while (result.layers.back().IntervalsPerTile() % 2 == 0 &&
-               result.layers.back().SampleSpacing() * 2 <= maxSpacing)
-        {
-            const auto &prev = result.layers.back();
-            auto next = TerrainLayout::Create(prev.SampleSpacing() * 2, prev.IntervalsPerTile() / 2, prev.Bounds());
-            if (!next || !TerrainLayersNest(prev, *next))
-                break;
-            result.layers.push_back(*next);
-        }
+        result.layers = TerrainDerivativeLayers(recipe, heights);
         struct TileSlot
         {
             std::vector<TerrainPayloadWrite> payloads;
@@ -196,6 +208,8 @@ namespace mir::terrainbake
         auto deriveTile = [&](std::size_t index)
         {
             const auto &tile = heights[index];
+            if (onlyTiles && !onlyTiles->contains(tile.Tile()))
+                return;
             auto &slot = slots[index];
             const auto sourceLayout = final.Layout(tile);
             auto found = std::find_if(layers.begin(), layers.end(),

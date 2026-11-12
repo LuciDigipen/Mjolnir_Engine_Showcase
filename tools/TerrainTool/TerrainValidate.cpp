@@ -8,6 +8,7 @@
  */
 #include "TerrainValidate.h"
 #include "TerrainDerivatives.h"
+#include "TerrainIncremental.h"
 #include "TerrainRegions.h"
 
 #include "TerrainCandidate.h"
@@ -29,6 +30,7 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -455,8 +457,33 @@ namespace mir::terrainbake
                     }
                 if (allSources)
                 {
+                    const TerrainReleaseHandle *base = options.baseRelease;
+                    std::string ignoredBase;
+                    std::unordered_set<TileCoord> affected;
+                    if (base)
+                    {
+                        TerrainRegionSettings settings;
+                        if (index.regionGrid)
+                        {
+                            settings.regionTiles = index.regionGrid->RegionTiles();
+                            settings.cells = index.regionGrid->Cells();
+                        }
+                        if (base->Info().asset != index.release.asset)
+                            ignoredBase = "the base release belongs to another asset";
+                        else if (const std::optional<std::string> mismatch =
+                                     TerrainBaseMismatch(*base, derivedRecipe, sourceTiles, settings))
+                            ignoredBase = *mismatch;
+                        else
+                        {
+                            std::size_t changed = 0;
+                            const std::vector<TileCoord> tiles = TerrainAffectedTiles(*base, sourceTiles, changed);
+                            affected.insert(tiles.begin(), tiles.end());
+                        }
+                    }
+                    const bool reuseBase = base && ignoredBase.empty();
                     std::string why;
-                    auto expected = BakeTerrainDerivatives(derivedRecipe, sourceTiles, why);
+                    auto expected = BakeTerrainDerivatives(derivedRecipe, sourceTiles, why, nullptr, std::nullopt,
+                                                           reuseBase ? &affected : nullptr);
                     if (!expected)
                         report.Add({std::string(check::kPayloads), "derived", {}, std::nullopt, why});
                     else if (expected->layers.size() != index.layers.size() ||
@@ -474,6 +501,15 @@ namespace mir::terrainbake
                                     "derived layer coverage differs from final-source derivation"});
                     else
                     {
+                        std::set<std::tuple<int32_t, int32_t, uint32_t, uint32_t, uint32_t>> expectedKeys;
+                        for (const auto &v : expected->payloads)
+                            expectedKeys.emplace(v.record.tile.x, v.record.tile.z, v.record.layer,
+                                                 static_cast<uint32_t>(v.record.kind), v.record.level);
+                        for (size_t i = 0; i < expected->queryHeights.size(); ++i)
+                            expectedKeys.emplace(expected->queryHeights[i].Tile().x,
+                                                 expected->queryHeights[i].Tile().z, expected->queryLayers[i],
+                                                 static_cast<uint32_t>(TerrainPayloadKind::Height), 0);
+                        size_t rederived = 0;
                         for (const auto &v : expected->payloads)
                         {
                             const auto &key = v.record;
@@ -487,6 +523,7 @@ namespace mir::terrainbake
                                             std::nullopt,
                                             "LOD topology/error or normal order/neighbourhood differs from "
                                             "final-source derivation"});
+                            ++rederived;
                         }
                         for (size_t i = 0; i < expected->queryHeights.size(); ++i)
                         {
@@ -512,10 +549,50 @@ namespace mir::terrainbake
                                             {tile.Tile()},
                                             std::nullopt,
                                             "regular query derivative/error differs from final-source derivation"});
+                            ++rederived;
                         }
+                        size_t reused = 0;
+                        if (reuseBase)
+                        {
+                            for (const TerrainTileRecord &r : index.tiles)
+                            {
+                                if (r.source || r.kind == TerrainPayloadKind::Region || affected.contains(r.tile))
+                                    continue;
+                                const TerrainTileRecord *baseRecord =
+                                    base->Index().Find(r.tile, r.layer, r.kind, r.level);
+                                const TerrainResult<std::vector<std::byte>> baseBytes =
+                                    baseRecord ? base->ReadPayload(*baseRecord)
+                                               : TerrainResult<std::vector<std::byte>>{};
+                                const TerrainResult<std::vector<std::byte>> bytes = handle.ReadPayload(r);
+                                if (!baseRecord || !baseBytes || !bytes || *bytes.value != *baseBytes.value)
+                                    report.Add({std::string(check::kPayloads),
+                                                "derived",
+                                                {r.tile},
+                                                std::nullopt,
+                                                "a reused payload differs from the base release for an unchanged "
+                                                "tile"});
+                                ++reused;
+                            }
+                            for (const TerrainTileRecord &r : index.tiles)
+                            {
+                                if (r.source || r.kind == TerrainPayloadKind::Region || !affected.contains(r.tile))
+                                    continue;
+                                if (!expectedKeys.contains({r.tile.x, r.tile.z, r.layer,
+                                                            static_cast<uint32_t>(r.kind), r.level}))
+                                    report.Add({std::string(check::kPayloads),
+                                                "derived",
+                                                {r.tile},
+                                                std::nullopt,
+                                                "an affected tile has a payload the derivation does not produce"});
+                            }
+                        }
+                        const std::string note =
+                            reuseBase ? std::format(", {} reused from the base release", reused)
+                                      : (base ? "; the base release was ignored: " + ignoredBase
+                                              : " from final source");
                         report.Ran(check::kPayloads,
-                                   std::format("{} decoded payloads; {} LOD/normal records rederived from final source",
-                                               decodedCount, expected->payloads.size()));
+                                   std::format("{} decoded payloads; {} LOD/normal/query records rederived{}",
+                                               decodedCount, rederived, note));
                     }
                 }
             }
@@ -809,7 +886,10 @@ namespace mir::terrainbake
                                               : std::string("invalid"));
         }
 
-        ValidateTerrainCandidate(request.candidateDir, {recipe ? &*recipe : nullptr, true}, report);
+        ValidateTerrainCandidate(request.candidateDir,
+                                 {recipe ? &*recipe : nullptr, true, false,
+                                  request.baseRelease ? &*request.baseRelease : nullptr},
+                                 report);
         return report;
     }
 }

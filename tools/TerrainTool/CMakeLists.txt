@@ -14,6 +14,7 @@ add_library(terrain_bake STATIC
     TerrainMixedContinuity.cpp
     TerrainGenerator.cpp
     TerrainHeightSource.cpp
+    TerrainIncremental.cpp
     TerrainNoise.cpp
     TerrainPackage.cpp
     TerrainProgress.cpp
@@ -44,6 +45,7 @@ if(BUILD_TESTING)
         tests/TerrainBake.tests.cpp
         tests/TerrainGenerator.tests.cpp
         tests/TerrainHeightmap.tests.cpp
+        tests/TerrainIncremental.tests.cpp
         tests/TerrainDerivatives.tests.cpp
         tests/TerrainPackage.tests.cpp
         tests/TerrainPrecision.tests.cpp
