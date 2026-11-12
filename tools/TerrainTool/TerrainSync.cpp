@@ -179,7 +179,7 @@ namespace mir::terrainbake
         const TerrainRecipe &recipe = *parsed.recipe;
         const TerrainSourceFingerprint fingerprint = FingerprintRecipe(recipe);
         report.recipeFingerprint = fingerprint;
-        report.Ran(check::kRecipe, std::format("fingerprint {}", TerrainIdHex(fingerprint.value)));
+        report.Ran(check::kRecipe, DescribeRecipeFingerprint(recipe, fingerprint));
 
         // Held until the pointer switch, so a second sync sees this one's result.
         std::string error;

@@ -16,6 +16,7 @@
 #include <assets/AssetId.h>
 #include <assets/AssetPath.h>
 #include <core/fs/FileIO.h>
+#include <terrain/TerrainEditStore.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainRelease.h>
 
@@ -36,6 +37,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace mir::terrainbake::test
@@ -275,6 +277,47 @@ namespace mir::terrainbake::test
         fs::create_directories(dir);
         REQUIRE(WriteText(dir / name, recipe.dump(2)));
         return dir / name;
+    }
+
+    inline fs::path CopyExampleRecipe(const fs::path &dir, const std::string &name = "relief-2x2.terrain.json")
+    {
+        fs::create_directories(dir);
+        const fs::path path = dir / name;
+        REQUIRE(fs::copy_file(ExampleRecipePath(), path, fs::copy_options::overwrite_existing));
+        return path;
+    }
+
+    inline fs::path CopyRecipeFixture(const std::string &name, const fs::path &dir)
+    {
+        fs::create_directories(dir);
+        const fs::path path = dir / name;
+        REQUIRE(fs::copy_file(fs::path(TERRAIN_FIXTURE_DIR) / name, path, fs::copy_options::overwrite_existing));
+        return path;
+    }
+
+    inline TerrainEditLayer AdditiveEditLayer(std::string name, uint32_t sequence = 0, bool enabled = true)
+    {
+        TerrainEditLayer layer;
+        layer.info.name = std::move(name);
+        layer.info.sequence = sequence;
+        layer.info.enabled = enabled;
+        layer.info.heightBlend = TerrainEditBlend::Additive;
+        return layer;
+    }
+
+    // Replaces the recipe's layers directory with the files the store would write.
+    inline void WriteEditLayers(const fs::path &recipePath, std::span<const TerrainEditLayer> layers)
+    {
+        const TerrainResult<std::vector<TerrainEditStackFile>> files = PlanTerrainEditStackWrite(layers);
+        REQUIRE(files);
+        const fs::path dir = TerrainEditLayersDir(recipePath);
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        for (const TerrainEditStackFile &file : *files.value)
+        {
+            fs::create_directories((dir / file.path).parent_path());
+            WriteFile(dir / file.path, file.bytes);
+        }
     }
 
     inline std::vector<TileHeights> ReadAllTiles(const TerrainReleaseHandle &handle)

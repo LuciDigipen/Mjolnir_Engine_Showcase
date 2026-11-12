@@ -283,3 +283,51 @@ TEST_CASE("Two builds syncing one asset at once publish it once", "[terraintool]
     impatient.lockWait = 0ms;
     CHECK(Sync(impatient).Status(check::kLock) == CheckStatus::Failed);
 }
+
+TEST_CASE("Sync republishes an edited recipe only when a layer tile changes", "[terraintool][sync][edits]")
+{
+    SyncTree tree("sync_edits");
+    const TerrainRecipe plain = LoadExample();
+    const GlobalSampleIndex sample{plain.layout.TileFirstSample(-1) + 8, plain.layout.TileFirstSample(-1) + 8};
+    TerrainEditLayer layer = AdditiveEditLayer("touch-up");
+    SetTerrainEditSample(layer, plain.layout, sample, 4.0f);
+    WriteEditLayers(tree.recipe, std::span(&layer, 1));
+
+    const TerrainReport first = Sync(tree.Request());
+    REQUIRE(first.Ok());
+    REQUIRE(first.publish->published);
+    const TerrainReleaseId r1 = *first.publish->current;
+    REQUIRE(first.recipeFingerprint);
+    const TerrainSourceFingerprint edited = *first.recipeFingerprint;
+    CHECK(edited != FingerprintRecipe(plain));
+    const auto before = Snapshot(tree.releases);
+
+    const TerrainReport again = Sync(tree.Request());
+    REQUIRE(again.Ok());
+    CHECK_FALSE(again.publish->published);
+    CHECK(again.publish->current == r1);
+    CHECK(Snapshot(tree.releases) == before);
+
+    SetTerrainEditSample(layer, plain.layout, sample, 9.0f);
+    const TerrainEditTile &changedTile = layer.tiles.at(TileCoord{-1, -1});
+    const TerrainResult<std::vector<std::byte>> bytes =
+        EncodeTerrainEditTile(changedTile, layer.info.heightBlend);
+    REQUIRE(bytes);
+    WriteFile(TerrainEditLayersDir(tree.recipe) / TerrainEditLayerDirName(layer.info.sequence) /
+                  TerrainEditTileFileName(changedTile.tile),
+              *bytes.value);
+
+    const TerrainReport changed = Sync(tree.Request());
+    REQUIRE(changed.Ok());
+    CHECK(changed.publish->published);
+    CHECK(changed.publish->previous == r1);
+    REQUIRE(changed.release);
+    CHECK(changed.release->release != r1);
+    REQUIRE(changed.recipeFingerprint);
+    CHECK(*changed.recipeFingerprint != edited);
+    CHECK(changed.release->source == *changed.recipeFingerprint);
+    const TerrainResult<TerrainReleaseHandle> current = OpenCurrentTerrainRelease(tree.releases, tree.asset);
+    REQUIRE(current);
+    CHECK(current.value->Info().source == *changed.recipeFingerprint);
+    CHECK(ReleaseDirNames(tree.assetDir).size() == 2);
+}

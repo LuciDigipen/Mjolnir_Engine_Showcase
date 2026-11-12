@@ -14,6 +14,7 @@
 
 #include <assets/AssetId.h>
 #include <core/fs/FileIO.h>
+#include <terrain/TerrainEditStore.h>
 #include <terrain/TileHeights.h>
 #include <terrain/TerrainPackFormat.h>
 
@@ -23,6 +24,7 @@
 #include <bit>
 #include <charconv>
 #include <cmath>
+#include <format>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -719,8 +721,47 @@ namespace mir::terrainbake
         if (!text)
             return {std::nullopt, {{"", "cannot read " + PathUtf8(path)}}};
         RecipeParseResult result = ParseTerrainRecipe(*text);
-        if (result.recipe)
-            result.recipe->recipeDir = path.parent_path();
+        if (!result.recipe)
+            return result;
+        TerrainRecipe &recipe = *result.recipe;
+        recipe.recipeDir = path.parent_path();
+
+        TerrainResult<std::vector<TerrainEditLayer>> loaded = LoadTerrainEditStack(TerrainEditLayersDir(path));
+        if (!loaded)
+            return {std::nullopt, {{"edits", loaded.error.message}}};
+
+        // Edit tiles sit on the reference grid, so a coarser source tile cannot hold one.
+        struct StrayTile
+        {
+            TileCoord tile;
+            const TerrainEditLayer *layer = nullptr;
+            std::optional<double> spacing;
+        };
+        std::optional<StrayTile> stray;
+        for (const TerrainEditLayer &layer : *loaded.value)
+            for (const auto &entry : layer.tiles)
+            {
+                const std::optional<double> spacing = recipe.SourceSpacing(entry.first);
+                if (spacing && *spacing == recipe.layout.SampleSpacing())
+                    continue;
+                if (!stray || std::pair(entry.first.z, entry.first.x) <
+                                  std::pair(stray->tile.z, stray->tile.x))
+                    stray = StrayTile{entry.first, &layer, spacing};
+            }
+        if (stray)
+            return {std::nullopt,
+                    {{"edits",
+                      stray->spacing ? std::format("layer \"{}\" stores tile ({}, {}) on {} m source spacing; edit "
+                                                   "layers require the reference spacing {} m",
+                                                   stray->layer->info.name, stray->tile.x, stray->tile.z,
+                                                   *stray->spacing, recipe.layout.SampleSpacing())
+                                     : std::format("layer \"{}\" stores tile ({}, {}), which is outside the map",
+                                                   stray->layer->info.name, stray->tile.x, stray->tile.z)}}};
+
+        std::shared_ptr<const std::vector<TerrainEditLayer>> stack =
+            std::make_shared<const std::vector<TerrainEditLayer>>(std::move(*loaded.value));
+        recipe.editStackHash = TerrainEditStackHash(*stack);
+        recipe.editStack = std::move(stack);
         return result;
     }
 
@@ -772,6 +813,9 @@ namespace mir::terrainbake
                 fields["precision.tile." + std::to_string(rule.tile.z) + "." + std::to_string(rule.tile.x)] =
                     Bits(rule.spacing);
         }
+        // Absent while no enabled layer stores a tile, so an unedited recipe's text stays as it was.
+        if (recipe.editStackHash != 0)
+            fields["edits.stackHash"] = std::format("{:016x}", recipe.editStackHash);
 
         std::string text;
         for (const auto &[key, value] : fields)
@@ -784,5 +828,21 @@ namespace mir::terrainbake
         const uint64_t hash = Fnv1a64(CanonicalRecipeText(recipe));
         // Zero means "unknown"; a recipe hashing to it takes 1 instead.
         return TerrainSourceFingerprint(hash == 0 ? 1 : hash);
+    }
+
+    std::string DescribeRecipeFingerprint(const TerrainRecipe &recipe, TerrainSourceFingerprint fingerprint)
+    {
+        std::string text = std::format("fingerprint {:016x}", fingerprint.value);
+        if (recipe.editStackHash == 0 || !recipe.editStack)
+            return text;
+        size_t layers = 0;
+        size_t tiles = 0;
+        for (const TerrainEditLayer *layer : TerrainEditCompositingOrder(*recipe.editStack))
+        {
+            ++layers;
+            tiles += layer->tiles.size();
+        }
+        return std::format("{}; edits: {} enabled layers, {} stored edit tiles, stack hash {:016x}", text, layers,
+                           tiles, recipe.editStackHash);
     }
 }

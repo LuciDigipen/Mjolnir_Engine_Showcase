@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <terrain/TerrainEditLayer.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
 
@@ -87,6 +88,10 @@ namespace mir::terrainbake
         std::filesystem::path recipeDir; // set by LoadTerrainRecipe
         // Loaded only when a bake runs, so a current release needs no source file.
         std::shared_ptr<const TerrainHeightSource> heightSource;
+        // The stack beside the recipe; null for a recipe parsed from text.
+        std::shared_ptr<const std::vector<TerrainEditLayer>> editStack;
+        // TerrainEditStackHash of the enabled layers; 0 when none of them stores a tile.
+        uint64_t editStackHash = 0;
 
         bool IsHeightmap() const { return generatorId == kHeightmapGeneratorId; }
         std::optional<double> SourceSpacing(TileCoord tile) const;
@@ -115,4 +120,6 @@ namespace mir::terrainbake
     // Sorted "key=value" lines; doubles as bit patterns, so JSON spelling does not matter.
     std::string CanonicalRecipeText(const TerrainRecipe &recipe);
     TerrainSourceFingerprint FingerprintRecipe(const TerrainRecipe &recipe);
+    // The recipe check's line: the fingerprint, then the edit stack when an enabled layer stores a tile.
+    std::string DescribeRecipeFingerprint(const TerrainRecipe &recipe, TerrainSourceFingerprint fingerprint);
 }

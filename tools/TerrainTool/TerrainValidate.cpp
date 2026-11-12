@@ -805,7 +805,7 @@ namespace mir::terrainbake
                 recipe = std::move(parsed.recipe);
                 report.recipeFingerprint = FingerprintRecipe(*recipe);
             }
-            report.Ran(check::kRecipe, recipe ? "fingerprint " + TerrainIdHex(report.recipeFingerprint->value)
+            report.Ran(check::kRecipe, recipe ? DescribeRecipeFingerprint(*recipe, *report.recipeFingerprint)
                                               : std::string("invalid"));
         }
 

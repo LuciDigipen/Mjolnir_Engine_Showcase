@@ -17,6 +17,7 @@
 #include "TerrainValidate.h"
 
 #include <assets/AssetPath.h>
+#include <terrain/TerrainEditLayer.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainRelease.h>
 #include <terrain/TerrainSurface.h>
@@ -218,6 +219,20 @@ namespace mir::terrainbake
                                             SourceStatusName(filled.status), x, z)});
                     return std::nullopt;
                 }
+                if (recipe.editStack && !recipe.editStack->empty())
+                {
+                    TerrainResult<TileHeights> composed = CompositeTerrainEditLayers(*tile, *recipe.editStack);
+                    if (!composed)
+                    {
+                        report.Add({std::string(check::kGenerate),
+                                    "edits",
+                                    {{x, z}},
+                                    std::nullopt,
+                                    std::format("tile ({}, {}): {}", x, z, composed.error.message)});
+                        return std::nullopt;
+                    }
+                    *tile = std::move(*composed.value);
+                }
                 tiles.push_back(std::move(*tile));
             }
         report.Ran(check::kGenerate,
@@ -359,7 +374,7 @@ namespace mir::terrainbake
         TerrainRecipe &recipe = *parsed.recipe;
         const TerrainSourceFingerprint fingerprint = FingerprintRecipe(recipe);
         report.recipeFingerprint = fingerprint;
-        report.Ran(check::kRecipe, std::format("fingerprint {}", TerrainIdHex(fingerprint.value)));
+        report.Ran(check::kRecipe, DescribeRecipeFingerprint(recipe, fingerprint));
 
         if (recipe.IsHeightmap())
         {

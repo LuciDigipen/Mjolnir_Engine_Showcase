@@ -578,7 +578,7 @@ namespace mir::terrainbake
                 return report;
             recipe = std::move(parsed.recipe);
             report.recipeFingerprint = FingerprintRecipe(*recipe);
-            report.Ran(check::kRecipe, "fingerprint " + TerrainIdHex(report.recipeFingerprint->value));
+            report.Ran(check::kRecipe, DescribeRecipeFingerprint(*recipe, *report.recipeFingerprint));
         }
 
         PublishTerrainCandidate(request, recipe ? &*recipe : nullptr, nullptr, report);
