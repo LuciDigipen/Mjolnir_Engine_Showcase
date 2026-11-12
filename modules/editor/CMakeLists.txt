@@ -57,6 +57,7 @@ target_sources(engine_editor PRIVATE
     src/editor/PrefabWorkspace.cpp
     src/editor/ShaderHotReload.cpp
     src/editor/SnapToTerrain.cpp
+    src/editor/TerrainEditMode.cpp
     src/editor/ViewPie.cpp
     src/editor/history/ActiveCameraEdit.cpp
     src/editor/history/AuthoredCommand.cpp
@@ -83,6 +84,7 @@ target_sources(engine_editor PRIVATE
     src/editor/panels/PreferencesPanel.cpp
     src/editor/panels/ProfilerPanel.cpp
     src/editor/panels/ProjectSettingsPanel.cpp
+    src/editor/panels/TerrainEditPanel.cpp
     src/editor/WorldSceneOps.cpp
 )
 

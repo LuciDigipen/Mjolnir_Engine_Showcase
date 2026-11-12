@@ -64,6 +64,7 @@ namespace mir
         constexpr float kPrefabDropDistance = 10.0f;
         constexpr float kPrefabDropPlaneLimit = 1000.0f;
         constexpr float kPrefabDropMinRate = 1e-4f;
+        constexpr int kTerrainRingSegments = 48;
 
         // ImGui text is UTF-8; path::string() is the ANSI code page on Windows
         std::string ToUtf8(const std::filesystem::path &path)
@@ -679,15 +680,17 @@ namespace mir
     }
 
     void Editor::DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
-        bool prefabDocument)
+        DocumentId document)
     {
         // matches EditorCamera's own Edit-only gating in App::Run
         if (mode.mMode != EngineMode::Edit)
             return;
 
+        const bool prefabDocument = document != kSceneDocument;
+        const bool terrainEditing = mTerrainEdit.Active();
         const bool modalOpen = ImGui::GetTopMostPopupModal() != nullptr;
         // a drag keeps the operation it began with
-        if (!modalOpen && !mGizmoWasUsing && !ImGui::GetIO().WantTextInput &&
+        if (!terrainEditing && !modalOpen && !mGizmoWasUsing && !ImGui::GetIO().WantTextInput &&
             !mWindow->RawInput().IsDown(MouseButton::Right))
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W, false))
@@ -704,10 +707,6 @@ namespace mir
         const std::vector<Entity> selected = GizmoSelection(world);
         // a drag keeps its pivot even when everything it moves is gone
         const bool hasGizmoTarget = mGizmoWasUsing || !selected.empty();
-
-        // A Prefab tab keeps the toolbar (and its Save) visible with nothing selected.
-        if (!hasGizmoTarget && !prefabDocument)
-            return;
 
         const float x = static_cast<float>(mSceneViewportRect.offset.x);
         const float y = static_cast<float>(mSceneViewportRect.offset.y);
@@ -744,6 +743,13 @@ namespace mir
                 local ? "Local axes (click for world)" : "World axes (click for local)"))
                 mGizmoSpace = local ? GizmoSpace::World : GizmoSpace::Local;
 
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(prefabDocument);
+            if (widgets::ToolbarButton(ICON_FA_MOUNTAIN, "Terrain edit mode", terrainEditing))
+                mTerrainEdit.Toggle(mode.mMode == EngineMode::Edit, document);
+            ImGui::EndDisabled();
+
             if (prefabDocument)
             {
                 ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
@@ -754,6 +760,17 @@ namespace mir
         }
         ImGui::End();
         ImGui::PopStyleVar(3);
+
+        if (terrainEditing)
+        {
+            if (mGizmoWasUsing)
+            {
+                ActiveHistory().EndStep();
+                mGizmoTargets.clear();
+            }
+            mGizmoWasUsing = false;
+            return;
+        }
 
         if (!hasGizmoTarget)
             return;
@@ -1017,6 +1034,85 @@ namespace mir
         ImGui::PopStyleVar(2);
     }
 
+    void Editor::DrawTerrainCursor(const EngineModeState &mode, World &world)
+    {
+        mTerrainCursor.reset();
+        if (!mTerrainEdit.Active() || mode.mMode != EngineMode::Edit)
+            return;
+
+        if (mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
+            return;
+
+        if (WantsCaptureMouse())
+            return;
+
+        const GroundQuery *ground = world.TryResource<GroundQuery>();
+        if (ground == nullptr || !ground->Bound())
+            return;
+
+        const RawInputSnapshot &input = mWindow->RawInput();
+        const float px = static_cast<float>(input.mouseX) - static_cast<float>(mSceneViewportRect.offset.x);
+        const float py = static_cast<float>(input.mouseY) - static_cast<float>(mSceneViewportRect.offset.y);
+        const float width = static_cast<float>(mSceneViewportRect.extent.width);
+        const float height = static_cast<float>(mSceneViewportRect.extent.height);
+        if (px < 0.0f || py < 0.0f || px >= width || py >= height)
+            return;
+
+        const glm::vec2 ndc{ (px / width) * 2.0f - 1.0f, (py / height) * 2.0f - 1.0f };
+        const WorldRay ray = MakeCameraRay(mCamera.Pose(), mCamera.mLens, width / height, ndc);
+        mTerrainCursor = FindTerrainCursor(ray, kTerrainCursorMaxDistance,
+            [ground](WorldPosition point) { return ground->Sample(point); });
+        if (!mTerrainCursor)
+            return;
+
+        const WorldPose camera = mCamera.Pose();
+        const glm::mat4 viewProj = MakeCameraRelativeViewProjection(camera, mCamera.mLens, width / height);
+        const glm::dvec3 center(mTerrainCursor->Meters());
+        const double radius = static_cast<double>(mTerrainEdit.Radius());
+
+        const float x0 = static_cast<float>(mSceneViewportRect.offset.x);
+        const float y0 = static_cast<float>(mSceneViewportRect.offset.y);
+        ImDrawList *drawList = ViewportOverlayDrawList();
+        drawList->PushClipRect(ImVec2(x0, y0), ImVec2(x0 + width, y0 + height), true);
+
+        ImVec2 previous{};
+        bool hasPrevious = false;
+        for (int i = 0; i <= kTerrainRingSegments; ++i)
+        {
+            const double angle = static_cast<double>(i) / kTerrainRingSegments * 2.0 * glm::pi<double>();
+            const std::optional<WorldPosition> query = WorldPosition::FromDoubleMeters(
+                { center.x + radius * std::cos(angle), center.y, center.z + radius * std::sin(angle) });
+            if (!query)
+            {
+                hasPrevious = false;
+                continue;
+            }
+
+            const GroundQueryResult result = ground->Sample(*query);
+            if (!result.IsReady())
+            {
+                hasPrevious = false;
+                continue;
+            }
+
+            const std::optional<WorldOffset> offset = TryWorldDifference(*result.surface, camera.position);
+            const std::optional<glm::vec3> local = offset ? TryRendererLocalFloat(*offset) : std::nullopt;
+            ImVec2 screen{};
+            if (!local || !ProjectToScreen(viewProj, x0, y0, width, height, *local, screen))
+            {
+                hasPrevious = false;
+                continue;
+            }
+
+            if (hasPrevious)
+                drawList->AddLine(previous, screen, IM_COL32(255, 190, 60, 220), 2.0f);
+            previous = screen;
+            hasPrevious = true;
+        }
+
+        drawList->PopClipRect();
+    }
+
     void Editor::FocusSelection(const EngineModeState &mode, World &world)
     {
         if (mode.mMode != EngineMode::Edit)
@@ -1043,6 +1139,10 @@ namespace mir
         mMouseWasDown = down;
 
         if (mode.mMode != EngineMode::Edit)
+            return;
+
+        // brush strokes must not reselect entities
+        if (mTerrainEdit.Active())
             return;
 
         if (mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
@@ -1304,6 +1404,7 @@ namespace mir
         actions.mRequestGiSceneBounds = mProjectSettingsPanel.TakeGiSceneBoundsRequest();
 
         const bool documentTab = documents.mActive != kSceneDocument;
+        mTerrainEdit.Update(mode.mMode == EngineMode::Edit, documents.mActive);
         GroundQuery *ground = activeWorld.TryResource<GroundQuery>();
         mSnapFrameSubmissions = ActiveHistory().SubmissionCount();
         PollSnapToTerrain(activeWorld, documents.mActive, mode, dt);
@@ -1369,6 +1470,7 @@ namespace mir
 
                 ImGui::DockBuilderDockWindow("Hierarchy", left);
                 ImGui::DockBuilderDockWindow("Inspector", right);
+                ImGui::DockBuilderDockWindow("Terrain", right);
                 ImGui::DockBuilderDockWindow("Output", bottom);
 
                 ImGui::DockBuilderFinish(dockspaceId);
@@ -1443,6 +1545,13 @@ namespace mir
             }
             ImGui::End();
 
+            if (mTerrainEdit.Active())
+            {
+                if (ImGui::Begin("Terrain"))
+                    mTerrainEditPanel.Draw(mTerrainEdit);
+                ImGui::End();
+            }
+
             if (ImGui::Begin("Output"))
                 mLogPanel.Draw();
             ImGui::End();
@@ -1483,7 +1592,8 @@ namespace mir
             UpdateBuildShortcuts(actions, mode, build);
             DrawSelectionHighlights(mode, activeWorld);
             DrawComponentGizmos(mode, activeWorld);
-            DrawViewportGizmo(mode, activeWorld, actions, documentTab);
+            DrawViewportGizmo(mode, activeWorld, actions, documents.mActive);
+            DrawTerrainCursor(mode, activeWorld);
             UpdateViewPie(mode);
 
             ImGui::PopStyleColor(pushedColors);

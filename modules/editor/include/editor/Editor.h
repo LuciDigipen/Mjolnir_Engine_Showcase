@@ -20,6 +20,7 @@
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
 #include <editor/SnapToTerrain.h>
+#include <editor/TerrainEditMode.h>
 #include <editor/ViewPie.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
@@ -33,6 +34,7 @@
 #include <editor/panels/PreferencesPanel.h>
 #include <editor/panels/ProfilerPanel.h>
 #include <editor/panels/ProjectSettingsPanel.h>
+#include <editor/panels/TerrainEditPanel.h>
 #include <imguiruntime/ImGuiRuntime.h>
 #include <renderer/DebugView.h>
 #include <renderer/PostProcessingSettings.h>
@@ -44,6 +46,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -248,7 +251,9 @@ namespace mir
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
         void DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
-            bool prefabDocument);
+            DocumentId document);
+        // Brush ring on the ground under the mouse while Terrain edit mode is on.
+        void DrawTerrainCursor(const EngineModeState &mode, World &world);
         void BeginGizmoDrag(World &world, std::span<const Entity> selected);
         // Applies the pivot's change since the drag began to every target, as one merging command.
         void ApplyGizmoDrag(World &world);
@@ -331,6 +336,9 @@ namespace mir
         InputSettingsPanel mInputSettingsPanel;
         PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
+        TerrainEditMode mTerrainEdit;
+        TerrainEditPanel mTerrainEditPanel;
+        std::optional<WorldPosition> mTerrainCursor;
         EditorCamera mCamera;
         std::map<DocumentId, EditorCamera> mDocumentCameras;
         DocumentId mCameraDocument = kSceneDocument;

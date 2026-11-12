@@ -20,6 +20,7 @@ engine_add_module_tests(editor
     PrefabPlayMarks.tests.cpp
     PrefabWorkspace.tests.cpp
     SnapToTerrain.tests.cpp
+    TerrainEditMode.tests.cpp
     ViewPie.tests.cpp
     WorldSceneOps.tests.cpp
     ShaderHotReload.tests.cpp
