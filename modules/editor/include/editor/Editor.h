@@ -18,9 +18,9 @@
 #include <core/ecs/Requests.h>
 #include <project/GameProject.h>
 #include <editor/EditorCamera.h>
+#include <editor/EditorExtension.h>
 #include <editor/EditorPreferences.h>
 #include <editor/SnapToTerrain.h>
-#include <editor/TerrainEditMode.h>
 #include <editor/ViewPie.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
@@ -34,7 +34,6 @@
 #include <editor/panels/PreferencesPanel.h>
 #include <editor/panels/ProfilerPanel.h>
 #include <editor/panels/ProjectSettingsPanel.h>
-#include <editor/panels/TerrainEditPanel.h>
 #include <imguiruntime/ImGuiRuntime.h>
 #include <renderer/DebugView.h>
 #include <renderer/PostProcessingSettings.h>
@@ -169,6 +168,9 @@ namespace mir
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
+        // The registration lives until it dies; extensions run in registration order.
+        Registration AddExtension(IEditorExtension &extension) { return mExtensions.Add(extension); }
+
         const std::string &ContentBrowserSelection() const { return mContentBrowserPanel.SelectedPath(); }
 
         void UpdateCamera(float dt);
@@ -252,8 +254,8 @@ namespace mir
         void DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             DocumentId document);
-        // Brush ring on the ground under the mouse while Terrain edit mode is on.
-        void DrawTerrainCursor(const EngineModeState &mode, World &world);
+        EditorExtensionContext MakeExtensionContext(const EngineModeState &mode, World &world, DocumentId document,
+            ImDrawList *overlay);
         void BeginGizmoDrag(World &world, std::span<const Entity> selected);
         // Applies the pivot's change since the drag began to every target, as one merging command.
         void ApplyGizmoDrag(World &world);
@@ -336,9 +338,7 @@ namespace mir
         InputSettingsPanel mInputSettingsPanel;
         PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
-        TerrainEditMode mTerrainEdit;
-        TerrainEditPanel mTerrainEditPanel;
-        std::optional<WorldPosition> mTerrainCursor;
+        EditorExtensions mExtensions;
         EditorCamera mCamera;
         std::map<DocumentId, EditorCamera> mDocumentCameras;
         DocumentId mCameraDocument = kSceneDocument;

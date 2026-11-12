@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include <editor/TerrainEditMode.h>
+#include <terrain_editor/TerrainEditMode.h>
 
 #include <glm/geometric.hpp>
 

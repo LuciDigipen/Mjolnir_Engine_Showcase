@@ -1,13 +1,13 @@
 /**
  * @file TerrainEditMode.tests.cpp
  * @author Jackey Cen
- * @brief Tests for editor/TerrainEditMode.
+ * @brief Tests for terrain_editor/TerrainEditMode.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
 
-#include <editor/TerrainEditMode.h>
+#include <terrain_editor/TerrainEditMode.h>
 
 #include <core/ecs/GroundQuery.h>
 #include <core/math/WorldCoordinates.h>

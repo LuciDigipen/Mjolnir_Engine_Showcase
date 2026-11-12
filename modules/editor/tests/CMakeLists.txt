@@ -11,6 +11,7 @@ engine_add_module_tests(editor
     ContentBrowserWatcher.tests.cpp
     DocumentNodeCommands.tests.cpp
     EditorCamera.tests.cpp
+    EditorExtension.tests.cpp
     EntityCommands.tests.cpp
     EntityDragPayload.tests.cpp
     History.tests.cpp
@@ -20,7 +21,6 @@ engine_add_module_tests(editor
     PrefabPlayMarks.tests.cpp
     PrefabWorkspace.tests.cpp
     SnapToTerrain.tests.cpp
-    TerrainEditMode.tests.cpp
     ViewPie.tests.cpp
     WorldSceneOps.tests.cpp
     ShaderHotReload.tests.cpp

@@ -6,10 +6,10 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include <editor/panels/TerrainEditPanel.h>
+#include <terrain_editor/panels/TerrainEditPanel.h>
 
 #include <editor/EditorWidgets.h>
-#include <editor/TerrainEditMode.h>
+#include <terrain_editor/TerrainEditMode.h>
 
 #include <imgui.h>
 

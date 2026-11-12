@@ -279,6 +279,7 @@ namespace mir
     #if MIR_WITH_EDITOR
         mEditor(Context(), mImGui, mWindow, mRenderer, mWorldState.scene, mWorldState.prefab, mAssets, mAssetService.get(), mResolver,
             mProject, mJobs, mDesc.mEnableEditorLayout, mAnimation.Library()),
+        mTerrainEditor(Context(), mEditor),
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO
