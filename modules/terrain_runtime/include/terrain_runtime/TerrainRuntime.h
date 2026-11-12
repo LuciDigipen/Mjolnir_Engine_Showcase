@@ -80,6 +80,10 @@ namespace mir
         // prewarmed lets its work go until Stop.
         void BeginPlay();
 
+        // Applies an overlay snapshot to the live TerrainWorld; Play refuses it, and an applied snapshot restarts
+        // any ground snap. A null snapshot clears the overlay.
+        TerrainOverlayApplyResult SetTerrainOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay);
+
         // Retires every GPU mesh the terrain holds and forgets its builds; the next frame builds what it draws again.
         void ForgetMeshes();
 

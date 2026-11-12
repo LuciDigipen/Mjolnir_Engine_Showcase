@@ -13,6 +13,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainLayout.tests.cpp
     TerrainMaterialUv.tests.cpp
     TerrainMeshResidency.tests.cpp
+    TerrainOverlay.tests.cpp
     TerrainPackFormat.tests.cpp
     TerrainPackIntegrity.tests.cpp
     TerrainPrefab.tests.cpp

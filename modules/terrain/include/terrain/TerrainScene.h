@@ -14,6 +14,7 @@
 #include <terrain/TerrainHeightQuery.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainPlacement.h>
 #include <terrain/TerrainRelease.h>
@@ -199,6 +200,8 @@ namespace mir
             std::optional<TerrainReleaseId> seenCurrent;
             // Reported again instead of re-read.
             std::optional<TerrainIssue> refusal;
+            // Null when none; newer than every LOD of the release wherever it holds a tile.
+            std::shared_ptr<const TerrainOverlay> overlay;
         };
 
         std::span<const TerrainInstanceState> Instances() const { return mInstances; }
@@ -207,6 +210,9 @@ namespace mir
 
         // On a shared edge, the first instance answers.
         TerrainHeightResult HeightAt(WorldPosition world, double requiredSpacing);
+
+        // Applied whole or refused, keeping the previous snapshot; null clears it.
+        TerrainOverlayApplyResult SetOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay);
 
         // True when nothing derived needs rebuilding.
         bool SameDerivedState(const TerrainWorld &other) const;

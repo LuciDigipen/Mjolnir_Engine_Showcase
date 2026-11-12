@@ -430,6 +430,19 @@ namespace mir
         ApplyResidencies();
     }
 
+    TerrainOverlayApplyResult TerrainRuntime::SetTerrainOverlay(AssetId asset,
+                                                               std::shared_ptr<const TerrainOverlay> overlay)
+    {
+        if (!Bound())
+            return {false, "Terrain is not bound to a World."};
+        if (IsPlaying(*mWorld))
+            return {false, "Play keeps one base and overlay revision; stop Play to change the overlay."};
+        TerrainOverlayApplyResult applied = mWorld->Resource<TerrainWorld>().SetOverlay(asset, std::move(overlay));
+        if (applied.applied && mGround)
+            mGround->Invalidate();
+        return applied;
+    }
+
     void TerrainRuntime::ForgetMeshes()
     {
         if (!Bound())

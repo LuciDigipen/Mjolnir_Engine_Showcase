@@ -11,6 +11,7 @@
 
 #include "PackInternal.h"
 
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainSurface.h>
 #include <terrain/TileAddressing.h>
 
@@ -236,6 +237,76 @@ namespace mir
         result.worldPoint = surface ? TryTerrainLocalToWorld(*surface, placement.translation) : std::nullopt;
         if (!result.worldPoint)
             return Fail(result, TerrainHeightFailure::InvalidInput);
+        return result;
+    }
+
+    std::optional<TerrainHeightResult> TerrainHeightQuery::OverlayHeightAt(const TerrainOverlay &overlay,
+                                                                          TerrainLocalPosition local,
+                                                                          const TerrainHeightRequest &request)
+    {
+        if (request.release != mRelease || !std::isfinite(request.requiredSpacing) || request.requiredSpacing <= 0.0)
+            return std::nullopt;
+
+        const TileAddress address = AddressLocal(mLayers.front().info.layout, local);
+        if (!address.IsInside())
+            return std::nullopt;
+        const std::shared_ptr<const TileHeights> *held = overlay.Find(address.tile);
+        if (!held || !*held)
+            return std::nullopt;
+
+        uint32_t source = 0;
+        while (source < mLayers.size() && !mLayers[source].Bakes(address.tile))
+            ++source;
+        if (source == mLayers.size())
+            return std::nullopt;
+
+        const TerrainLayout &layout = mLayers[source].info.layout;
+        const std::span<const float> samples = (*held)->Samples();
+        const SurfaceSample surface = EvaluateSurface(
+            layout, local, [&samples, tile = address.tile](TileCoord owner)
+            { return owner == tile ? samples : std::span<const float>{}; });
+
+        TerrainHeightResult result;
+        result.release = mRelease;
+        result.tile = address.tile;
+        result.layer = source;
+        if (!surface.IsOk())
+            return Fail(result, TerrainHeightFailure::InvalidSamples);
+
+        double maxAbs = 0.0;
+        for (const float height : samples)
+            maxAbs = std::max(maxAbs, std::abs(double(height)));
+        const double spacing = layout.SampleSpacing();
+        result.localHeight = surface.height;
+        result.spacing = spacing;
+        result.sourceSpacing = spacing;
+        result.status = request.requiredSpacing >= spacing ? TerrainHeightStatus::MeetsRequirement
+                                                          : TerrainHeightStatus::CoarserAtSourceLimit;
+        result.maxError = SurfaceTolerance(maxAbs);
+        return result;
+    }
+
+    std::optional<TerrainHeightResult> TerrainHeightQuery::OverlayHeightAt(const TerrainOverlay &overlay,
+                                                                          WorldPosition world,
+                                                                          const TerrainPlacement &placement,
+                                                                          const TerrainHeightRequest &request)
+    {
+        if (placement.asset != mRelease.asset)
+            return std::nullopt;
+        const std::optional<TerrainLocalPosition> local = TryWorldToTerrainLocal(world, placement.translation);
+        if (!local)
+            return std::nullopt;
+
+        std::optional<TerrainHeightResult> result = OverlayHeightAt(overlay, *local, request);
+        if (!result || !result->HasHeight())
+            return result;
+
+        const glm::dvec3 meters = local->Meters();
+        const std::optional<TerrainLocalPosition> surface =
+            TerrainLocalPosition::FromMeters({meters.x, result->localHeight, meters.z});
+        result->worldPoint = surface ? TryTerrainLocalToWorld(*surface, placement.translation) : std::nullopt;
+        if (!result->worldPoint)
+            return Fail(*result, TerrainHeightFailure::InvalidInput);
         return result;
     }
 

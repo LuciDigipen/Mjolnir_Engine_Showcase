@@ -125,6 +125,7 @@ namespace mir
             TerrainWorld::AssetState state;
             state.asset = instance.asset;
             state.logicalPath = instance.logicalPath;
+            state.overlay = before ? before->overlay : nullptr;
 
             for (const std::shared_ptr<TerrainResidentRelease> &adopted : options.adopt)
                 if (adopted && adopted->Info().asset == instance.asset)
@@ -331,14 +332,40 @@ namespace mir
     {
         for (const TerrainInstanceState &instance : mInstances)
         {
-            TerrainHeightResult result = instance.release->Query().HeightAt(
-                world, instance.placement, TerrainHeightRequest{instance.release->Info(), requiredSpacing});
+            const TerrainHeightRequest request{instance.release->Info(), requiredSpacing};
+            if (const AssetState *asset = FindAsset(mAssets, instance.placement.asset); asset && asset->overlay)
+                if (std::optional<TerrainHeightResult> overlay = instance.release->Query().OverlayHeightAt(
+                        *asset->overlay, world, instance.placement, request))
+                    return *overlay;
+            TerrainHeightResult result = instance.release->Query().HeightAt(world, instance.placement, request);
             if (result.status != TerrainHeightStatus::OutsideMap)
                 return result;
         }
         TerrainHeightResult outside;
         outside.status = TerrainHeightStatus::OutsideMap;
         return outside;
+    }
+
+    TerrainOverlayApplyResult TerrainWorld::SetOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay)
+    {
+        AssetState *state = FindAsset(mAssets, asset);
+        if (!state)
+            return {false, std::format("terrain asset {:016x} has no state in this World", asset.value)};
+        if (!overlay)
+        {
+            state->overlay.reset();
+            return {true, {}};
+        }
+        if (overlay->Asset() != asset)
+            return {false, std::format("the overlay of asset {:016x} was offered to asset {:016x}",
+                                       overlay->Asset().value, asset.value)};
+        if (!state->release)
+            return {false, std::format("asset {:016x} has no loaded release to check the overlay against",
+                                       asset.value)};
+        if (std::optional<std::string> refusal = ValidateTerrainOverlay(*overlay, state->release->Handle()))
+            return {false, std::move(*refusal)};
+        state->overlay = std::move(overlay);
+        return {true, {}};
     }
 
     bool TerrainWorld::SameDerivedState(const TerrainWorld &other) const

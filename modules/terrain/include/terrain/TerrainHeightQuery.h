@@ -29,6 +29,8 @@
 
 namespace mir
 {
+    class TerrainOverlay;
+
     // One sample spacing of a release's final heights; P1 has exactly one.
     struct TerrainHeightLayer
     {
@@ -135,6 +137,14 @@ namespace mir
 
         TerrainHeightResult HeightAt(WorldPosition world, const TerrainPlacement &placement,
                                      const TerrainHeightRequest &request);
+
+        // Answers from a tile the overlay holds, at that tile's source spacing; nullopt elsewhere, so the
+        // release answers unchanged.
+        std::optional<TerrainHeightResult> OverlayHeightAt(const TerrainOverlay &overlay, TerrainLocalPosition local,
+                                                           const TerrainHeightRequest &request);
+        std::optional<TerrainHeightResult> OverlayHeightAt(const TerrainOverlay &overlay, WorldPosition world,
+                                                           const TerrainPlacement &placement,
+                                                           const TerrainHeightRequest &request);
 
         // Replaces whatever the slot held.
         TerrainPackError Insert(const TerrainReleaseInfo &from, uint32_t layer,
