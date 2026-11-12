@@ -437,9 +437,14 @@ namespace mir
             return {false, "Terrain is not bound to a World."};
         if (IsPlaying(*mWorld))
             return {false, "Play keeps one base and overlay revision; stop Play to change the overlay."};
-        TerrainOverlayApplyResult applied = mWorld->Resource<TerrainWorld>().SetOverlay(asset, std::move(overlay));
-        if (applied.applied && mGround)
-            mGround->Invalidate();
+        TerrainOverlayApplyResult applied = mWorld->Resource<TerrainWorld>().SetOverlay(asset, overlay);
+        if (applied.applied)
+        {
+            if (mCollision)
+                mCollision->SetOverlay(asset, std::move(overlay));
+            if (mGround)
+                mGround->Invalidate();
+        }
         return applied;
     }
 

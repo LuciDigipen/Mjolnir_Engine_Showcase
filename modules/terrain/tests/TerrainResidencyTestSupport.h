@@ -148,6 +148,7 @@ namespace mir::test
         float quantizationMin = 0.0f;
         float quantizationMax = 0.0f;
         TerrainReleaseInfo release;
+        std::vector<float> heights;
     };
 
     // Shapes are counted, colliders recorded by id.
@@ -169,6 +170,7 @@ namespace mir::test
             shape->quantizationMin = quantizationMin;
             shape->quantizationMax = quantizationMax;
             shape->release = samples.release;
+            shape->heights = samples.heights;
             TerrainBuiltCollider built;
             built.shape = shape;
             built.quantizationError = 0.001;
@@ -182,12 +184,14 @@ namespace mir::test
                                 const TerrainPlacement &placement) override
         {
             placed[next] = {static_cast<const FakeShape *>(&shape), origin, placement};
+            ops.push_back({true, next});
             return next++;
         }
 
         void Remove(TerrainColliderId collider) override
         {
             REQUIRE(placed.erase(collider) == 1);
+            ops.push_back({false, collider});
             ++removed;
         }
 
@@ -199,6 +203,7 @@ namespace mir::test
         };
 
         mutable std::atomic<int> builds = 0;
+        std::vector<std::pair<bool, TerrainColliderId>> ops;
         std::atomic<bool> refuse = false;
         std::map<TerrainColliderId, Placed> placed;
         int removed = 0;
