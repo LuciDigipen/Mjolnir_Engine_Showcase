@@ -7,6 +7,8 @@ engine_add_module_tests(renderer
     CameraMath.tests.cpp
     DepthOfFieldEffect.tests.cpp
     DescriptorLayoutLimits.tests.cpp
+    DrawRecordAllocator.tests.cpp
+    DrawRecordLayout.tests.cpp
     FilmEffect.tests.cpp
     GpuRecords.tests.cpp
     Material.tests.cpp

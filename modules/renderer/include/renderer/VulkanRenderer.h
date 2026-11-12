@@ -63,6 +63,7 @@ namespace mir::vk
     class CameraBuffer;
     class ShadowMaps;
     class ModelDescriptors;
+    class DrawRecords;
     class RayTracer;
     class MaterialTable;
     class RasterSurfaces;
@@ -461,6 +462,7 @@ namespace mir
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;
         std::unique_ptr<vk::ShadowMaps> mShadowMaps;
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
+        std::unique_ptr<vk::DrawRecords> mDrawRecords;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
 #if MIR_WITH_RTXGI

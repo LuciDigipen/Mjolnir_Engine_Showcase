@@ -33,6 +33,7 @@ struct TerrainVSOutput
     float2 uv : TEXCOORD1;
     float4 color : COLOR;
     float3 localPos : TEXCOORD2;
+    nointerpolation uint baseInstance : TEXCOORD3;
 };
 
 struct TerrainPushConstants
@@ -46,10 +47,11 @@ struct TerrainPushConstants
 
 [[vk::push_constant]] TerrainPushConstants pushData;
 
-[[vk::binding(2, 0)]] ConstantBuffer<MaterialRecordRef> gMaterialRecordRef;
+[[vk::binding(MIR_DRAW_RECORDS_BINDING, MIR_DRAW_RECORDS_SET)]]
+StructuredBuffer<DrawRecord> gDrawRecords;
 
 [shader("vertex")]
-TerrainVSOutput vertexMain(TerrainVSInput input)
+TerrainVSOutput vertexMain(TerrainVSInput input, uint baseInstance : SV_StartInstanceLocation)
 {
     TerrainVSOutput output;
     const float4 worldPos = mul(pushData.model, float4(input.pos, 1.0));
@@ -61,6 +63,7 @@ TerrainVSOutput vertexMain(TerrainVSInput input)
     output.uv = input.uv;
     output.color = float4(input.color, input.alpha);
     output.localPos = input.pos;
+    output.baseInstance = baseInstance;
     return output;
 }
 
@@ -71,7 +74,8 @@ RasterSurfaceOutput fragmentMain<M : IMaterial>(TerrainVSOutput input, bool fron
 float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target
 #endif
 {
-    const M material = gSurfaceRecords.Load<M>(gMaterialRecordRef.offset);
+    const DrawRecord record = gDrawRecords[input.baseInstance];
+    const M material = gSurfaceRecords.Load<M>(record.materialOffset);
     const float3 macroNormal = SafeNormalize(input.normal, float3(0.0, 1.0, 0.0));
 
     MaterialContext context;

@@ -80,18 +80,16 @@ namespace mir::vk
     public:
         static constexpr uint32_t kMaxMaterials = 1024;
 
-        // Set 0's dynamic record-reference row for a material in one frame slot.
-        // The stride is aligned to minUniformBufferOffsetAlignment at Initialize.
-        uint32_t RecordRefDynamicOffset(uint32_t frame, uint32_t material) const
-        {
-            return frame * mRecordRefFrameStride + material * mRecordRefStride;
-        }
+        // The published record location a surface draw reads this frame.
+        MaterialRecordRef RecordRef(const GpuMaterial &material) const;
 
         // sharedLayouts are sets 1-3, borrowed for the pipeline layouts; their owners destroy them.
-        // table is null on a device without descriptor indexing. Also creates the default and
-        // error materials and the sky pipeline, which reads set 1 alone.
+        // table is null on a device without descriptor indexing. drawRecordSetLayout is set 5 and
+        // only joins the layout beside the table. Also creates the default and error materials
+        // and the sky pipeline, which reads set 1 alone.
         bool Initialize(Device &device, ResourceStore &resources, MaterialTable *table, VkFormat colorFormat,
-            const std::array<VkDescriptorSetLayout, 3> &sharedLayouts);
+            const std::array<VkDescriptorSetLayout, 3> &sharedLayouts,
+            VkDescriptorSetLayout drawRecordSetLayout);
         void Shutdown();
 
         MaterialHandle CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat);
@@ -110,9 +108,8 @@ namespace mir::vk
         // the authoritative bytes a draw reads. The store keeps the handle.
         bool AcceptedRecord(MaterialHandle handle, MaterialLayout &layout, std::span<const std::byte> &bytes) const;
         void SetRecordValidator(MaterialRecordValidator validator);
-        // After BeginFrame's wait, before recording: publishes staged record bytes,
-        // then refreshes this frame slot's record-reference rows.
-        void PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex);
+        // After BeginFrame's wait, before recording: publishes staged record bytes.
+        void PublishRecords(uint64_t completedFrame, uint64_t frame);
         // Publishes replacement sets after texture readiness, old sets survive their submitted frames.
         void RefreshTextures(ResourceStore &resources, uint64_t completed, uint64_t lastUse);
         // Every material but the default and error ones, which move to slots 0 and 1; returns how many were released.
@@ -150,7 +147,8 @@ namespace mir::vk
         VkPipelineLayout SkyPipelineLayout() const { return mSkyPipelineLayout; }
 
     private:
-        bool CreatePipelineLayout(const std::array<VkDescriptorSetLayout, 3> &sharedLayouts);
+        bool CreatePipelineLayout(const std::array<VkDescriptorSetLayout, 3> &sharedLayouts,
+            VkDescriptorSetLayout drawRecordSetLayout);
         // The state a material pipeline and the sky pipeline differ in.
         struct PipelineState
         {
@@ -172,11 +170,6 @@ namespace mir::vk
             PipelineTarget target = PipelineTarget::Color);
         VkPipeline BuildSkyPipeline(bool surfaces = false);
         bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout);
-        bool CreateRecordRefBuffer();
-        void DestroyRecordRefBuffer();
-        void WriteRecordRef(uint32_t frame, uint32_t material);
-        void WriteRecordRefEverywhere(uint32_t material);
-        void RefreshRecordRefs(uint32_t frame);
         // GPU objects only; the slot and its generation are the caller's.
         void FreeMaterial(GpuMaterial &material);
         void DestroyMaterials();
@@ -210,16 +203,9 @@ namespace mir::vk
         VkPipeline mSkySurfacePipeline = VK_NULL_HANDLE;
         bool mSkySurfaceTried = false;
 
-        // set 0: binding 0 = base color, binding 1 = normal map,
-        // binding 2 = this frame's record-reference row (dynamic).
+        // set 0: binding 0 = base color, binding 1 = normal map.
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool mDescriptorPool = VK_NULL_HANDLE;
-
-        VkBuffer mRecordRefBuffer = VK_NULL_HANDLE;
-        VmaAllocation mRecordRefAllocation = VK_NULL_HANDLE;
-        std::byte *mRecordRefMapped = nullptr;
-        uint32_t mRecordRefStride = sizeof(MaterialRecordRef);
-        uint32_t mRecordRefFrameStride = 0;
 
         std::vector<GpuMaterial> mMaterials;
         std::vector<MaterialHandle> mTextureWaiting;

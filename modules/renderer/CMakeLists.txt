@@ -103,6 +103,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/DebugDraw.cpp
     src/renderer/vulkan/DepthOfField.cpp
     src/renderer/vulkan/Device.cpp
+    src/renderer/vulkan/DrawRecords.cpp
     src/renderer/vulkan/FrameCapture.cpp
     src/renderer/vulkan/FrameSync.cpp
     src/renderer/vulkan/Fxaa.cpp

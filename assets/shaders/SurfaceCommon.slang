@@ -28,6 +28,12 @@
 #ifndef MIR_SURFACE_RECORDS_BINDING
 #define MIR_SURFACE_RECORDS_BINDING 0
 #endif
+#ifndef MIR_DRAW_RECORDS_SET
+#define MIR_DRAW_RECORDS_SET 5
+#endif
+#ifndef MIR_DRAW_RECORDS_BINDING
+#define MIR_DRAW_RECORDS_BINDING 0
+#endif
 
 static const uint kMaxSurfaceImages = 1024;
 static const uint kMaxSurfaceSamplers = 256;
@@ -48,13 +54,14 @@ struct TextureRef
     uint sampler;
 };
 
-// Set 0 binding 2 in the raster pipeline; see MaterialStore::RecordRefDynamicOffset.
-struct MaterialRecordRef
+// Must match DrawRecord in modules/renderer/include/renderer/DrawRecord.h.
+struct DrawRecord
 {
-    uint offset;
-    uint size;
+    uint materialOffset;
+    uint materialSize;
     uint flags;
     uint reserved;
+    uint terrain[4];
 };
 
 // World-space UV gradients on a triangle. The maximum singular value of the
