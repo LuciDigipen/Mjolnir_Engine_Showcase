@@ -247,7 +247,9 @@ namespace mir::terrainbake
         publish.releasesRoot = releases;
         publish.fault = request.fault;
         const bool published = PublishTerrainCandidate(publish, &recipe, &*lock, report);
+        // Both hold the old current's reader lock, which would keep it from the prune.
         opened.reset();
+        bake.base.reset();
         if (!published)
         {
             report.Skip(check::kPrune, "nothing was published, so nothing was removed");

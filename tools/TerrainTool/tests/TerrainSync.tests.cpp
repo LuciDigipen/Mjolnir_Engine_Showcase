@@ -346,5 +346,5 @@ TEST_CASE("Sync republishes an edited recipe only when a layer tile changes", "[
     const TerrainResult<TerrainReleaseHandle> current = OpenCurrentTerrainRelease(tree.releases, tree.asset);
     REQUIRE(current);
     CHECK(current.value->Info().source == *changed.recipeFingerprint);
-    CHECK(ReleaseDirNames(tree.assetDir).size() == 2);
+    CHECK(ReleaseDirNames(tree.assetDir) == std::vector<std::string>{TerrainIdHex(changed.release->release.value)});
 }
