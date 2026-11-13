@@ -39,6 +39,8 @@ namespace mir::test
         struct Mesh
         {
             TerrainPayloadKey geometry;
+            std::shared_ptr<const TerrainOverlay> overlay;
+            std::vector<TerrainMeshVertex> meshVertices;
             uint64_t bytes = 0;
             size_t vertices = 0;
             Stage stage = Stage::Queued;
@@ -68,7 +70,8 @@ namespace mir::test
             if (refuse)
                 return 0;
             const TerrainGpuMeshId id = nextId++;
-            meshes[id] = {data.geometry, Footprint(uint32_t(data.vertices.size()), uint32_t(data.indices.size())),
+            meshes[id] = {data.geometry, data.overlay, data.vertices,
+                          Footprint(uint32_t(data.vertices.size()), uint32_t(data.indices.size())),
                           data.vertices.size()};
             return id;
         }

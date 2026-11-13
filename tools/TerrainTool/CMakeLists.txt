@@ -47,6 +47,7 @@ if(BUILD_TESTING)
         tests/TerrainHeightmap.tests.cpp
         tests/TerrainIncremental.tests.cpp
         tests/TerrainDerivatives.tests.cpp
+        tests/TerrainOverlayMesh.tests.cpp
         tests/TerrainPackage.tests.cpp
         tests/TerrainPrecision.tests.cpp
         tests/TerrainPublish.tests.cpp

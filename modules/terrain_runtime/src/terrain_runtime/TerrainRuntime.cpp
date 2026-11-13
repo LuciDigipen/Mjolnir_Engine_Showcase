@@ -1069,8 +1069,18 @@ namespace mir
             mUploader->SetRayTracing(rayTracing);
         }
 
-        for (const TerrainInstanceState &instance : mWorld->Resource<TerrainWorld>().Instances())
-            mSelection.push_back({instance.release->SharedHandle(), instance.placement});
+        const TerrainWorld &world = mWorld->Resource<TerrainWorld>();
+        for (const TerrainInstanceState &instance : world.Instances())
+        {
+            std::shared_ptr<const TerrainOverlay> overlay;
+            for (const TerrainWorld::AssetState &asset : world.Assets())
+                if (asset.asset == instance.placement.asset)
+                {
+                    overlay = asset.overlay;
+                    break;
+                }
+            mSelection.push_back({instance.release->SharedHandle(), instance.placement, std::move(overlay)});
+        }
         const TerrainUnitReady ready = Ready();
         mFrameWants.clear();
 
