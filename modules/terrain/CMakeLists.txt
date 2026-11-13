@@ -36,6 +36,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainSurface.cpp
     src/terrain/TerrainTileMesh.cpp
     src/terrain/TerrainViewSelection.cpp
+    src/terrain/TerrainWeights.cpp
     src/terrain/TileAddressing.cpp
     src/terrain/TileHeights.cpp
 )
