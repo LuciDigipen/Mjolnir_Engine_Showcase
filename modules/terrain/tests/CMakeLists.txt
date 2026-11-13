@@ -30,6 +30,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainTileMesh.tests.cpp
     TerrainViewSelection.tests.cpp
     TerrainWeights.tests.cpp
+    TerrainWeightPayload.tests.cpp
     TileAddressing.tests.cpp
     TileHeights.tests.cpp
 )

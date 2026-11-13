@@ -8,11 +8,23 @@
  */
 #include <terrain/TerrainWeights.h>
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 
 namespace mir
 {
+    bool IsValidTerrainMaterialLayerName(std::string_view name)
+    {
+        if (name.empty() || name.size() > kMaxTerrainMaterialLayerName)
+            return false;
+        return std::all_of(name.begin(), name.end(),
+                           [](char c)
+                           {
+                               return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+                           });
+    }
+
     size_t TerrainWeightTile::SampleCount() const
     {
         if (intervals < 0)

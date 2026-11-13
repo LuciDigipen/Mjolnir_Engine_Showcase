@@ -22,7 +22,11 @@ namespace mir
 {
     inline constexpr int32_t kMaxTerrainMaterialLayers = 32;
     inline constexpr size_t kMaxTerrainMaterialLayerName = 32;
+    inline constexpr size_t kTerrainWeightSlots = 4;
     inline constexpr double kTerrainWeightSumTolerance = 1e-5;
+
+    // 1 to kMaxTerrainMaterialLayerName characters of [a-z0-9_], as recipe layer names are.
+    bool IsValidTerrainMaterialLayerName(std::string_view name);
 
     enum class TerrainWeightStatus
     {

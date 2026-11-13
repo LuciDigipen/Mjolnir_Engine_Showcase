@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <utility>
 #include <tuple>
 #include <bit>
@@ -81,6 +82,13 @@ namespace mir
             uint32_t regionCells = 0;
             uint32_t regionUnit = 0;
             uint32_t regionLevels = 0;
+            uint32_t weightPackCount = 0;
+            uint32_t weightPackRecordSize = 0;
+            uint32_t weightTileCount = 0;
+            uint32_t weightTileRecordSize = 0;
+            uint32_t weightLayerCount = 0;
+            uint32_t weightLayerBytes = 0;
+            uint64_t weightsFingerprint = 0;
         };
 
         TerrainResult<Header> ParseHeader(std::span<const std::byte> bytes)
@@ -165,6 +173,36 @@ namespace mir
                                         "unit {} or levels {}",
                                         h.regionCount, h.regionCells, h.regionUnit, h.regionLevels);
             }
+            // A weight header may be absent from a minor that knows the section, as an older writer left it.
+            if (h.minor >= kTerrainWeightsFormatMinor && h.headerSize >= kTerrainWeightsIndexHeaderSize)
+            {
+                h.weightPackCount = LoadU32(bytes, terrainformat::index::kWeightPackCount);
+                h.weightPackRecordSize = LoadU32(bytes, terrainformat::index::kWeightPackRecordSize);
+                h.weightTileCount = LoadU32(bytes, terrainformat::index::kWeightTileCount);
+                h.weightTileRecordSize = LoadU32(bytes, terrainformat::index::kWeightTileRecordSize);
+                h.weightLayerCount = LoadU32(bytes, terrainformat::index::kWeightLayerCount);
+                h.weightLayerBytes = LoadU32(bytes, terrainformat::index::kWeightLayerBytes);
+                h.weightsFingerprint = LoadU64(bytes, terrainformat::index::kWeightsFingerprint);
+                if (h.weightPackRecordSize < kTerrainPackRecordSize ||
+                    h.weightPackRecordSize % terrainformat::kRecordAlignment != 0)
+                    return Fail<Header>(Code::Malformed,
+                                        "weight pack record size {} is invalid (needs >= {}, a multiple of 8)",
+                                        h.weightPackRecordSize, kTerrainPackRecordSize);
+                if (h.weightTileRecordSize < kTerrainWeightRecordSize ||
+                    h.weightTileRecordSize % terrainformat::kRecordAlignment != 0)
+                    return Fail<Header>(Code::Malformed,
+                                        "weight tile record size {} is invalid (needs >= {}, a multiple of 8)",
+                                        h.weightTileRecordSize, kTerrainWeightRecordSize);
+                if (h.weightLayerCount > uint32_t(kMaxTerrainMaterialLayers))
+                    return Fail<Header>(Code::Malformed, "weight layer count {} exceeds this reader's limit {}",
+                                        h.weightLayerCount, kMaxTerrainMaterialLayers);
+                if (h.weightTileCount == 0 &&
+                    (h.weightPackCount != 0 || h.weightLayerCount != 0 || h.weightLayerBytes != 0))
+                    return Fail<Header>(Code::Malformed,
+                                        "an index without weight tiles has {} weight packs, {} weight layers "
+                                        "and {} table bytes",
+                                        h.weightPackCount, h.weightLayerCount, h.weightLayerBytes);
+            }
 
             if (!IsPowerOfTwo(h.alignment) || h.alignment > kMaxTerrainPayloadAlignment)
                 return Fail<Header>(Code::Malformed, "payload alignment {} is not a power of two up to {}", h.alignment,
@@ -187,11 +225,20 @@ namespace mir
             const uint64_t tileBytes = uint64_t(h.tileCount) * h.tileRecordSize;
             const uint64_t layerBytes = uint64_t(h.layerCount) * h.layerRecordSize;
             const uint64_t regionBytes = uint64_t(h.regionCount) * h.regionRecordSize;
+            const uint64_t weightPackBytes = uint64_t(h.weightPackCount) * h.weightPackRecordSize;
+            const uint64_t weightTileBytes = uint64_t(h.weightTileCount) * h.weightTileRecordSize;
             if (packBytes > room || tileBytes > room - packBytes || layerBytes > room - packBytes - tileBytes ||
-                regionBytes > room - packBytes - tileBytes - layerBytes)
+                regionBytes > room - packBytes - tileBytes - layerBytes ||
+                weightPackBytes > room - packBytes - tileBytes - layerBytes - regionBytes ||
+                weightTileBytes >
+                    room - packBytes - tileBytes - layerBytes - regionBytes - weightPackBytes ||
+                h.weightLayerBytes >
+                    room - packBytes - tileBytes - layerBytes - regionBytes - weightPackBytes - weightTileBytes)
                 return Fail<Header>(Code::Malformed,
-                                    "{} pack, {} tile and {} Region records do not fit in {} bytes (truncated?)",
-                                    h.packCount, h.tileCount, h.regionCount, bytes.size());
+                                    "{} pack, {} tile, {} Region, {} weight pack and {} weight tile records do not "
+                                    "fit in {} bytes (truncated?)",
+                                    h.packCount, h.tileCount, h.regionCount, h.weightPackCount, h.weightTileCount,
+                                    bytes.size());
 
             if (h.intervals < 1)
                 return Fail<Header>(Code::Malformed, "intervals per tile {} is below 1", h.intervals);
@@ -250,6 +297,20 @@ namespace mir
         auto RecordKey(const TerrainTileRecord &r)
         {
             return std::tuple(r.tile.z, r.tile.x, r.kind, r.level, r.layer);
+        }
+
+        TerrainWeightRecord ReadWeightRecord(std::span<const std::byte> b, size_t at)
+        {
+            TerrainWeightRecord r;
+            r.tile = {LoadI32(b, at + terrainformat::weightRecord::kX),
+                      LoadI32(b, at + terrainformat::weightRecord::kZ)};
+            r.pack = LoadU32(b, at + terrainformat::weightRecord::kPack);
+            r.offset = LoadU64(b, at + terrainformat::weightRecord::kOffset);
+            r.length = LoadU64(b, at + terrainformat::weightRecord::kLength);
+            r.checksum = LoadU64(b, at + terrainformat::weightRecord::kChecksum);
+            for (size_t s = 0; s < kTerrainWeightSlots; ++s)
+                r.slots[s] = std::to_integer<uint8_t>(b[at + terrainformat::weightRecord::kSlots + s]);
+            return r;
         }
 
         TerrainPackError CheckTileRecord(const Header &h, const TerrainLayout &layout,
@@ -434,6 +495,11 @@ namespace mir
         return std::format("chunk_{}_{}.tpack", chunk.x, chunk.z);
     }
 
+    std::string TerrainWeightPackFileName(TerrainChunkCoord chunk)
+    {
+        return std::format("chunk_{}_{}.wpack", chunk.x, chunk.z);
+    }
+
     bool TerrainLayersNest(const TerrainLayout &fine, const TerrainLayout &coarse)
     {
         if (coarse.SampleSpacing() <= fine.SampleSpacing() ||
@@ -496,6 +562,16 @@ namespace mir
             return nullptr;
         const uint64_t ordinal = regionGrid->Ordinal(region);
         return ordinal < regions.size() ? &regions[size_t(ordinal)] : nullptr;
+    }
+
+    const TerrainWeightRecord *TerrainIndex::FindWeight(TileCoord tile) const
+    {
+        auto at = std::lower_bound(weights.begin(), weights.end(), tile,
+                                   [](const TerrainWeightRecord &r, TileCoord t)
+                                   {
+                                       return detail::LessZX(r.tile.x, r.tile.z, t.x, t.z);
+                                   });
+        return at != weights.end() && at->tile == tile ? &*at : nullptr;
     }
 
     TerrainResult<TerrainIndex> ParseTerrainIndex(std::span<const std::byte> bytes)
@@ -586,6 +662,161 @@ namespace mir
             if (r.kind == TerrainPayloadKind::Height)
                 finest[mapTile] = std::min(finest[mapTile], r.layer);
             ++tilesPerPack[r.pack];
+        }
+
+        std::vector<TerrainPackRecord> weightPacks(h.weightPackCount);
+        std::vector<TerrainWeightRecord> weights(h.weightTileCount);
+        std::vector<std::string> weightLayers;
+        if (h.weightTileCount != 0)
+        {
+            const size_t weightPackTable = size_t(h.headerSize) + size_t(h.packCount) * h.packRecordSize +
+                                           size_t(h.tileCount) * h.tileRecordSize +
+                                           size_t(h.layerCount) * h.layerRecordSize +
+                                           size_t(h.regionCount) * h.regionRecordSize;
+            for (uint32_t p = 0; p < h.weightPackCount; ++p)
+            {
+                TerrainPackRecord &pack = weightPacks[p];
+                pack = ReadPackRecord(bytes, weightPackTable + size_t(p) * h.weightPackRecordSize);
+                if (p > 0 && !detail::LessZX(weightPacks[p - 1].chunk.x, weightPacks[p - 1].chunk.z, pack.chunk.x,
+                                             pack.chunk.z))
+                    return Fail<R>(Code::Malformed,
+                                   "weight pack records {} and {} (chunks {} and {}) are not in increasing (z, x) "
+                                   "order or name one chunk twice",
+                                   p - 1, p, Describe(weightPacks[p - 1].chunk), Describe(pack.chunk));
+                if (pack.tileCount == 0)
+                    return Fail<R>(Code::Malformed, "weight pack record {} ({}) holds no weight tiles", p,
+                                   TerrainWeightPackFileName(pack.chunk));
+                if (pack.fileSize < kTerrainPackHeaderSize)
+                    return Fail<R>(Code::Malformed,
+                                   "weight pack record {} ({}): file size {} is smaller than a pack header", p,
+                                   TerrainWeightPackFileName(pack.chunk), pack.fileSize);
+            }
+
+            const size_t weightTileTable = weightPackTable + size_t(h.weightPackCount) * h.weightPackRecordSize;
+            const size_t weightLayerTable = weightTileTable + size_t(h.weightTileCount) * h.weightTileRecordSize;
+            const size_t tableEnd = weightLayerTable + h.weightLayerBytes;
+            size_t at = weightLayerTable;
+            std::set<std::string> names;
+            weightLayers.reserve(h.weightLayerCount);
+            for (uint32_t l = 0; l < h.weightLayerCount; ++l)
+            {
+                if (at > tableEnd || tableEnd - at < sizeof(uint32_t))
+                    return Fail<R>(Code::Malformed, "weight layer {}: the name table ends before its length", l);
+                const uint32_t length = LoadU32(bytes, at);
+                at += sizeof(uint32_t);
+                if (length == 0 || length > tableEnd - at)
+                    return Fail<R>(Code::Malformed, "weight layer {}: name length {} exceeds the table", l, length);
+                const std::string name(reinterpret_cast<const char *>(bytes.data() + at), length);
+                if (!IsValidTerrainMaterialLayerName(name))
+                    return Fail<R>(Code::Malformed, "weight layer {}: \"{}\" is not a valid material layer name", l,
+                                   name);
+                if (!names.insert(name).second)
+                    return Fail<R>(Code::Malformed, "weight layer {}: duplicate name \"{}\"", l, name);
+                weightLayers.push_back(name);
+                at += length;
+            }
+            if (at != tableEnd)
+                return Fail<R>(Code::Malformed, "weight layer table: {} bytes are spare after {} names",
+                               tableEnd - at, h.weightLayerCount);
+
+            std::vector<uint32_t> weightTilesPerPack(h.weightPackCount, 0);
+            const uint64_t expectedLength = uint64_t(h.intervals + 1) * uint64_t(h.intervals + 1) * 4;
+            for (uint32_t t = 0; t < h.weightTileCount; ++t)
+            {
+                TerrainWeightRecord &r = weights[t];
+                r = ReadWeightRecord(bytes, weightTileTable + size_t(t) * h.weightTileRecordSize);
+                const std::string tile = Describe(r.tile);
+                if (t > 0 && !detail::LessZX(weights[t - 1].tile.x, weights[t - 1].tile.z, r.tile.x, r.tile.z))
+                {
+                    if (weights[t - 1].tile == r.tile)
+                        return Fail<R>(Code::Malformed, "weight records {} and {} both name tile {}", t - 1, t, tile);
+                    return Fail<R>(Code::Malformed,
+                                   "weight records {} and {} are not in increasing (z, x) order", t - 1, t);
+                }
+                if (r.pack >= weightPacks.size())
+                    return Fail<R>(Code::Malformed, "weight record {} tile {}: pack {} is out of range ({} weight packs)",
+                                   t, tile, r.pack, weightPacks.size());
+                const TerrainPackRecord &pack = weightPacks[r.pack];
+                const TerrainChunkCoord chunk = TerrainChunkOf(r.tile, h.chunkTiles);
+                if (pack.chunk != chunk)
+                    return Fail<R>(Code::Malformed,
+                                   "weight record {} tile {}: stored in {} but belongs to chunk {} at {} tiles per "
+                                   "chunk",
+                                   t, tile, TerrainWeightPackFileName(pack.chunk), Describe(chunk), h.chunkTiles);
+                if (r.offset % h.alignment != 0 || r.offset < kTerrainPackHeaderSize)
+                    return Fail<R>(Code::Malformed,
+                                   "weight record {} tile {}: offset {} is unaligned or inside the pack header", t,
+                                   tile, r.offset);
+                if (r.offset > std::numeric_limits<uint64_t>::max() - r.length ||
+                    r.offset + r.length > pack.fileSize)
+                    return Fail<R>(Code::Malformed, "weight record {} tile {}: payload [{}, {}) ends past {} ({} bytes)",
+                                   t, tile, r.offset, r.offset + r.length,
+                                   TerrainWeightPackFileName(pack.chunk), pack.fileSize);
+                if (r.length != expectedLength)
+                    return Fail<R>(Code::Malformed, "weight record {} tile {}: payload length {} should be {}", t,
+                                   tile, r.length, expectedLength);
+
+                std::array<bool, size_t(kMaxTerrainMaterialLayers)> seen{};
+                size_t used = 0;
+                bool unused = false;
+                for (size_t s = 0; s < kTerrainWeightSlots; ++s)
+                {
+                    const uint8_t slot = r.slots[s];
+                    if (slot == 0xFF)
+                    {
+                        unused = true;
+                        continue;
+                    }
+                    if (slot >= weightLayers.size())
+                        return Fail<R>(Code::Malformed,
+                                       "weight record {} tile {}: slot {} names layer {}, the table has {}", t, tile, s,
+                                       slot, weightLayers.size());
+                    if (unused || seen[slot])
+                        return Fail<R>(Code::Malformed,
+                                       "weight record {} tile {}: slots repeat a layer or a used slot follows an "
+                                       "unused one",
+                                       t, tile);
+                    seen[slot] = true;
+                    ++used;
+                }
+                if (used == 0)
+                    return Fail<R>(Code::Malformed, "weight record {} tile {}: no used slot", t, tile);
+                if (!layout->Contains(r.tile))
+                    return Fail<R>(Code::Malformed, "weight record {} tile {} is outside the layout", t, tile);
+                const size_t mapTile =
+                    size_t(int64_t(r.tile.z) - range.min.z) * width + size_t(int64_t(r.tile.x) - range.min.x);
+                if (sources[mapTile] != 1)
+                    return Fail<R>(Code::Malformed, "weight record {} tile {}: no source height record", t, tile);
+                ++weightTilesPerPack[r.pack];
+            }
+
+            for (uint32_t p = 0; p < h.weightPackCount; ++p)
+                if (weightTilesPerPack[p] != weightPacks[p].tileCount)
+                    return Fail<R>(Code::Malformed,
+                                   "weight pack record {} ({}) says {} tiles, {} weight records point at it", p,
+                                   TerrainWeightPackFileName(weightPacks[p].chunk), weightPacks[p].tileCount,
+                                   weightTilesPerPack[p]);
+
+            std::vector<const TerrainWeightRecord *> byOffset;
+            byOffset.reserve(weights.size());
+            for (const TerrainWeightRecord &r : weights)
+                byOffset.push_back(&r);
+            std::sort(byOffset.begin(), byOffset.end(),
+                      [](const TerrainWeightRecord *a, const TerrainWeightRecord *b)
+                      {
+                          return a->pack != b->pack ? a->pack < b->pack : a->offset < b->offset;
+                      });
+            for (size_t i = 1; i < byOffset.size(); ++i)
+            {
+                const TerrainWeightRecord &a = *byOffset[i - 1];
+                const TerrainWeightRecord &b = *byOffset[i];
+                if (a.pack == b.pack && a.offset + a.length > b.offset)
+                    return Fail<R>(Code::Malformed, "weight records for tiles {} and {} overlap in {}: [{}, {}) and "
+                                                    "[{}, {})",
+                                   Describe(a.tile), Describe(b.tile),
+                                   TerrainWeightPackFileName(weightPacks[a.pack].chunk), a.offset, a.offset + a.length,
+                                   b.offset, b.offset + b.length);
+            }
         }
 
         for (size_t t = 0; t < sources.size(); ++t)
@@ -736,6 +967,10 @@ namespace mir
             .tiles = std::move(tiles),
             .regionGrid = std::move(regionGrid),
             .regions = std::move(regions),
+            .weightLayers = std::move(weightLayers),
+            .weightsFingerprint = h.weightsFingerprint,
+            .weightPacks = std::move(weightPacks),
+            .weights = std::move(weights),
         });
         return result;
     }
@@ -797,5 +1032,84 @@ namespace mir
         TerrainResult<TileHeights> result;
         result.value = std::move(heights);
         return result;
+    }
+
+    TerrainResult<TerrainDecodedWeights> DecodeTerrainWeightPayload(const TerrainIndex &index,
+                                                                    const TerrainWeightRecord &record,
+                                                                    std::span<const std::byte> payload)
+    {
+        using R = TerrainDecodedWeights;
+        const std::string tile = Describe(record.tile);
+        const size_t side = size_t(index.layout.IntervalsPerTile()) + 1;
+        const uint64_t expectedLength = uint64_t(side) * side * kTerrainWeightSlots;
+        if (record.length != expectedLength)
+            return Fail<R>(Code::Malformed, "weight tile {}: payload length {} should be {}", tile, record.length,
+                           expectedLength);
+        if (payload.size() != record.length)
+            return Fail<R>(Code::Io, "weight tile {}: got {} payload bytes, the index says {}", tile, payload.size(),
+                           record.length);
+        const uint64_t checksum = Fnv1a64(payload);
+        if (checksum != record.checksum)
+            return Fail<R>(Code::Corrupt,
+                           "weight tile {}: payload checksum {} does not match the index {}; the weight pack is "
+                           "corrupt or from another release",
+                           tile, Hex(checksum), Hex(record.checksum));
+
+        TerrainDecodedWeights decoded;
+        decoded.tile = record.tile;
+        decoded.intervals = index.layout.IntervalsPerTile();
+        decoded.slots = record.slots;
+        size_t used = 0;
+        while (used < kTerrainWeightSlots && record.slots[used] != 0xFF)
+        {
+            if (record.slots[used] >= index.weightLayers.size())
+                return Fail<R>(Code::Malformed, "weight tile {}: slot {} names layer {}, the table has {}", tile,
+                               used, record.slots[used], index.weightLayers.size());
+            decoded.layers[used] = index.weightLayers[record.slots[used]];
+            ++used;
+        }
+        if (used == 0)
+            return Fail<R>(Code::Malformed, "weight tile {}: no used slot", tile);
+
+        decoded.bytes.assign(payload.begin(), payload.end());
+        for (size_t texel = 0; texel < side * side; ++texel)
+        {
+            uint32_t sum = 0;
+            for (size_t s = 0; s < kTerrainWeightSlots; ++s)
+            {
+                const uint8_t channel = std::to_integer<uint8_t>(decoded.bytes[texel * kTerrainWeightSlots + s]);
+                if (s >= used && channel != 0)
+                    return Fail<R>(Code::Corrupt, "weight tile {}: texel ({}, {}) writes an unused slot", tile,
+                                   texel % side, texel / side);
+                sum += channel;
+            }
+            if (sum != 255)
+                return Fail<R>(Code::Corrupt, "weight tile {}: texel ({}, {}) weights sum to {}, not 255", tile,
+                               texel % side, texel / side, sum);
+        }
+
+        TerrainResult<R> result;
+        result.value = std::move(decoded);
+        return result;
+    }
+
+    TerrainWeightTile ExpandTerrainWeights(const TerrainDecodedWeights &decoded)
+    {
+        TerrainWeightTile tile;
+        tile.tile = decoded.tile;
+        tile.intervals = decoded.intervals;
+        size_t used = 0;
+        while (used < kTerrainWeightSlots && decoded.slots[used] != 0xFF)
+        {
+            tile.layers.push_back(decoded.layers[used]);
+            ++used;
+        }
+        const size_t count = tile.SampleCount();
+        tile.weights.resize(count * used);
+        for (size_t texel = 0; texel < count; ++texel)
+            for (size_t s = 0; s < used; ++s)
+                tile.weights[s * count + texel] =
+                    float(std::to_integer<uint8_t>(decoded.bytes[texel * kTerrainWeightSlots + s])) / 255.0f;
+        return tile;
     }
 }

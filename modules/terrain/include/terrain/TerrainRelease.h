@@ -91,6 +91,8 @@ namespace mir
         TerrainPackError VerifyAllPacks() const;
         // One pack of Index().packs: its size, checksum, header and every payload in it.
         TerrainPackError VerifyPack(size_t pack) const;
+        // One pack of Index().weightPacks: the same checks for its weight payloads.
+        TerrainPackError VerifyWeightPack(size_t pack) const;
 
       private:
         TerrainReleaseHandle(std::shared_ptr<const TerrainIndex> index, std::shared_ptr<TerrainByteSource> source,

@@ -40,7 +40,8 @@ namespace mir
 
         // Payloads are checked by the caller.
         TerrainPackError CheckPackHeader(const TerrainIndex &index, const TerrainPackRecord &record,
-                                         std::span<const std::byte> bytes, uint32_t &headerSize)
+                                         std::span<const std::byte> bytes, uint32_t expectedContentVersion,
+                                         uint32_t &headerSize)
         {
             if (bytes.size() < kTerrainPackHeaderSize)
                 return Error(Code::Malformed, "{} bytes is too short for a pack header", bytes.size());
@@ -69,9 +70,9 @@ namespace mir
                 return Error(Code::Malformed,
                              "pack header says chunk {} with {} tiles, the index says chunk {} with {}",
                              Describe(chunk), tileCount, Describe(record.chunk), record.tileCount);
-            if (contentVersion != index.contentVersion)
-                return Error(Code::Unsupported, "pack content version {} differs from the index's {}", contentVersion,
-                             index.contentVersion);
+            if (contentVersion != expectedContentVersion)
+                return Error(Code::Unsupported, "pack content version {} is not the expected {}", contentVersion,
+                             expectedContentVersion);
             return {};
         }
     }
@@ -275,6 +276,9 @@ namespace mir
         for (size_t p = 0; p < mIndex->packs.size(); ++p)
             if (TerrainPackError error = VerifyPack(p); error.code != Code::None)
                 return error;
+        for (size_t p = 0; p < mIndex->weightPacks.size(); ++p)
+            if (TerrainPackError error = VerifyWeightPack(p); error.code != Code::None)
+                return error;
         return {};
     }
 
@@ -310,7 +314,7 @@ namespace mir
                          Hex(record.checksum));
 
         uint32_t headerSize = 0;
-        const TerrainPackError header = CheckPackHeader(index, record, *bytes, headerSize);
+        const TerrainPackError header = CheckPackHeader(index, record, *bytes, index.contentVersion, headerSize);
         if (header.code != Code::None)
             return {header.code, where + header.message};
 
@@ -331,6 +335,57 @@ namespace mir
                 error = DecodeTerrainNormals(index, *tile, payload).error;
             else if (tile->kind == TerrainPayloadKind::Region)
                 error = DecodeTerrainRegion(index, *tile, payload).error;
+            if (error.code != Code::None)
+                return {error.code, where + error.message};
+        }
+        return {};
+    }
+
+    TerrainPackError TerrainReleaseHandle::VerifyWeightPack(size_t p) const
+    {
+        const TerrainIndex &index = *mIndex;
+        if (p >= index.weightPacks.size())
+            return Error(Code::InvalidInput, "weight pack {} is not in the index's {} weight packs", p,
+                         index.weightPacks.size());
+        std::vector<const TerrainWeightRecord *> members;
+        for (const TerrainWeightRecord &record : index.weights)
+            if (record.pack == p)
+                members.push_back(&record);
+
+        const TerrainPackRecord &record = index.weightPacks[p];
+        const std::string name = TerrainWeightPackFileName(record.chunk);
+        const std::string where = std::format("{}/{}: ", mSource->Describe(), name);
+
+        const std::optional<uint64_t> size = mSource->Size(name);
+        if (!size)
+            return Error(Code::Io, "{}missing weight pack", where);
+        if (*size != record.fileSize)
+            return Error(Code::Corrupt, "{}{} bytes, the index says {} (truncated or replaced)", where, *size,
+                         record.fileSize);
+        const std::optional<std::vector<std::byte>> bytes = mSource->ReadAll(name);
+        if (!bytes)
+            return Error(Code::Io, "{}cannot read the weight pack", where);
+        if (bytes->size() != record.fileSize)
+            return Error(Code::Corrupt, "{}read {} bytes, the index says {}", where, bytes->size(), record.fileSize);
+        const uint64_t checksum = Fnv1a64(*bytes);
+        if (checksum != record.checksum)
+            return Error(Code::Corrupt, "{}weight pack checksum {} does not match the index {}", where,
+                         Hex(checksum), Hex(record.checksum));
+
+        uint32_t headerSize = 0;
+        const TerrainPackError header =
+            CheckPackHeader(index, record, *bytes, kTerrainWeightsContentVersion, headerSize);
+        if (header.code != Code::None)
+            return {header.code, where + header.message};
+
+        const std::span<const std::byte> all(*bytes);
+        for (const TerrainWeightRecord *tile : members)
+        {
+            if (tile->offset < headerSize)
+                return Error(Code::Malformed, "{}weight tile {} starts at {}, inside the {}-byte header", where,
+                             Describe(tile->tile), tile->offset, headerSize);
+            const auto payload = all.subspan(static_cast<size_t>(tile->offset), static_cast<size_t>(tile->length));
+            const TerrainPackError error = DecodeTerrainWeightPayload(index, *tile, payload).error;
             if (error.code != Code::None)
                 return {error.code, where + error.message};
         }

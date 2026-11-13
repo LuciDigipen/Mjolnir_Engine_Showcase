@@ -87,13 +87,7 @@ namespace mir
 
         bool ValidWeightName(std::string_view name)
         {
-            if (name.empty() || name.size() > kMaxTerrainMaterialLayerName)
-                return false;
-            return std::all_of(name.begin(), name.end(),
-                               [](char c)
-                               {
-                                   return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
-                               });
+            return IsValidTerrainMaterialLayerName(name);
         }
 
         std::array<TileCoord, 4> HoldingTiles(const TerrainLayout &layout, GlobalSampleIndex sample,
