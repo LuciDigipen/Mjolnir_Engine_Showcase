@@ -111,7 +111,9 @@ namespace mir
             h.minor = LoadU32(bytes, terrainformat::index::kMinor);
             h.headerSize = LoadU32(bytes, terrainformat::index::kHeaderSize);
             const uint32_t minimumHeader =
-                h.minor >= kTerrainRegionsFormatMinor ? kTerrainIndexHeaderSize : kTerrainLegacyIndexHeaderSize;
+                h.minor >= kTerrainWeightsFormatMinor   ? kTerrainWeightsIndexHeaderSize
+                : h.minor >= kTerrainRegionsFormatMinor ? kTerrainIndexHeaderSize
+                                                        : kTerrainLegacyIndexHeaderSize;
             if (h.headerSize < minimumHeader || h.headerSize % terrainformat::kRecordAlignment != 0)
                 return Fail<Header>(Code::Malformed, "header size {} is invalid (needs >= {} and a multiple of 8)",
                                     h.headerSize, minimumHeader);
@@ -173,8 +175,7 @@ namespace mir
                                         "unit {} or levels {}",
                                         h.regionCount, h.regionCells, h.regionUnit, h.regionLevels);
             }
-            // A weight header may be absent from a minor that knows the section, as an older writer left it.
-            if (h.minor >= kTerrainWeightsFormatMinor && h.headerSize >= kTerrainWeightsIndexHeaderSize)
+            if (h.minor >= kTerrainWeightsFormatMinor)
             {
                 h.weightPackCount = LoadU32(bytes, terrainformat::index::kWeightPackCount);
                 h.weightPackRecordSize = LoadU32(bytes, terrainformat::index::kWeightPackRecordSize);

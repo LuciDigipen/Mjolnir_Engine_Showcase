@@ -180,6 +180,21 @@ namespace
         WriteFile(dir / kTerrainIndexFileName, index);
     }
 
+    // A valid index of a newer minor: the weight header it needs, with no weight tiles.
+    void PatchToNewerMinor(const fs::path &dir, uint32_t minor)
+    {
+        std::vector<std::byte> index = ReadFile(dir / kTerrainIndexFileName);
+        index.insert(index.begin() + kTerrainIndexHeaderSize,
+                     kTerrainWeightsIndexHeaderSize - kTerrainIndexHeaderSize, std::byte{0});
+        StoreU32(index, terrainformat::index::kMinor, minor);
+        StoreU32(index, terrainformat::index::kHeaderSize, kTerrainWeightsIndexHeaderSize);
+        StoreU32(index, terrainformat::index::kWeightPackRecordSize, kTerrainPackRecordSize);
+        StoreU32(index, terrainformat::index::kWeightTileRecordSize, kTerrainWeightRecordSize);
+        const size_t body = index.size() - kTerrainIndexTrailerSize;
+        StoreU64(index, body, Fnv1a64(std::span<const std::byte>(index).first(body)));
+        WriteFile(dir / kTerrainIndexFileName, index);
+    }
+
     // Reseals a derived payload so only the payloads check can notice the change.
     void PatchPayloadSealed(const fs::path &dir, TileCoord tile, uint32_t layer, TerrainPayloadKind kind)
     {
@@ -414,7 +429,7 @@ TEST_CASE("An unusable base falls back to a full bake with the reason in the rep
         REQUIRE(baked.Ok());
         REQUIRE(baked.release);
         const fs::path dir = PublishRelease(base.candidateDir, tree.releases, tree.asset, baked.release->release);
-        PatchIndexAndReseal(dir, 8, kTerrainFormatMinor + 1);
+        PatchToNewerMinor(dir, kTerrainWeightsFormatMinor + 1);
 
         TerrainBakeRequest incremental =
             WithBase(tree.Request(tree.scratch.path / "incremental", kNonce), tree.releases, tree.asset);

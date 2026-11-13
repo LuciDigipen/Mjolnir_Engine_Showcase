@@ -187,6 +187,62 @@ namespace mir::terrainbake
                                         std::nullopt,
                                         "release source spacing differs from the tile's recipe assignment"});
                     }
+
+                auto join = [](const std::vector<std::string> &names)
+                {
+                    std::string text;
+                    for (const std::string &name : names)
+                        text += (text.empty() ? "" : ", ") + name;
+                    return text;
+                };
+                std::vector<std::string> wantWeights;
+                if (recipe->hasMaterialsSection)
+                    for (const TerrainMaterialLayer &layer : recipe->materials)
+                        wantWeights.push_back(layer.name);
+                if (index.weightLayers != wantWeights)
+                    report.Add({std::string(check::kIdentity),
+                                "weight.layers",
+                                {},
+                                std::nullopt,
+                                std::format("the recipe's material layer table is [{}], the release's is [{}]",
+                                            join(wantWeights), join(index.weightLayers))});
+                const uint64_t wantWeightsFingerprint =
+                    wantWeights.empty() ? 0 : FingerprintWeights(*recipe, fingerprint).value;
+                if (index.weightsFingerprint != wantWeightsFingerprint)
+                    report.Add({std::string(check::kIdentity),
+                                "weight.fingerprint",
+                                {},
+                                std::nullopt,
+                                std::format("the recipe's weight fingerprint is {}, the release recorded {}",
+                                            TerrainIdHex(wantWeightsFingerprint),
+                                            TerrainIdHex(index.weightsFingerprint))});
+                size_t sources = 0;
+                for (const TerrainTileRecord &record : index.tiles)
+                    if (record.source)
+                        ++sources;
+                if (!wantWeights.empty())
+                {
+                    if (index.weights.size() != sources)
+                        report.Add({std::string(check::kIdentity),
+                                    "weight.tiles",
+                                    {},
+                                    std::nullopt,
+                                    std::format("{} source tiles need a weight payload, the release holds {}",
+                                                sources, index.weights.size())});
+                    for (const TerrainTileRecord &record : index.tiles)
+                        if (record.source && !index.FindWeight(record.tile))
+                            report.Add({std::string(check::kIdentity),
+                                        "weight.tiles",
+                                        {record.tile},
+                                        std::nullopt,
+                                        "the source tile has no weight payload"});
+                }
+                else if (!index.weights.empty() || !index.weightPacks.empty())
+                    report.Add({std::string(check::kIdentity),
+                                "weight.tiles",
+                                {},
+                                std::nullopt,
+                                "the recipe has no materials section, the release holds weight payloads"});
             }
             if (!manifest && !recipe)
                 report.Skip(check::kIdentity, "no candidate.json or recipe to compare with");
@@ -710,14 +766,20 @@ namespace mir::terrainbake
         std::vector<std::string> packNames;
         for (const TerrainPackRecord &pack : index.packs)
             packNames.push_back(TerrainPackFileName(pack.chunk));
+        std::vector<std::string> weightPackNames;
+        for (const TerrainPackRecord &pack : index.weightPacks)
+            weightPackNames.push_back(TerrainWeightPackFileName(pack.chunk));
         std::vector<TerrainFileSummary> files;
         if (const std::optional<std::vector<std::byte>> bytes = handle.Source().ReadAll(kTerrainIndexFileName))
             files.push_back({std::string(kTerrainIndexFileName), bytes->size(), Fnv1a64(*bytes)});
         for (size_t p = 0; p < index.packs.size(); ++p)
             files.push_back({packNames[p], index.packs[p].fileSize, index.packs[p].checksum});
+        for (size_t p = 0; p < index.weightPacks.size(); ++p)
+            files.push_back({weightPackNames[p], index.weightPacks[p].fileSize, index.weightPacks[p].checksum});
         report.files = files;
 
         std::set<std::string> known(packNames.begin(), packNames.end());
+        known.insert(weightPackNames.begin(), weightPackNames.end());
         known.insert(std::string(kTerrainIndexFileName));
         known.insert(std::string(kCandidateManifestFileName));
         for (const fs::directory_entry &entry : fs::directory_iterator(dir, ec))

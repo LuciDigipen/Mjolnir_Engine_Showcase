@@ -154,7 +154,9 @@ namespace mir::terrainbake
         }
         else
         {
-            mismatch = TerrainCurrentMismatch(out, id, opened.value->Index().release.source, previous);
+            mismatch = TerrainCurrentMismatch(out, id, opened.value->Index().release.source,
+                                              TerrainSourceFingerprint(opened.value->Index().weightsFingerprint),
+                                              previous);
             if (!mismatch && previous != release)
                 mismatch = std::format("the output's current names release {}", TerrainIdHex(previous->value));
         }

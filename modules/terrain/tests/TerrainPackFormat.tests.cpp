@@ -285,6 +285,20 @@ TEST_CASE("A newer minor with longer header, records and an extension section st
     CHECK(handle.VerifyAllPacks().code == Code::None);
 }
 
+TEST_CASE("An index of the weights minor with the shorter header is malformed", "[terrain][pack]")
+{
+    const AssetId asset = TerrainAsset("terrain/edge.terrain.json");
+    const TerrainEncodedRelease encoded = EncodeEdge(asset, 0xE1);
+    std::vector<std::byte> index(encoded.index);
+    StoreU32(index, terrainformat::index::kMinor, kTerrainWeightsFormatMinor);
+    ResealIndex(index);
+
+    const TerrainResult<TerrainIndex> parsed = ParseTerrainIndex(index);
+    REQUIRE_FALSE(parsed);
+    CHECK(parsed.error.code == Code::Malformed);
+    CHECK(Mentions(parsed.error, "header size"));
+}
+
 TEST_CASE("Release ids are minted per bake and never zero", "[terrain][pack]")
 {
     const AssetId asset = TerrainAsset("terrain/edge.terrain.json");

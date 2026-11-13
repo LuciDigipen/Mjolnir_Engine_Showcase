@@ -589,6 +589,7 @@ namespace mir::terrainbake
 
         const std::optional<uint64_t> seed = top.Unsigned("seed");
 
+        const bool hasMaterialsSection = top.OptionalField("materials") != nullptr;
         std::vector<TerrainMaterialLayer> materials = ReadMaterials(top, checker);
 
         const ObjectReader layoutReader = top.Object("layout", {"sampleSpacing", "intervalsPerTile", "bounds"});
@@ -800,7 +801,7 @@ namespace mir::terrainbake
         return {TerrainRecipe{static_cast<uint32_t>(*recipeVersion), *generatorId,
                               static_cast<uint32_t>(*generatorVersion), *seed, *layout, relief.value_or(ReliefParameters{}),
                               defaultSpacing, std::move(rules), heightmapPath.value_or(std::string{}),
-                              heightmapHash.value_or(0), std::move(materials)},
+                              heightmapHash.value_or(0), std::move(materials), hasMaterialsSection},
                 {}};
     }
 

@@ -90,9 +90,9 @@ namespace mir::terrainbake
         if (index.release.format != kTerrainFormatVersion)
             return std::format("the base release is format {}, this tool writes {}", index.release.format.value,
                                kTerrainFormatVersion.value);
-        if (index.formatMinor != kTerrainFormatMinor)
-            return std::format("the base release is format minor {}, this tool writes {}", index.formatMinor,
-                               kTerrainFormatMinor);
+        if (index.formatMinor != kTerrainFormatMinor && index.formatMinor != kTerrainWeightsFormatMinor)
+            return std::format("the base release is format minor {}, this tool writes {} or {}", index.formatMinor,
+                               kTerrainFormatMinor, kTerrainWeightsFormatMinor);
         if (index.contentVersion != kTerrainHeightsContentVersion)
             return std::format("the base release holds height content {}, this tool writes {}", index.contentVersion,
                                kTerrainHeightsContentVersion);

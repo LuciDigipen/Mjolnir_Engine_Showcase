@@ -130,8 +130,9 @@ namespace mir::terrainbake
                 const std::string name = PathUtf8(entry.path().filename());
                 empty = false;
                 hasManifest = hasManifest || name == kCandidateManifestFileName;
-                const bool candidateFile = name == kTerrainIndexFileName || name == kCandidateManifestFileName ||
-                                           (name.starts_with("chunk_") && name.ends_with(".tpack"));
+                const bool candidateFile =
+                    name == kTerrainIndexFileName || name == kCandidateManifestFileName ||
+                    (name.starts_with("chunk_") && (name.ends_with(".tpack") || name.ends_with(".wpack")));
                 if (!entry.is_regular_file(ec) || !candidateFile)
                 {
                     error = std::format("{} holds {}, so it is not a TerrainTool candidate; sync only replaces its "
@@ -156,6 +157,7 @@ namespace mir::terrainbake
 
     std::optional<std::string> TerrainCurrentMismatch(const fs::path &releasesRoot, AssetId asset,
                                                       TerrainSourceFingerprint fingerprint,
+                                                      TerrainSourceFingerprint weightsFingerprint,
                                                       std::optional<TerrainReleaseId> &current,
                                                       std::optional<TerrainReleaseHandle> *opened)
     {
@@ -180,11 +182,17 @@ namespace mir::terrainbake
         if (index.release.source != fingerprint)
             return std::format("current release {} was baked from recipe fingerprint {}; the recipe is now {}", id,
                                TerrainIdHex(index.release.source.value), TerrainIdHex(fingerprint.value));
-        if (index.release.format != kTerrainFormatVersion || index.formatMinor != kTerrainFormatMinor ||
+        const uint32_t expectedMinor =
+            weightsFingerprint.IsNull() ? kTerrainFormatMinor : kTerrainWeightsFormatMinor;
+        if (index.release.format != kTerrainFormatVersion || index.formatMinor != expectedMinor ||
             index.contentVersion != kTerrainHeightsContentVersion)
             return std::format("current release {} is format {}.{} content {}; this tool writes {}.{} content {}", id,
                                index.release.format.value, index.formatMinor, index.contentVersion,
-                               kTerrainFormatVersion.value, kTerrainFormatMinor, kTerrainHeightsContentVersion);
+                               kTerrainFormatVersion.value, expectedMinor, kTerrainHeightsContentVersion);
+        if (index.weightsFingerprint != weightsFingerprint.value)
+            return std::format("current release {} holds material weights baked from fingerprint {}; the recipe's "
+                               "are {}",
+                               id, TerrainIdHex(index.weightsFingerprint), TerrainIdHex(weightsFingerprint.value));
         // Format 2.1 can also describe generic Height-only releases. Those are
         // readable, but cannot satisfy the runtime's default source-layer mesh.
         for (const TerrainTileRecord &source : index.tiles)
@@ -200,6 +208,14 @@ namespace mir::terrainbake
         for (const TerrainPackRecord &pack : index.packs)
         {
             const std::string name = TerrainPackFileName(pack.chunk);
+            const uintmax_t size = fs::file_size(dir / name, ec);
+            if (ec || size != pack.fileSize)
+                return std::format("current release {}: {} is {}, the index says {} bytes", id, name,
+                                   ec ? std::string("missing") : std::format("{} bytes", size), pack.fileSize);
+        }
+        for (const TerrainPackRecord &pack : index.weightPacks)
+        {
+            const std::string name = TerrainWeightPackFileName(pack.chunk);
             const uintmax_t size = fs::file_size(dir / name, ec);
             if (ec || size != pack.fileSize)
                 return std::format("current release {}: {} is {}, the index says {} bytes", id, name,
@@ -247,6 +263,8 @@ namespace mir::terrainbake
             return report;
         TerrainRecipe &recipe = *parsed.recipe;
         const TerrainSourceFingerprint fingerprint = FingerprintRecipe(recipe);
+        const TerrainSourceFingerprint weightsFingerprint =
+            recipe.hasMaterialsSection ? FingerprintWeights(recipe, fingerprint) : TerrainSourceFingerprint();
         report.recipeFingerprint = fingerprint;
         report.Ran(check::kRecipe, DescribeRecipeFingerprint(recipe, fingerprint));
 
@@ -264,7 +282,7 @@ namespace mir::terrainbake
         std::optional<TerrainReleaseId> current;
         std::optional<TerrainReleaseHandle> opened;
         const std::optional<std::string> mismatch =
-            TerrainCurrentMismatch(releases, asset->asset, fingerprint, current, &opened);
+            TerrainCurrentMismatch(releases, asset->asset, fingerprint, weightsFingerprint, current, &opened);
         report.publish->previous = current;
         if (!mismatch)
         {

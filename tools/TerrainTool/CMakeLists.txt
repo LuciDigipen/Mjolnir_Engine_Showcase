@@ -46,6 +46,7 @@ target_compile_options(TerrainTool PRIVATE ${terrain_bake_debug_o2})
 if(BUILD_TESTING)
     add_executable(terrain_tool_tests
         tests/TerrainBake.tests.cpp
+        tests/TerrainBakeWeights.tests.cpp
         tests/TerrainBaseCache.tests.cpp
         tests/TerrainGenerator.tests.cpp
         tests/TerrainHeightmap.tests.cpp

@@ -27,6 +27,7 @@ namespace mir::terrainbake
                                                 std::span<const TileHeights> finalHeights, std::size_t &changedTiles);
 
     // Empty when the base index matches what a full bake derives from; otherwise why a full bake is needed.
+    // Weight payloads are never reused, so only the height structure takes part.
     std::optional<std::string> TerrainBaseMismatch(const TerrainReleaseHandle &base, const TerrainRecipe &recipe,
                                                    std::span<const TileHeights> finalHeights,
                                                    const TerrainRegionSettings &regions);

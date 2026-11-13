@@ -25,8 +25,8 @@
 namespace mir::terrainbake
 {
     // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package. 10: prune.
-    // 11: sync keeps the base heights cache.
-    inline constexpr uint32_t kTerrainToolVersion = 11;
+    // 11: sync keeps the base heights cache. 12: material weight payloads.
+    inline constexpr uint32_t kTerrainToolVersion = 12;
     inline constexpr uint32_t kTerrainReportVersion = 6;
 
     // In report order.

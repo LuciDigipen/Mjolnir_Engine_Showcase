@@ -89,6 +89,8 @@ namespace mir::terrainbake
         uint64_t heightmapHash = 0;   // FNV-1a 64 of the whole file
         // Material layers; one named "base" when the recipe has no materials section.
         std::vector<TerrainMaterialLayer> materials;
+        // True when the JSON had a materials section; the implicit base layer publishes no weights.
+        bool hasMaterialsSection = false;
         std::filesystem::path recipeDir; // set by LoadTerrainRecipe
         // Loaded only when a bake runs, so a current release needs no source file.
         std::shared_ptr<const TerrainHeightSource> heightSource;
