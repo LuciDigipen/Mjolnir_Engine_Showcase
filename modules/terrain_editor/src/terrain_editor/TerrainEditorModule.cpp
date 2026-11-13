@@ -12,6 +12,8 @@
 #include <editor/EditorModule.h>
 #include <editor/EditorWidgets.h>
 #include <editor/history/History.h>
+#include <terrain_editor/TerrainBake.h>
+#include <terrain_editor/TerrainBakeJob.h>
 #include <terrain_editor/TerrainEditBase.h>
 #include <terrain_editor/TerrainEditOverlay.h>
 #include <terrain_editor/TerrainHeightBrush.h>
@@ -21,11 +23,13 @@
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/GroundQuery.h>
 #include <core/ecs/World.h>
+#include <core/log/Log.h>
 #include <project/GameProject.h>
 #include <renderer/CameraMath.h>
 #include <renderer/ViewSubmission.h>
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainEditLayer.h>
+#include <terrain/TerrainRelease.h>
 #include <terrain/TerrainScene.h>
 
 #include <IconsFontAwesome6.h>
@@ -37,6 +41,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <format>
 #include <map>
 #include <memory>
 #include <optional>
@@ -66,21 +71,42 @@ namespace mir
             return meters.x >= bounds.minX && meters.x <= bounds.maxX && meters.z >= bounds.minZ &&
                    meters.z <= bounds.maxZ;
         }
+
+        std::string BakeStatus(const TerrainBakeReport &report)
+        {
+            switch (report.mOutcome)
+            {
+            case TerrainBakeOutcome::Published:
+                return report.mRelease ? std::format("Published release {}", TerrainIdHex(report.mRelease->value))
+                                       : "Published.";
+            case TerrainBakeOutcome::UpToDate:
+                return report.mRelease ? std::format("Up to date; release {}", TerrainIdHex(report.mRelease->value))
+                                       : "Up to date.";
+            case TerrainBakeOutcome::Canceled:
+                return "Bake canceled.";
+            case TerrainBakeOutcome::Failed:
+                return report.mMessage;
+            }
+            return {};
+        }
     }
 
     class TerrainEditorModule::Extension final : public IEditorExtension
     {
     public:
         Extension(TerrainEditMode &mode, TerrainEditPanel &panel, TerrainLayerWorkspace &workspace,
-            std::filesystem::path releasesRoot, TerrainOverlayApplier overlay)
+            std::filesystem::path releasesRoot, TerrainBakeProject bakeProject, TerrainOverlayApplier overlay)
             : mMode(mode), mPanel(panel), mWorkspace(workspace), mReleasesRoot(std::move(releasesRoot)),
-              mApplyOverlay(std::move(overlay))
+              mBakeProject(std::move(bakeProject)), mApplyOverlay(std::move(overlay))
         {
         }
 
         void Update(const EditorExtensionContext &context) override
         {
             mMode.Update(context.mMode.mMode == EngineMode::Edit, context.mDocument);
+            mBake.Update();
+            CollectBakeResult();
+            ApplyBakeDiscard(context);
             if (const TerrainWorld *world = context.mWorld.TryResource<TerrainWorld>())
                 mWorkspace.Sync(*world);
             else
@@ -102,7 +128,14 @@ namespace mir
             if (!mMode.Active())
                 return;
             if (ImGui::Begin("Terrain"))
-                mPanel.Draw(mMode, mWorkspace, context.mHistory, Availability(context));
+            {
+                const TerrainBakeActions actions =
+                    mPanel.Draw(mMode, mWorkspace, context.mHistory, Availability(context), BakeView(context));
+                if (actions.mStart)
+                    StartBake();
+                if (actions.mCancel)
+                    mBake.Cancel();
+            }
             ImGui::End();
         }
 
@@ -298,10 +331,158 @@ namespace mir
             mPainting = false;
         }
 
+        TerrainBakeView BakeView(const EditorExtensionContext &context)
+        {
+            TerrainBakeView view;
+            view.mBaking = mBake.Running();
+            view.mSeconds = mBake.Seconds();
+            view.mCanCancel = view.mBaking;
+
+            if (view.mBaking)
+                view.mStatus = std::format("Baking {:.1f} s", view.mSeconds);
+            else if (!mBakeError.empty())
+            {
+                view.mStatus = mBakeError;
+                view.mFailed = true;
+            }
+            else if (const std::optional<TerrainBakeResult> &result = mBake.Result())
+            {
+                view.mStatus = BakeStatus(result->mReport);
+                view.mFailed = result->mReport.mOutcome == TerrainBakeOutcome::Failed;
+            }
+            else
+                view.mStatus = "Idle";
+
+            TerrainLayerDocument *document = mWorkspace.SelectedDocument();
+            if (context.mMode.mMode != EngineMode::Edit)
+                view.mReason = "Bake works in Edit.";
+            else if (context.mDocument != kSceneDocument)
+                view.mReason = "Bake publishes the scene's terrain, not a Prefab.";
+            else if (mWorkspace.Assets().empty())
+                view.mReason = "The scene has no terrain assets.";
+            else if (mBakeProject.mTool.empty())
+                view.mReason = "The editor does not know where TerrainTool is; rebuild the editor.";
+            else if (document == nullptr)
+                view.mReason = "The selected terrain has no Edit Layers.";
+            else if (!document->Editable())
+                view.mReason = "The selected terrain's Edit Layers cannot be read.";
+            else
+                view.mCanStart = !view.mBaking;
+            return view;
+        }
+
+        void StartBake()
+        {
+            const std::span<const TerrainEditAsset> assets = mWorkspace.Assets();
+            const std::size_t index = mWorkspace.SelectedAsset();
+            TerrainLayerDocument *document = mWorkspace.SelectedDocument();
+            if (index >= assets.size() || document == nullptr || mBake.Running())
+                return;
+
+            std::string error;
+            std::optional<TerrainBakeRequest> request =
+                MakeTerrainBakeRequest(mBakeProject, assets[index].recipePath, error);
+            if (!request)
+            {
+                mBakeError = std::move(error);
+                return;
+            }
+
+            TerrainBakeStart start;
+            start.mRequest = std::move(*request);
+            start.mStartChange = document->ChangeCount();
+            start.mPrepare = SaveTerrainLayersForBake(*document);
+
+            mBakeDocument = document;
+            mPendingBake.reset();
+            mBakeError.clear();
+            if (!mBake.Start(std::move(start)))
+            {
+                mBakeError = mBake.Message();
+                return;
+            }
+            MIR_LOG_INFO("Terrain bake: syncing {}", assets[index].recipePath);
+        }
+
+        void CollectBakeResult()
+        {
+            if (mBake.Completed() == mSeenBakeCompleted)
+                return;
+            mSeenBakeCompleted = mBake.Completed();
+
+            const std::optional<TerrainBakeResult> &result = mBake.Result();
+            if (!result)
+                return;
+
+            if (result->mReport.mOutcome == TerrainBakeOutcome::Failed)
+                MIR_LOG_ERROR("Terrain bake: {}", result->mReport.mMessage);
+            else
+                MIR_LOG_INFO("Terrain bake: {}", BakeStatus(result->mReport));
+
+            if (result->mReport.mOutcome == TerrainBakeOutcome::Published ||
+                result->mReport.mOutcome == TerrainBakeOutcome::UpToDate)
+            {
+                mPendingBake = PendingBake{ result->mAsset, result->mStartChange, result->mReport, mBakeDocument };
+            }
+        }
+
+        void ApplyBakeDiscard(const EditorExtensionContext &context)
+        {
+            if (!mPendingBake)
+                return;
+
+            const TerrainReleaseInfo *loaded = nullptr;
+            if (const TerrainWorld *world = context.mWorld.TryResource<TerrainWorld>())
+            {
+                for (const TerrainWorld::AssetState &asset : world->Assets())
+                {
+                    if (asset.asset == mPendingBake->mAsset && asset.release)
+                    {
+                        loaded = &asset.release->Info();
+                        break;
+                    }
+                }
+            }
+
+            const uint64_t change = mPendingBake->mDocument ? mPendingBake->mDocument->ChangeCount()
+                                                           : mPendingBake->mStartChange;
+            switch (EvaluateTerrainBakeDiscard(mPendingBake->mReport, mPendingBake->mStartChange, change, loaded))
+            {
+            case TerrainBakeOverlayAction::Keep:
+                mPendingBake.reset();
+                return;
+            case TerrainBakeOverlayAction::Wait:
+                return;
+            case TerrainBakeOverlayAction::Discard:
+                break;
+            }
+
+            const AssetId asset = mPendingBake->mAsset;
+            mPendingBake.reset();
+            mOverlays[asset.value].Clear();
+            mDocumentChanges[asset.value] = change;
+            if (mApplyOverlay)
+            {
+                const TerrainOverlayApplyResult applied = mApplyOverlay(asset, nullptr);
+                if (!applied.applied)
+                    mOverlayMessage = applied.reason;
+            }
+            MIR_LOG_INFO("Terrain bake: dropped the overlay; the loaded release holds its edits");
+        }
+
+        struct PendingBake
+        {
+            AssetId mAsset;
+            uint64_t mStartChange = 0;
+            TerrainBakeReport mReport;
+            TerrainLayerDocument *mDocument = nullptr;
+        };
+
         TerrainEditMode &mMode;
         TerrainEditPanel &mPanel;
         TerrainLayerWorkspace &mWorkspace;
         std::filesystem::path mReleasesRoot;
+        TerrainBakeProject mBakeProject;
         TerrainOverlayApplier mApplyOverlay;
         TerrainBaseCache mBase;
         std::map<uint64_t, TerrainEditOverlaySession> mOverlays;
@@ -316,6 +497,11 @@ namespace mir
         bool mLeftWasDown = false;
         std::string mStrokeError;
         std::string mOverlayMessage;
+        TerrainBakeJob mBake;
+        TerrainLayerDocument *mBakeDocument = nullptr;
+        std::optional<PendingBake> mPendingBake;
+        uint64_t mSeenBakeCompleted = 0;
+        std::string mBakeError;
     };
 
     void TerrainEditorModule::Extension::DrawOverlay(const EditorExtensionContext &context)
@@ -411,6 +597,7 @@ namespace mir
         TerrainOverlayApplier overlay)
         : mWorkspace(project.mAssetsDir),
           mExtension(std::make_unique<Extension>(mMode, mPanel, mWorkspace, TerrainReleasesRoot(project.mRootDir),
+              TerrainBakeProject{ project.mRootDir, project.mAssetsDir, project.mAssetIdRoot, TerrainToolPath() },
               std::move(overlay)))
     {
         mRegistration = editor.Get().AddExtension(*mExtension);

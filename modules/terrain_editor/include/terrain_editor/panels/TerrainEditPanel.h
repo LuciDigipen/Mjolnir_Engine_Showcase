@@ -22,11 +22,28 @@ namespace mir
     class TerrainLayerWorkspace;
     struct TerrainBrushAvailability;
 
+    struct TerrainBakeView
+    {
+        bool mBaking = false;
+        bool mCanStart = false;
+        bool mCanCancel = false;
+        bool mFailed = false;
+        double mSeconds = 0.0;
+        std::string mStatus;
+        std::string mReason;
+    };
+
+    struct TerrainBakeActions
+    {
+        bool mStart = false;
+        bool mCancel = false;
+    };
+
     class TerrainEditPanel
     {
     public:
-        void Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
-                  const TerrainBrushAvailability &brush);
+        TerrainBakeActions Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
+                                const TerrainBrushAvailability &brush, const TerrainBakeView &bake);
 
     private:
         void DrawLayers(TerrainLayerWorkspace &layers, History &history);

@@ -76,9 +76,10 @@ namespace mir
         }
     } // namespace
 
-    void TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
-        const TerrainBrushAvailability &brush)
+    TerrainBakeActions TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
+        const TerrainBrushAvailability &brush, const TerrainBakeView &bake)
     {
+        TerrainBakeActions actions;
         if (widgets::CategoryHeader("Edit Layers"))
             DrawLayers(layers, history);
 
@@ -122,11 +123,37 @@ namespace mir
 
         if (widgets::CategoryHeader("Bake"))
         {
-            ImGui::BeginDisabled();
-            ImGui::Button("Bake");
+            ImGui::BeginDisabled(!bake.mCanStart);
+            if (ImGui::Button("Bake"))
+                actions.mStart = true;
             ImGui::EndDisabled();
-            ImGui::ProgressBar(0.0f, ImVec2(-FLT_MIN, 0.0f), "Idle");
+
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!bake.mCanCancel);
+            if (ImGui::Button("Cancel"))
+                actions.mCancel = true;
+            ImGui::EndDisabled();
+
+            if (bake.mBaking)
+            {
+                // TerrainTool reports no progress, so the bar only shows that work is happening.
+                ImGui::ProgressBar(-static_cast<float>(ImGui::GetTime()), ImVec2(-FLT_MIN, 0.0f),
+                    bake.mStatus.c_str());
+            }
+            else if (bake.mFailed)
+                TextError(bake.mStatus);
+            else if (!bake.mStatus.empty())
+                ImGui::TextUnformatted(bake.mStatus.c_str());
+
+            if (!bake.mReason.empty())
+            {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", bake.mReason.c_str());
+                ImGui::PopTextWrapPos();
+            }
         }
+
+        return actions;
     }
 
     void TerrainEditPanel::DrawLayers(TerrainLayerWorkspace &layers, History &history)

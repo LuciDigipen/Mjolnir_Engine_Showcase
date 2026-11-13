@@ -5,7 +5,11 @@ endif()
 
 engine_add_module(terrain_editor)
 
+find_package(nlohmann_json CONFIG REQUIRED)
+
 target_sources(engine_terrain_editor PRIVATE
+    src/terrain_editor/TerrainBake.cpp
+    src/terrain_editor/TerrainBakeJob.cpp
     src/terrain_editor/TerrainEditBase.cpp
     src/terrain_editor/TerrainEditMode.cpp
     src/terrain_editor/TerrainEditOverlay.cpp
@@ -24,6 +28,7 @@ target_link_libraries(engine_terrain_editor
     PRIVATE imgui::imgui
             iconfontcppheaders::iconfontcppheaders
             mir::project
+            nlohmann_json::nlohmann_json
 )
 
 if(BUILD_TESTING)

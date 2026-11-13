@@ -1,4 +1,6 @@
 engine_add_module_tests(terrain_editor
+    TerrainBake.tests.cpp
+    TerrainBakeJob.tests.cpp
     TerrainBrushCommands.tests.cpp
     TerrainEditMode.tests.cpp
     TerrainEditOverlay.tests.cpp
