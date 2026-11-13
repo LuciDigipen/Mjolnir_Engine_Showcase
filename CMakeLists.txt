@@ -46,9 +46,9 @@ option(MIR_WITH_AUDIO "Build Wwise audio and Lua audio bindings" ON)
 # time (cmake/FindNGX.cmake), pinned to an exact release tag - never committed.
 option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" OFF)
 
-# Optional DDGI SDK and offline-compiled probe update shaders. OFF does not
-# fetch RTXGI or require DXC; runtime GI is integrated separately.
-option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" OFF)
+# DDGI SDK and offline-compiled probe update shaders are enabled by default.
+# OFF skips the RTXGI fetch and DXC requirement.
+option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" ON)
 if(BUILD_TESTING)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)

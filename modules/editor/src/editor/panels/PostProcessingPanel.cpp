@@ -16,9 +16,13 @@
 
 namespace mir
 {
-    void PostProcessingPanel::Draw(PostProcessingSettings &settings, const std::filesystem::path &savePath,
+    void PostProcessingPanel::Draw(PostProcessingSettings &sharedSettings, const std::filesystem::path &savePath,
         const PostEffectContext &context)
     {
+        if (!mDraft)
+            mDraft = sharedSettings;
+        PostProcessingSettings &settings = *mDraft;
+
         const std::span<const PostEffectDesc> effects = PostEffectRegistry::Instance().All();
         if (effects.empty())
         {
@@ -50,7 +54,10 @@ namespace mir
 
         if (ImGui::Button("Save"))
         {
-            mStatusMessage = settings.SaveFile(savePath) ? "Saved." : "Save failed - see log.";
+            const bool saved = settings.SaveFile(savePath);
+            if (saved)
+                sharedSettings = settings;
+            mStatusMessage = saved ? "Saved." : "Save failed - see log.";
             mSavedCopy = settings;
         }
 
