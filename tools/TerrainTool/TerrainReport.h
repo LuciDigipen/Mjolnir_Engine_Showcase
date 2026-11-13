@@ -25,7 +25,8 @@
 namespace mir::terrainbake
 {
     // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package. 10: prune.
-    inline constexpr uint32_t kTerrainToolVersion = 10;
+    // 11: sync keeps the base heights cache.
+    inline constexpr uint32_t kTerrainToolVersion = 11;
     inline constexpr uint32_t kTerrainReportVersion = 6;
 
     // In report order.
@@ -54,6 +55,7 @@ namespace mir::terrainbake
         inline constexpr std::string_view kVerify = "verify";
         inline constexpr std::string_view kRename = "rename";
         inline constexpr std::string_view kPointer = "pointer";
+        inline constexpr std::string_view kBase = "base";
         inline constexpr std::string_view kPrune = "prune";
     }
 

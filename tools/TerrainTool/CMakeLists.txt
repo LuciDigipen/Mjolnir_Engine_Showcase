@@ -8,6 +8,7 @@ endif()
 # Offline terrain pipeline; the engine never links it.
 add_library(terrain_bake STATIC
     TerrainBake.cpp
+    TerrainBaseCache.cpp
     TerrainCandidate.cpp
     TerrainContinuity.cpp
     TerrainDerivatives.cpp
@@ -44,6 +45,7 @@ target_compile_options(TerrainTool PRIVATE ${terrain_bake_debug_o2})
 if(BUILD_TESTING)
     add_executable(terrain_tool_tests
         tests/TerrainBake.tests.cpp
+        tests/TerrainBaseCache.tests.cpp
         tests/TerrainGenerator.tests.cpp
         tests/TerrainHeightmap.tests.cpp
         tests/TerrainIncremental.tests.cpp

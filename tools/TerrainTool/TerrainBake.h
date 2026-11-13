@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include "TerrainBaseCache.h"
 #include "TerrainCandidate.h"
 #include "TerrainRecipe.h"
 #include "TerrainRegions.h"
@@ -50,6 +51,12 @@ namespace mir::terrainbake
         bool incremental = false;
     };
 
+    // Loads a heightmap recipe's source file; adds a generate diagnostic and returns false on failure.
+    bool LoadRecipeHeightSource(TerrainRecipe &recipe, TerrainReport &report);
+
+    // Source heights only, before edit layers and seams; fills the "generate" check.
+    std::optional<std::vector<TileHeights>> GenerateSourceHeights(const TerrainRecipe &recipe, TerrainReport &report);
+
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report);
 
     // Fills the "encode" check.
@@ -85,6 +92,8 @@ namespace mir::terrainbake
         TerrainBakeOptions options;
         // Reuses unchanged payloads; absent or unusable runs a full bake.
         std::optional<TerrainBaseRelease> base;
+        // When set, receives the source heights as a base cache entry, encoded before the edit layers.
+        TerrainBaseHeightsEncoding *baseHeights = nullptr;
     };
 
     // Builds a .partial sibling, then renames it, so candidateDir is absent or complete.

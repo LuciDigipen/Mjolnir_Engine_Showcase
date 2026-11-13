@@ -167,7 +167,7 @@ namespace mir::terrainbake
         return asset;
     }
 
-    std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report)
+    std::optional<std::vector<TileHeights>> GenerateSourceHeights(const TerrainRecipe &recipe, TerrainReport &report)
     {
         if (recipe.IsHeightmap() && !recipe.heightSource)
         {
@@ -221,30 +221,85 @@ namespace mir::terrainbake
                                             SourceStatusName(filled.status), x, z)});
                     return std::nullopt;
                 }
-                if (recipe.editStack && !recipe.editStack->empty())
-                {
-                    TerrainResult<TileHeights> composed = CompositeTerrainEditLayers(*tile, *recipe.editStack);
-                    if (!composed)
-                    {
-                        report.Add({std::string(check::kGenerate),
-                                    "edits",
-                                    {{x, z}},
-                                    std::nullopt,
-                                    std::format("tile ({}, {}): {}", x, z, composed.error.message)});
-                        return std::nullopt;
-                    }
-                    *tile = std::move(*composed.value);
-                }
                 tiles.push_back(std::move(*tile));
             }
         report.Ran(check::kGenerate,
                    std::format("{} source tiles from \"{}\" v{}; fixed reference {} m, tile {} m; {}", tiles.size(),
                                recipe.generatorId, recipe.generatorVersion, layout.SampleSpacing(), layout.TileSize(),
                                recipe.recipeVersion == 1 ? "uniform P1 heights unchanged" : "filtered source grids"));
-        TerrainProgressStage("seams");
-        if (!AdjustTerrainSeams(recipe, tiles, report))
+        return tiles;
+    }
+
+    namespace
+    {
+        bool ApplyEditsAndSeams(const TerrainRecipe &recipe, std::vector<TileHeights> &tiles, TerrainReport &report)
+        {
+            if (recipe.editStack && !recipe.editStack->empty())
+                for (TileHeights &tile : tiles)
+                {
+                    const TileCoord at = tile.Tile();
+                    TerrainResult<TileHeights> composed = CompositeTerrainEditLayers(tile, *recipe.editStack);
+                    if (!composed)
+                    {
+                        report.Add({std::string(check::kGenerate),
+                                    "edits",
+                                    {at},
+                                    std::nullopt,
+                                    std::format("tile ({}, {}): {}", at.x, at.z, composed.error.message)});
+                        return false;
+                    }
+                    tile = std::move(*composed.value);
+                }
+            TerrainProgressStage("seams");
+            return AdjustTerrainSeams(recipe, tiles, report);
+        }
+
+        std::optional<std::vector<TileHeights>> BakeCandidateHeights(const TerrainRecipe &recipe, AssetId asset,
+                                                                     TerrainBaseHeightsEncoding *base,
+                                                                     TerrainReport &report)
+        {
+            std::optional<std::vector<TileHeights>> tiles = GenerateSourceHeights(recipe, report);
+            if (!tiles)
+                return std::nullopt;
+            if (base)
+            {
+                base->key = BaseHeightsFingerprint(recipe);
+                std::string error;
+                base->encoded = EncodeBaseHeights(recipe, asset, base->key, *tiles, error);
+                base->error = std::move(error);
+            }
+            if (!ApplyEditsAndSeams(recipe, *tiles, report))
+                return std::nullopt;
+            return tiles;
+        }
+    }
+
+    std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report)
+    {
+        std::optional<std::vector<TileHeights>> tiles = GenerateSourceHeights(recipe, report);
+        if (!tiles)
+            return std::nullopt;
+        if (!ApplyEditsAndSeams(recipe, *tiles, report))
             return std::nullopt;
         return tiles;
+    }
+
+    bool LoadRecipeHeightSource(TerrainRecipe &recipe, TerrainReport &report)
+    {
+        if (!recipe.IsHeightmap() || recipe.heightSource)
+            return true;
+        TerrainProgressStage("load heights");
+        std::string error;
+        const fs::path source = recipe.recipeDir /
+            fs::path(std::u8string_view(reinterpret_cast<const char8_t *>(recipe.heightmapPath.data()),
+                                        recipe.heightmapPath.size()));
+        recipe.heightSource = TerrainHeightSource::Load(source, recipe.heightmapHash, recipe.layout, error);
+        if (!recipe.heightSource)
+        {
+            report.Add({std::string(check::kGenerate), "parameters.source", {}, std::nullopt, std::move(error)});
+            return false;
+        }
+        return true;
     }
 
     std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
@@ -443,23 +498,13 @@ namespace mir::terrainbake
         report.recipeFingerprint = fingerprint;
         report.Ran(check::kRecipe, DescribeRecipeFingerprint(recipe, fingerprint));
 
-        if (recipe.IsHeightmap())
-        {
-            // Here rather than at parse: sync with a current release must not need the file.
-            TerrainProgressStage("load heights");
-            std::string error;
-            const fs::path source = recipe.recipeDir /
-                fs::path(std::u8string_view(reinterpret_cast<const char8_t *>(recipe.heightmapPath.data()),
-                                            recipe.heightmapPath.size()));
-            recipe.heightSource = TerrainHeightSource::Load(source, recipe.heightmapHash, recipe.layout, error);
-            if (!recipe.heightSource)
-            {
-                report.Add({std::string(check::kGenerate), "parameters.source", {}, std::nullopt, std::move(error)});
-                return false;
-            }
-        }
+        // Loaded here rather than at parse, so an up-to-date release needs no source file.
+        if (!LoadRecipeHeightSource(recipe, report))
+            return false;
 
-        std::optional<std::vector<TileHeights>> tiles = BakeFinalHeights(recipe, report);
+        const AssetId asset = MakeAssetId(assetPath);
+        std::optional<std::vector<TileHeights>> tiles =
+            BakeCandidateHeights(recipe, asset, request.baseHeights, report);
         if (!tiles)
             return false;
 
@@ -483,9 +528,9 @@ namespace mir::terrainbake
                 baseUnavailable = "the base release has no open handle or releases root and asset";
         }
 
-        std::optional<TerrainBakedRelease> baked = EncodeBakedRelease(
-            MakeAssetId(assetPath), fingerprint, recipe, std::move(*tiles), request.options, report,
-            baseRelease ? &*baseRelease : nullptr, std::move(baseUnavailable));
+        std::optional<TerrainBakedRelease> baked =
+            EncodeBakedRelease(asset, fingerprint, recipe, std::move(*tiles), request.options, report,
+                               baseRelease ? &*baseRelease : nullptr, std::move(baseUnavailable));
         if (!baked)
             return false;
         report.release = baked->info;
