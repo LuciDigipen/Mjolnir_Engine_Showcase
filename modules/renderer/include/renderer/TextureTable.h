@@ -35,6 +35,7 @@ namespace mir
 
         std::size_t Size() const { return mGenerations.size(); }
         std::size_t Capacity() const { return mCapacity; }
+        std::size_t Available() const { return mCapacity - mGenerations.size() + mFreeIndices.size(); }
 
     private:
         std::size_t mCapacity = kDefaultCapacity;

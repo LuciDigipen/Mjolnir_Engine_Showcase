@@ -12,6 +12,45 @@ part of that context's lifetime: no `CreateContext`, no fonts, no backend. See
 
 `mir::editor` · depends `mir::imguiruntime`, `mir::renderer`, `mir::window` (public); `mir::core`, `mir::editortheme`, `imgui`, `imguizmo`, `iconfontcppheaders` (private) · API `modules/editor/include/editor/` · maintainer Sumin Park · reviewed 2026-09-17
 
+## Content browser previews
+
+The content browser toolbar switches between List (the default) and Grid. List
+uses shared type icons and requests no texture previews. Grid shows texture
+previews and shared icons for scripts, folders, models, audio and other files.
+The Size slider sets grid images from 48 to 128 pixels. Images preserve their
+aspect ratio, transparent areas show a checkerboard, and hovering shows the full
+filename. Selection and file actions work in either view.
+
+Options sets the thumbnail cache capacity, 256 by default and at most 256. Zero
+turns texture previews off. View, size and capacity are local editor preferences,
+not project settings. Only visible grid cells request previews, excess visible
+cells use their type icon when capacity is exhausted.
+
+`EditorModule` owns `ContentThumbnailCache`. A dedicated async decoder filters
+cooked textures on workers to at most 128 pixels on the longest side, using
+cooked mips when suitable. Images used by materials may have only packed derived
+outputs, and external model images may be raw blobs. These files use a cancellable
+editor background lane to decode their source image, sharing the background image
+decoder. Their cache identity includes the import revision, so recooking refreshes
+them without changing material outputs. The preview preserves cooked color space and filters alpha in
+premultiplied form. Only the small output survives the decode. Browser work
+admits at most one new decode per frame, two outstanding decodes, and two small
+uploads per frame through the regular upload budget. New requests wait while the
+scene asset service is busy. With `--workers 0`, the
+asset service runs decoding inline.
+
+Leaving view cancels unneeded decode leases and retires incomplete uploads.
+Ready previews remain in an LRU until eviction. Thumbnail uploads leave 64 image
+table slots free for scene allocations. When the table fills, scene allocations
+reclaim the least recently used unused thumbnails, including those retained in
+List. Visible previews stay pinned through the current UI frame. Texture loads
+that cannot obtain a slot remain pending and retry without an asset reload.
+Thumbnail bytes also participate in the shared GPU residency budget. Changed cooked
+content invalidates old previews, and failed previews
+are remembered until reload. No disk thumbnail cache is written. Texture and
+ImGui descriptor retirement both respect frames in flight. Mesh/model rendering
+and real-time previews are outside this feature.
+
 ## Model
 
 Project > Particles opens the source stack editor for the current game's particle

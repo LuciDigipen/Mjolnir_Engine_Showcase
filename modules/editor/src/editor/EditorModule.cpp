@@ -175,6 +175,7 @@ namespace mir
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
           mProject(project), mAssets(&assets),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
+          mThumbnails(assetService, renderer.Renderer(), &jobs),
           mPrefabAuthoring(context.world, prefab.Coordinator(), mProject.mRootDir, prefab.SourceDir()),
           mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring),
           mSceneOps(context.world, mPrefabWorkspace, mProject.mRootDir)
@@ -235,6 +236,7 @@ namespace mir
         // Scene-local editor work ends here, independent prefab Worlds retain their resources.
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
+                mThumbnails.Clear();
                 mEditor.CancelSnapToTerrain();
                 mParticleEditor->OnHidden(mWorld);
             });
@@ -284,8 +286,12 @@ namespace mir
 
         mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window, &assets]
             {
+                mThumbnails.BeginFrame(mEditor.ContentThumbnailCapacity());
                 if (window.Get().Width() == 0 || window.Get().Height() == 0)
+                {
+                    mThumbnails.EndFrame();
                     return;
+                }
 
                 World *preview = mPlayWorld != nullptr ? mPlayWorld : ActivePreviewWorld();
                 const EditorActions actions = mEditor.DrawLayout(mEnableLayout, mWorld.Resource<InputMap>(),
@@ -294,6 +300,7 @@ namespace mir
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
                     mRenderer.Renderer(), MakeContentBrowserView(), mShowMaterialEditor,
                     mMaterialEditor->HasUnsavedDrafts(), MakeBuildJobView(), mFrameDt);
+                mThumbnails.EndFrame();
                 if (const std::string particlePath = mEditor.TakeParticleOpenRequest();
                     !particlePath.empty() && IsEditing(mWorld))
                 {
@@ -765,6 +772,20 @@ namespace mir
     ContentBrowserView EditorModule::MakeContentBrowserView()
     {
         ContentBrowserView view = mContentBrowser.View();
+        view.mPreview = [this](const std::string &path) -> ContentBrowserPreview
+            {
+                const auto logical = mContentBrowser.AssetLogicalPath(path);
+                if (!logical)
+                    return {};
+                const auto id = mResolver.ResolveFull(*logical);
+                const auto *entry = mAssets->Manifest().Find(id);
+                const bool cookedTexture = entry && entry->typeTag == kTextureAssetTypeTag;
+                const auto preview = cookedTexture ? mThumbnails.Request(id) :
+                    mThumbnails.Request(MakeAssetId("editor-thumbnail:" + *logical), mProject.mRootDir / path);
+                if (preview.mTexture.IsNull())
+                    return {};
+                return { mRenderer.Renderer().ImGuiTexture(preview.mTexture), preview.mWidth, preview.mHeight };
+            };
         const PrefabRegistry &registry = mPrefab.Coordinator().Registry();
 
         std::set<std::string> known;

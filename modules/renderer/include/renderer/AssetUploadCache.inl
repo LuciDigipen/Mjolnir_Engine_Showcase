@@ -206,6 +206,8 @@ namespace mir
     {
         if (entry.mInline)
         {
+            if (mAdmit && !mAdmit())
+                return;
             const auto decoded = std::move(entry.mInline);
             entry.mInline.reset();
             Publish(entry, decoded);
@@ -220,6 +222,8 @@ namespace mir
                 "its decoded data is no longer available");
             return;
         }
+        if (mAdmit && !mAdmit())
+            return;
         const auto decoded = entry.mRequest.Acquire();
         if (!decoded)
         {

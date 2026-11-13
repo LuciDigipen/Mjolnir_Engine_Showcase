@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <core/RegistrationList.h>
+
 #include <renderer/TextureUpload.h>
 #include <renderer/AssetUploadCache.h>
 #include <renderer/GpuResidency.h>
@@ -20,6 +22,19 @@ namespace mir
     public:
         virtual ~ITextureUploader() = default;
         virtual TextureHandle QueueTexture(TextureUploadSource source) = 0;
+        virtual std::size_t TextureSlotsAvailable() const { return SIZE_MAX; }
+        // Reclaim unused low-priority resources before a scene allocation. A false result
+        // is temporary pressure, callers can keep their decode and retry next frame.
+        bool EnsureTextureSlot()
+        {
+            if (TextureSlotsAvailable() == 0)
+                mSlotReclaimers.Run();
+            return TextureSlotsAvailable() != 0;
+        }
+        Registration AddTextureSlotReclaimer(std::function<void()> reclaim)
+        {
+            return mSlotReclaimers.Add(std::move(reclaim));
+        }
         virtual TextureUploadState TextureState(TextureHandle handle) const = 0;
         virtual bool RetireTexture(TextureHandle handle) = 0;
         virtual uint64_t TextureFootprint(TextureHandle handle) const = 0;
@@ -33,5 +48,6 @@ namespace mir
     private:
         std::shared_ptr<GpuResidency> mResidency = std::make_shared<GpuResidency>();
         AssetUploadRegistry<TextureLoadTracker> mTextureCaches;
+        RegistrationList<std::function<void()>> mSlotReclaimers;
     };
 }

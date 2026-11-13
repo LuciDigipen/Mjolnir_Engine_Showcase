@@ -716,12 +716,17 @@ namespace mir
 
     TextureHandle VulkanRenderer::CreateTexture(const TextureDesc &desc)
     {
-        return mResources->CreateTexture(desc);
+        return EnsureTextureSlot() ? mResources->CreateTexture(desc) : kNullTexture;
     }
 
     TextureHandle VulkanRenderer::QueueTexture(TextureUploadSource source)
     {
-        return mMeshUploads->QueueTexture(*mResources, std::move(source));
+        return EnsureTextureSlot() ? mMeshUploads->QueueTexture(*mResources, std::move(source)) : kNullTexture;
+    }
+
+    std::size_t VulkanRenderer::TextureSlotsAvailable() const
+    {
+        return mResources->TextureSlotsAvailable();
     }
 
     TextureUploadState VulkanRenderer::TextureState(TextureHandle handle) const
@@ -732,6 +737,8 @@ namespace mir
 
     bool VulkanRenderer::RetireTexture(TextureHandle handle)
     {
+        mImGuiOverlay->RetireTexture((uint64_t(handle.mGeneration) << 32) | handle.mIndex,
+            mFrameSync->LastIssuedValue());
         return mMeshUploads->RetireTexture(*mResources, handle, mFrameSync->LastIssuedValue());
     }
 
@@ -935,6 +942,7 @@ namespace mir
 
         // in-flight frames may still use them
         mDevice->WaitIdle();
+        mImGuiOverlay->ReleaseTextures();
         // Drain retired handles before the stores can reuse scene slots.
         CollectReleasedResources(UINT64_MAX);
 
@@ -996,6 +1004,13 @@ namespace mir
     void VulkanRenderer::ShutdownImGuiVulkanBackend()
     {
         mImGuiOverlay->Shutdown();
+    }
+
+    uint64_t VulkanRenderer::ImGuiTexture(TextureHandle handle)
+    {
+        const auto *texture = mResources->FindTexture(handle);
+        return texture ? mImGuiOverlay->BindTexture((uint64_t(handle.mGeneration) << 32) | handle.mIndex,
+            texture->mView) : 0;
     }
 
     void VulkanRenderer::SetImGuiDrawData(ImDrawData *drawData)
