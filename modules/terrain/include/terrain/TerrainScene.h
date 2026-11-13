@@ -44,6 +44,7 @@ namespace mir
         NoRelease,        // nothing is published for the asset
         BadRelease,       // the release current names cannot be opened, verified or read
         Overlap,          // its effective XZ bounds overlap another instance's
+        OverlayDropped,   // a carried overlay does not fit the release that replaced its own
     };
 
     // The message is one line naming the recipe and what to fix.

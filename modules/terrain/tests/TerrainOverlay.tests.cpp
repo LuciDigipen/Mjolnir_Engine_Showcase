@@ -12,6 +12,7 @@
 
 #include <terrain/TerrainHeightQuery.h>
 #include <terrain/TerrainOverlay.h>
+#include <terrain/TerrainOverlayHandover.h>
 #include <terrain/TerrainScene.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -370,5 +371,91 @@ TEST_CASE("Clearing restores the base and an older snapshot keeps its own height
     const TerrainHeightResult restored = resolved.world.HeightAt(WorldAt(point.x, point.y), 4.0);
     CheckSameAnswer(restored, base.HeightAt(WorldAt(point.x, point.y), 4.0));
     CHECK(restored.localHeight != secondHeight);
+    std::filesystem::remove_all(releases.root);
+}
+
+TEST_CASE("A release switch revalidates the carried overlay and drops only a mismatch", "[terrain][overlay]")
+{
+    const Releases releases = PublishReleases();
+    Resolved resolved = Resolve(releases.root, releases.base.asset, TerrainResidencyMode::Eager);
+    const auto overlay = OverlayFrom(releases.editedTiles, releases.base.asset, 9);
+    REQUIRE(resolved.world.SetOverlay(releases.base.asset, overlay).applied);
+    const double editedHeight = resolved.world.HeightAt(WorldAt(-100.5, -80.25), 4.0).localHeight;
+
+    const auto resolveFrom = [&](const TerrainWorld &previous, std::vector<TerrainIssue> &issues)
+    {
+        return ResolveTerrainWorld(InstanceSpec(releases.base.asset), releases.root, &previous, issues,
+                                   *resolved.streamer, TerrainEagerLoad::Wait);
+    };
+
+    std::vector<TerrainIssue> sameIssues;
+    TerrainWorld same = resolveFrom(resolved.world, sameIssues);
+    CHECK(sameIssues.empty());
+    REQUIRE(same.Assets().front().overlay == overlay);
+    CHECK(same.HeightAt(WorldAt(-100.5, -80.25), 4.0).localHeight == editedHeight);
+
+    const TerrainReleaseInfo other = Info(releases.base.asset, 0xA11);
+    WriteRelease(releases.root, other, Encode(other, OverlayLayout(), releases.baseTiles));
+    PointCurrentAt(releases.root, releases.base.asset, other.release);
+    std::vector<TerrainIssue> keptIssues;
+    TerrainWorld kept = resolveFrom(same, keptIssues);
+    CHECK(keptIssues.empty());
+    REQUIRE(kept.Assets().front().overlay == overlay);
+    CHECK(kept.HeightAt(WorldAt(-100.5, -80.25), 4.0).localHeight == editedHeight);
+
+    const auto coarse = TerrainLayout::CreateFromTileSize(256.0, 8.0, {-384.0, -384.0, 384.0, 384.0});
+    REQUIRE(coarse);
+    const TerrainReleaseInfo changed = Info(releases.base.asset, 0xC0A5);
+    WriteRelease(releases.root, changed, Encode(changed, *coarse, BuildTiles(*coarse)));
+    PointCurrentAt(releases.root, releases.base.asset, changed.release);
+    std::vector<TerrainIssue> droppedIssues;
+    const TerrainWorld dropped = resolveFrom(kept, droppedIssues);
+    REQUIRE(droppedIssues.size() == 1);
+    CHECK(droppedIssues[0].kind == TerrainIssueKind::OverlayDropped);
+    CHECK(droppedIssues[0].recipePath == kRecipe);
+    CHECK(droppedIssues[0].message.find(kRecipe) != std::string::npos);
+    CHECK(dropped.Assets().front().overlay == nullptr);
+    std::filesystem::remove_all(releases.root);
+}
+
+TEST_CASE("Offered overlays apply once their release loads, once, and a refused one is reported", "[terrain][overlay]")
+{
+    const Releases releases = PublishReleases();
+    const auto overlay = OverlayFrom(releases.editedTiles, releases.base.asset, 5);
+    TerrainOverlayHandover handover;
+    handover.Offer(releases.base.asset, std::string(kRecipe), overlay);
+    CHECK_FALSE(handover.Empty());
+
+    std::vector<TerrainIssue> issues;
+    TerrainWorld beforeLoad;
+    CHECK(handover.Apply(beforeLoad, issues) == 0);
+    CHECK(issues.empty());
+    CHECK_FALSE(handover.Empty());
+
+    Resolved resolved = Resolve(releases.root, releases.base.asset, TerrainResidencyMode::Eager);
+    CHECK(handover.Apply(resolved.world, issues) == 1);
+    CHECK(issues.empty());
+    CHECK(handover.Empty());
+    REQUIRE(resolved.world.Assets().front().overlay == overlay);
+    const double editedHeight = TileOf(releases.editedTiles, {0, 0}).At(20, 21);
+    CHECK(resolved.world.HeightAt(WorldAt(80.0, 84.0), 4.0).localHeight == editedHeight);
+
+    CHECK(handover.Apply(resolved.world, issues) == 0);
+    CHECK(issues.empty());
+    REQUIRE(resolved.world.Assets().front().overlay == overlay);
+    CHECK(resolved.world.HeightAt(WorldAt(80.0, 84.0), 4.0).localHeight == editedHeight);
+
+    std::optional<TileHeights> wrongSize = TileHeights::Create({0, 0}, OverlayLayout().IntervalsPerTile() / 2);
+    REQUIRE(wrongSize);
+    handover.Offer(releases.base.asset, std::string(kRecipe),
+                   SingleTileOverlay(std::move(*wrongSize), releases.base.asset, 6));
+    std::vector<TerrainIssue> refused;
+    CHECK(handover.Apply(resolved.world, refused) == 0);
+    CHECK(handover.Empty());
+    REQUIRE(refused.size() == 1);
+    CHECK(refused[0].kind == TerrainIssueKind::OverlayDropped);
+    CHECK(refused[0].recipePath == kRecipe);
+    CHECK(refused[0].message.find(kRecipe) != std::string::npos);
+    CHECK(resolved.world.Assets().front().overlay == overlay);
     std::filesystem::remove_all(releases.root);
 }

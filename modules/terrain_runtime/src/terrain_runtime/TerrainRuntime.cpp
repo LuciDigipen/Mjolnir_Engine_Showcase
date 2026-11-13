@@ -416,6 +416,16 @@ namespace mir
     {
         if (!Bound() || !mSwitch)
             return;
+        TerrainWorld &world = mWorld->Resource<TerrainWorld>();
+        std::vector<TerrainIssue> overlayIssues;
+        if (const size_t applied = mPlayOverlays.Apply(world, overlayIssues); applied != 0)
+        {
+            SyncCollisionOverlays(world);
+            if (mGround)
+                mGround->Invalidate();
+        }
+        for (const TerrainIssue &issue : overlayIssues)
+            MIR_LOG_WARN("{}", issue.message);
         for (const TerrainWorld::AssetState &asset : mWorld->Resource<TerrainWorld>().Assets())
             if (asset.release)
                 MIR_LOG_INFO("Terrain '{}' (asset {:016x}): Play pins release {:016x}", asset.logicalPath,
@@ -446,6 +456,13 @@ namespace mir
                 mGround->Invalidate();
         }
         return applied;
+    }
+
+    void TerrainRuntime::OfferPlayOverlays(const TerrainWorld &source)
+    {
+        for (const TerrainWorld::AssetState &asset : source.Assets())
+            if (asset.overlay)
+                mPlayOverlays.Offer(asset.asset, asset.logicalPath, asset.overlay);
     }
 
     void TerrainRuntime::ForgetMeshes()
@@ -521,6 +538,7 @@ namespace mir
         if (next.SameDerivedState(current))
         {
             current = std::move(next);
+            SyncCollisionOverlays(current);
             if (mGround)
                 mGround->Invalidate();
             return;
@@ -546,6 +564,7 @@ namespace mir
 
         mResources = Build(next);
         current = std::move(next);
+        SyncCollisionOverlays(current);
         if (mGround)
             mGround->Invalidate();
         ApplyResidencies();
@@ -738,6 +757,14 @@ namespace mir
             return true;
         Report(std::format("Terrain '{}': {}; the instance is not loaded", instance.recipePath, missing));
         return false;
+    }
+
+    void TerrainRuntime::SyncCollisionOverlays(const TerrainWorld &world)
+    {
+        if (!mCollision)
+            return;
+        for (const TerrainWorld::AssetState &asset : world.Assets())
+            mCollision->SetOverlay(asset.asset, asset.overlay);
     }
 
     void TerrainRuntime::ApplyResidencies()

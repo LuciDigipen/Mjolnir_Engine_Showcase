@@ -30,6 +30,7 @@
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
 #include <serial/JsonFile.h>
+#include <terrain/TerrainScene.h>
 #include <terrain_runtime/TerrainRuntime.h>
 
 #include <imgui.h>
@@ -602,6 +603,9 @@ namespace mir
         try
         {
             mRuntime = std::make_unique<RuntimeSession>(*this);
+            // Edit's snapshots go to the Play runtime before PlayBegin resolves and pins its releases.
+            if (const TerrainWorld *edit = mWorldState.world.TryResource<TerrainWorld>())
+                mRuntime->terrain.Runtime().OfferPlayOverlays(*edit);
             mRuntime->Begin(0.0, 0);
             if (mWorldState.scheduler.Started())
             {

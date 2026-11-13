@@ -117,10 +117,11 @@ namespace mir
             return nullptr;
         }
 
-        TerrainWorld::AssetState ResolveAsset(const TerrainInstanceSpec &instance,
-                                              const std::filesystem::path &releasesRoot,
-                                              const TerrainWorld::AssetState *before, std::vector<TerrainIssue> &issues,
-                                              TerrainStreamer &streamer, const TerrainResolveOptions &options)
+        TerrainWorld::AssetState ResolveAssetRelease(const TerrainInstanceSpec &instance,
+                                                    const std::filesystem::path &releasesRoot,
+                                                    const TerrainWorld::AssetState *before,
+                                                    std::vector<TerrainIssue> &issues, TerrainStreamer &streamer,
+                                                    const TerrainResolveOptions &options)
         {
             TerrainWorld::AssetState state;
             state.asset = instance.asset;
@@ -213,6 +214,38 @@ namespace mir
                 if (const TerrainPackError loaded = streamer.WaitForEager(release->Info()); loaded.code != Code::None)
                     return unusable(loaded.message);
             state.release = std::move(release);
+            return state;
+        }
+
+        bool SameRelease(const TerrainWorld::AssetState *before, const TerrainWorld::AssetState &state)
+        {
+            return before && before->release && state.release &&
+                   before->release->Info().asset == state.release->Info().asset &&
+                   before->release->Info().release == state.release->Info().release;
+        }
+
+        // A kept release keeps its snapshot; a changed one must accept it or it is dropped.
+        TerrainWorld::AssetState ResolveAsset(const TerrainInstanceSpec &instance,
+                                              const std::filesystem::path &releasesRoot,
+                                              const TerrainWorld::AssetState *before, std::vector<TerrainIssue> &issues,
+                                              TerrainStreamer &streamer, const TerrainResolveOptions &options)
+        {
+            TerrainWorld::AssetState state =
+                ResolveAssetRelease(instance, releasesRoot, before, issues, streamer, options);
+            if (!state.overlay || SameRelease(before, state))
+                return state;
+
+            const std::optional<std::string> refusal =
+                state.release ? ValidateTerrainOverlay(*state.overlay, state.release->Handle())
+                              : std::optional<std::string>("the asset has no loaded release");
+            if (!refusal)
+                return state;
+
+            state.overlay.reset();
+            issues.push_back(Issue(TerrainIssueKind::OverlayDropped, instance.recipePath,
+                                   std::format("Terrain '{}' (asset {}): overlay snapshot dropped; it does not fit "
+                                               "the release now loaded: {}",
+                                               instance.recipePath, Hex(instance.asset.value), *refusal)));
             return state;
         }
     }

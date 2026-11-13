@@ -18,6 +18,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainMaterialUv.cpp
     src/terrain/TerrainMeshResidency.cpp
     src/terrain/TerrainOverlay.cpp
+    src/terrain/TerrainOverlayHandover.cpp
     src/terrain/TerrainOverlayMesh.cpp
     src/terrain/TerrainPackFormat.cpp
     src/terrain/TerrainPackWriter.cpp

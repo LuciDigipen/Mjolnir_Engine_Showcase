@@ -21,6 +21,7 @@
 #include <terrain/TerrainExecutor.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainMeshResidency.h>
+#include <terrain/TerrainOverlayHandover.h>
 #include <terrain/TerrainReleaseSwitch.h>
 #include <terrain/TerrainScene.h>
 #include <terrain/TerrainStreamer.h>
@@ -83,6 +84,9 @@ namespace mir
         // Applies an overlay snapshot to the live TerrainWorld; Play refuses it, and an applied snapshot restarts
         // any ground snap. A null snapshot clears the overlay.
         TerrainOverlayApplyResult SetTerrainOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay);
+
+        // Edit's snapshots, handed over before Play's PlayBegin; BeginPlay applies the ones whose releases loaded.
+        void OfferPlayOverlays(const TerrainWorld &source);
 
         // Retires every GPU mesh the terrain holds and forgets its builds; the next frame builds what it draws again.
         void ForgetMeshes();
@@ -167,6 +171,8 @@ namespace mir
         const TerrainInstanceSpec *SpecForPlacement(const TerrainSceneSpec &spec,
             const TerrainInstanceState &instance) const;
         bool HasMeshPayloads(const TerrainInstanceState &instance);
+        // The collision residency draws from the same snapshots as the TerrainWorld.
+        void SyncCollisionOverlays(const TerrainWorld &world);
         // The loaded and staged releases to the mesh and collision residencies.
         void ApplyResidencies();
         bool IsStaged(AssetId asset, TerrainReleaseId release) const;
@@ -211,6 +217,8 @@ namespace mir
 
         // Parallel to TerrainWorld::Instances().
         std::vector<InstanceResources> mResources;
+        // Edit's snapshots until Play's releases load and BeginPlay applies them.
+        TerrainOverlayHandover mPlayOverlays;
 
         // The World's GroundQuery source; registered before any scene terrain resolves.
         std::unique_ptr<TerrainGroundBridge> mGround;
