@@ -187,7 +187,9 @@ namespace mir::terrainbake
 
     TerrainSourceFingerprint FingerprintWeights(const TerrainRecipe &recipe, TerrainSourceFingerprint heights)
     {
-        const std::string text = CanonicalMaterialText(recipe) + std::format("heights={:016x}\n", heights.value);
+        std::string text = CanonicalMaterialText(recipe) + std::format("heights={:016x}\n", heights.value);
+        if (recipe.editWeightStackHash != 0)
+            text += std::format("edits.weightStackHash={:016x}\n", recipe.editWeightStackHash);
         const uint64_t hash = Fnv1a64(text);
         return TerrainSourceFingerprint(hash == 0 ? 1 : hash);
     }

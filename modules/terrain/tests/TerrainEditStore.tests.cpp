@@ -15,6 +15,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -348,4 +349,38 @@ TEST_CASE("The write plan refuses duplicate sequences and unencodable tiles", "[
     CHECK_FALSE(badPlan);
     CHECK(badPlan.error.code == Code::InvalidInput);
     CHECK(Mentions(badPlan.error, "tile_1_1.tedit"));
+}
+
+TEST_CASE("A weight-only tile is written and read like any other tile", "[terrain][editstore]")
+{
+    TerrainEditLayer layer = MakeLayer("Weights", 3, TerrainEditBlend::Additive);
+    TerrainEditTile tile;
+    tile.tile = {2, -1};
+    tile.intervals = 2;
+    tile.weights.push_back({"sand", std::vector<float>(9, 0.75f)});
+    layer.tiles.emplace(tile.tile, std::move(tile));
+
+    TerrainEditLayer emptyLayer = MakeLayer("Empty", 4, TerrainEditBlend::Additive);
+    TerrainEditTile empty;
+    empty.tile = {0, 0};
+    empty.intervals = 1;
+    emptyLayer.tiles.emplace(empty.tile, empty);
+
+    const std::array<TerrainEditLayer, 2> stack{layer, emptyLayer};
+    const TerrainResult<std::vector<TerrainEditStackFile>> planned = PlanTerrainEditStackWrite(stack);
+    INFO(planned.error.message);
+    REQUIRE(planned);
+    REQUIRE(planned.value->size() == 2);
+    CHECK((*planned.value)[1].path.generic_string() == "L3/tile_2_-1.tedit");
+
+    const std::filesystem::path root = MakeScratchDir("editstore_weights");
+    const std::filesystem::path layersDir = WriteStack(TerrainEditLayersDir(root / "hills.terrain.json"), stack);
+    const TerrainResult<std::vector<TerrainEditLayer>> loaded = LoadTerrainEditStack(layersDir);
+    INFO(loaded.error.message);
+    REQUIRE(loaded);
+    std::vector<TerrainEditLayer> expected(stack.begin(), stack.end());
+    expected[1].tiles.clear();
+    CHECK(*loaded.value == expected);
+    CHECK_FALSE(std::filesystem::exists(layersDir / "L4"));
+    std::filesystem::remove_all(root);
 }

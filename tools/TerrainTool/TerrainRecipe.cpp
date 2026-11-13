@@ -920,6 +920,7 @@ namespace mir::terrainbake
         std::shared_ptr<const std::vector<TerrainEditLayer>> stack =
             std::make_shared<const std::vector<TerrainEditLayer>>(std::move(*loaded.value));
         recipe.editStackHash = TerrainEditStackHash(*stack);
+        recipe.editWeightStackHash = TerrainEditWeightStackHash(*stack);
         recipe.editStack = std::move(stack);
         return result;
     }

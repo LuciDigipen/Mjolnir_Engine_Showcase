@@ -95,6 +95,73 @@ namespace
         return layer;
     }
 
+    size_t Count(int32_t intervals)
+    {
+        const size_t side = static_cast<size_t>(intervals) + 1;
+        return side * side;
+    }
+
+    TerrainWeightTile WeightBase(TileCoord coord, int32_t intervals, std::vector<std::string> layers)
+    {
+        TerrainWeightTile tile;
+        tile.tile = coord;
+        tile.intervals = intervals;
+        tile.layers = std::move(layers);
+        tile.weights.assign(tile.layers.size() * Count(intervals), 0.0f);
+        for (size_t sample = 0; sample < Count(intervals); ++sample)
+            tile.weights[sample] = 1.0f;
+        return tile;
+    }
+
+    TerrainEditTile WeightOnlyTile(TileCoord coord, int32_t intervals, std::vector<TerrainEditWeight> channels)
+    {
+        TerrainEditTile tile;
+        tile.tile = coord;
+        tile.intervals = intervals;
+        tile.weights = std::move(channels);
+        return tile;
+    }
+
+    TerrainEditWeight FilledChannel(std::string layer, int32_t intervals, float value)
+    {
+        return {std::move(layer), std::vector<float>(Count(intervals), value)};
+    }
+
+    TerrainEditWeight *FindWeight(TerrainEditTile &tile, std::string_view layer)
+    {
+        for (TerrainEditWeight &channel : tile.weights)
+            if (channel.layer == layer)
+                return &channel;
+        return nullptr;
+    }
+
+    const TerrainEditWeight *FindWeight(const TerrainEditTile &tile, std::string_view layer)
+    {
+        for (const TerrainEditWeight &channel : tile.weights)
+            if (channel.layer == layer)
+                return &channel;
+        return nullptr;
+    }
+
+    void PutU32(std::vector<std::byte> &bytes, uint32_t value)
+    {
+        for (int i = 0; i < 4; ++i)
+            bytes.push_back(static_cast<std::byte>((value >> (8 * i)) & 0xFFu));
+    }
+
+    void PutF32(std::vector<std::byte> &bytes, float value)
+    {
+        PutU32(bytes, std::bit_cast<uint32_t>(value));
+    }
+
+    uint32_t GetU32(const std::vector<std::byte> &bytes, size_t at)
+    {
+        uint32_t value = 0;
+        for (int i = 0; i < 4; ++i)
+            value |= static_cast<uint32_t>(std::to_integer<uint8_t>(bytes[at + i])) << (8 * i);
+        return value;
+    }
+
     const TerrainEditTile *FindTile(const TerrainEditLayer &layer, TileCoord coord)
     {
         const auto found = layer.tiles.find(coord);
@@ -428,7 +495,7 @@ TEST_CASE("A layer tile blob rejects every malformed input", "[terrain][edit]")
     SECTION("unsupported version")
     {
         std::vector<std::byte> bad = good;
-        StoreU32(bad, kVersionOffset, 2);
+        StoreU32(bad, kVersionOffset, 3);
         const TerrainResult<TerrainEditDecodedTile> result = decode(bad);
         CHECK_FALSE(result);
         CHECK(result.error.code == Code::Unsupported);
@@ -619,4 +686,358 @@ TEST_CASE("An empty stack hash is zero", "[terrain][edit]")
     TerrainEditLayer empty = Layer("empty", 0, 0, TerrainEditBlend::Additive);
     const std::array<TerrainEditLayer, 1> stack{empty};
     CHECK(TerrainEditStackHash(stack) == 0);
+}
+
+TEST_CASE("A height-only tile keeps the version 1 byte layout", "[terrain][edit]")
+{
+    TerrainEditTile tile = FilledTile({2, -1}, 1, 0.0f);
+    tile.values = {1.0f, 2.0f, 3.0f, 4.0f};
+    tile.alpha = {0.5f, 0.25f, 0.125f, 0.0625f};
+
+    const TerrainResult<std::vector<std::byte>> encoded = EncodeTerrainEditTile(tile, TerrainEditBlend::AlphaBlend);
+    REQUIRE(encoded);
+    CHECK(GetU32(*encoded.value, kVersionOffset) == kTerrainEditFormatVersion);
+    CHECK(GetU32(*encoded.value, kChannelCountOffset) == 1);
+
+    std::vector<std::byte> expected;
+    PutU32(expected, kMagic);
+    PutU32(expected, kTerrainEditFormatVersion);
+    PutU32(expected, static_cast<uint32_t>(tile.tile.x));
+    PutU32(expected, static_cast<uint32_t>(tile.tile.z));
+    PutU32(expected, 1);
+    PutU32(expected, 1);
+    PutU32(expected, kHeightChannel);
+    PutU32(expected, static_cast<uint32_t>(TerrainEditBlend::AlphaBlend));
+    PutU32(expected, 1);
+    for (const float value : tile.values)
+        PutF32(expected, value);
+    for (const float alpha : tile.alpha)
+        PutF32(expected, alpha);
+    for (size_t i = 0; i < kTrailerSize; ++i)
+        expected.push_back(std::byte{0});
+    Reseal(expected);
+
+    CHECK(*encoded.value == expected);
+    const TerrainResult<TerrainEditDecodedTile> decoded = DecodeTerrainEditTile(std::span<const std::byte>(*encoded.value));
+    REQUIRE(decoded);
+    CHECK(decoded.value->tile == tile);
+}
+
+TEST_CASE("Tiles with weight channels round trip and keep height optional", "[terrain][edit]")
+{
+    const TerrainEditTile weightsOnly =
+        WeightOnlyTile({1, -1}, 2, {FilledChannel("base", 2, 0.25f), FilledChannel("sand", 2, 0.75f)});
+    const TerrainResult<std::vector<std::byte>> weightBytes =
+        EncodeTerrainEditTile(weightsOnly, TerrainEditBlend::Additive);
+    REQUIRE(weightBytes);
+    CHECK(GetU32(*weightBytes.value, kVersionOffset) == kTerrainEditWeightFormatVersion);
+    const TerrainResult<TerrainEditDecodedTile> weightDecoded =
+        DecodeTerrainEditTile(std::span<const std::byte>(*weightBytes.value));
+    REQUIRE(weightDecoded);
+    CHECK(weightDecoded.value->blend == TerrainEditBlend::Additive);
+    CHECK(weightDecoded.value->tile == weightsOnly);
+    CHECK(weightDecoded.value->tile.values.empty());
+    CHECK(weightDecoded.value->tile.alpha.empty());
+
+    TerrainEditTile both = FilledTile({-2, 3}, 2, 0.5f, 0.25f);
+    both.weights.push_back(FilledChannel("grass", 2, 0.125f));
+    both.weights.push_back(FilledChannel("rock", 2, 0.875f));
+    const TerrainResult<std::vector<std::byte>> bothBytes = EncodeTerrainEditTile(both, TerrainEditBlend::AlphaBlend);
+    REQUIRE(bothBytes);
+    CHECK(GetU32(*bothBytes.value, kVersionOffset) == kTerrainEditWeightFormatVersion);
+    const TerrainResult<TerrainEditDecodedTile> bothDecoded =
+        DecodeTerrainEditTile(std::span<const std::byte>(*bothBytes.value));
+    REQUIRE(bothDecoded);
+    CHECK(bothDecoded.value->blend == TerrainEditBlend::AlphaBlend);
+    CHECK(bothDecoded.value->tile == both);
+}
+
+TEST_CASE("A version 2 tile blob rejects malformed channels and names", "[terrain][edit]")
+{
+    const TerrainEditTile tile =
+        WeightOnlyTile({0, 0}, 1, {FilledChannel("base", 1, 0.5f), FilledChannel("sand", 1, 0.5f)});
+    const TerrainResult<std::vector<std::byte>> encoded = EncodeTerrainEditTile(tile, TerrainEditBlend::Additive);
+    REQUIRE(encoded);
+    const std::vector<std::byte> good = *encoded.value;
+    const size_t count = Count(1);
+    const size_t tableStart = kHeaderSize + 2 * kWeightChannelSize + 2 * count * sizeof(float);
+
+    const auto decode = [](const std::vector<std::byte> &bytes) {
+        return DecodeTerrainEditTile(std::span<const std::byte>(bytes));
+    };
+
+    SECTION("unknown channel kind")
+    {
+        std::vector<std::byte> bad = good;
+        StoreU32(bad, kHeaderSize + kKindOffset, 7);
+        Reseal(bad);
+        const TerrainResult<TerrainEditDecodedTile> result = decode(bad);
+        CHECK_FALSE(result);
+        CHECK(result.error.code == Code::Unsupported);
+        CHECK(Mentions(result.error, "kind 7"));
+    }
+
+    SECTION("bad name")
+    {
+        std::vector<std::byte> bad = good;
+        bad[tableStart + kNameLengthSize] = std::byte{'B'};
+        Reseal(bad);
+        const TerrainResult<TerrainEditDecodedTile> result = decode(bad);
+        CHECK_FALSE(result);
+        CHECK(result.error.code == Code::Malformed);
+        CHECK(Mentions(result.error, "material layer name"));
+    }
+
+    SECTION("duplicate name")
+    {
+        std::vector<std::byte> bad = good;
+        const size_t secondName = tableStart + 2 * kNameLengthSize + std::string_view("base").size();
+        for (size_t i = 0; i < std::string_view("sand").size(); ++i)
+            bad[secondName + i] = static_cast<std::byte>("base"[i]);
+        Reseal(bad);
+        const TerrainResult<TerrainEditDecodedTile> result = decode(bad);
+        CHECK_FALSE(result);
+        CHECK(result.error.code == Code::Malformed);
+        CHECK(Mentions(result.error, "duplicated"));
+    }
+
+    SECTION("wrong size")
+    {
+        std::vector<std::byte> bad = good;
+        StoreU32(bad, kIntervalsOffset, 3);
+        const TerrainResult<TerrainEditDecodedTile> result = decode(bad);
+        CHECK_FALSE(result);
+        CHECK(result.error.code == Code::Malformed);
+        CHECK(Mentions(result.error, "too short"));
+    }
+
+    SECTION("truncated name table")
+    {
+        std::vector<std::byte> bad = good;
+        bad.erase(bad.end() - static_cast<std::ptrdiff_t>(kTrailerSize) - 1);
+        Reseal(bad);
+        const TerrainResult<TerrainEditDecodedTile> result = decode(bad);
+        CHECK_FALSE(result);
+        CHECK(result.error.code == Code::Malformed);
+        CHECK(Mentions(result.error, "name table is truncated"));
+    }
+}
+
+TEST_CASE("Weight channels composite over the base weights with the overwrite rule", "[terrain][edit][weights]")
+{
+    const int32_t intervals = 1;
+    const TerrainWeightTile base = WeightBase({0, 0}, intervals, {"base", "sand", "rock"});
+    const auto compose = [&](const TerrainEditLayer &layer) {
+        const TerrainResult<TerrainEditWeightComposite> result = CompositeTerrainEditWeights(base, std::span(&layer, 1));
+        REQUIRE(result);
+        return *result.value;
+    };
+
+    SECTION("a full paint sets one hot")
+    {
+        TerrainEditLayer layer = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+        layer.tiles.emplace(TileCoord{0, 0}, WeightOnlyTile({0, 0}, intervals, {FilledChannel("sand", intervals, 1.0f)}));
+        const TerrainEditWeightComposite result = compose(layer);
+        CHECK(result.skippedLayers.empty());
+        for (int32_t i = 0; i <= intervals; ++i)
+            for (int32_t k = 0; k <= intervals; ++k)
+            {
+                CHECK(result.tile.At(0, i, k) == 0.0f);
+                CHECK(result.tile.At(1, i, k) == 1.0f);
+                CHECK(result.tile.At(2, i, k) == 0.0f);
+            }
+        CHECK(ValidateTerrainWeightTile(result.tile) == TerrainWeightStatus::Ok);
+    }
+
+    SECTION("a half paint halves the others and adds one half")
+    {
+        TerrainEditLayer layer = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+        layer.tiles.emplace(TileCoord{0, 0}, WeightOnlyTile({0, 0}, intervals, {FilledChannel("sand", intervals, 0.5f)}));
+        const TerrainEditWeightComposite result = compose(layer);
+        CHECK(result.tile.At(0, 0, 0) == 0.5f);
+        CHECK(result.tile.At(1, 0, 0) == 0.5f);
+        CHECK(result.tile.At(2, 0, 0) == 0.0f);
+        CHECK(ValidateTerrainWeightTile(result.tile) == TerrainWeightStatus::Ok);
+    }
+
+    SECTION("a zero paint leaves the base bit-identical")
+    {
+        TerrainEditLayer layer = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+        layer.tiles.emplace(TileCoord{0, 0}, WeightOnlyTile({0, 0}, intervals, {FilledChannel("sand", intervals, 0.0f)}));
+        const TerrainEditWeightComposite result = compose(layer);
+        for (size_t index = 0; index < base.weights.size(); ++index)
+            CHECK(SameBits(result.tile.weights[index], base.weights[index]));
+    }
+
+    SECTION("channels apply in name order")
+    {
+        TerrainEditLayer layer = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+        layer.tiles.emplace(TileCoord{0, 0},
+                            WeightOnlyTile({0, 0}, intervals,
+                                           {FilledChannel("rock", intervals, 0.5f),
+                                            FilledChannel("sand", intervals, 0.5f)}));
+        const TerrainEditWeightComposite result = compose(layer);
+        CHECK(result.tile.At(0, 0, 0) == 0.25f);
+        CHECK(result.tile.At(1, 0, 0) == 0.5f);
+        CHECK(result.tile.At(2, 0, 0) == 0.25f);
+    }
+
+    SECTION("layer order follows priority")
+    {
+        const auto makeLayers = [&](int32_t sandPriority, int32_t rockPriority) {
+            TerrainEditLayer sand = Layer("sand", sandPriority, 0, TerrainEditBlend::Additive);
+            sand.tiles.emplace(TileCoord{0, 0},
+                               WeightOnlyTile({0, 0}, intervals, {FilledChannel("sand", intervals, 1.0f)}));
+            TerrainEditLayer rock = Layer("rock", rockPriority, 1, TerrainEditBlend::Additive);
+            rock.tiles.emplace(TileCoord{0, 0},
+                               WeightOnlyTile({0, 0}, intervals, {FilledChannel("rock", intervals, 1.0f)}));
+            return std::array<TerrainEditLayer, 2>{sand, rock};
+        };
+
+        std::array<TerrainEditLayer, 2> rockLast = makeLayers(0, 1);
+        TerrainResult<TerrainEditWeightComposite> result = CompositeTerrainEditWeights(base, rockLast);
+        REQUIRE(result);
+        CHECK(result.value->tile.At(2, 0, 0) == 1.0f);
+        CHECK(result.value->tile.At(1, 0, 0) == 0.0f);
+
+        std::array<TerrainEditLayer, 2> sandLast = makeLayers(1, 0);
+        result = CompositeTerrainEditWeights(base, sandLast);
+        REQUIRE(result);
+        CHECK(result.value->tile.At(1, 0, 0) == 1.0f);
+        CHECK(result.value->tile.At(2, 0, 0) == 0.0f);
+    }
+
+    SECTION("a disabled layer contributes nothing")
+    {
+        TerrainEditLayer layer = Layer("off", 0, 0, TerrainEditBlend::Additive, false);
+        layer.tiles.emplace(TileCoord{0, 0}, WeightOnlyTile({0, 0}, intervals, {FilledChannel("sand", intervals, 1.0f)}));
+        const TerrainEditWeightComposite result = compose(layer);
+        for (size_t index = 0; index < base.weights.size(); ++index)
+            CHECK(SameBits(result.tile.weights[index], base.weights[index]));
+    }
+
+    SECTION("an unknown layer is skipped and reported")
+    {
+        TerrainEditLayer layer = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+        layer.tiles.emplace(TileCoord{0, 0},
+                            WeightOnlyTile({0, 0}, intervals,
+                                           {FilledChannel("lava", intervals, 1.0f),
+                                            FilledChannel("mud", intervals, 0.5f)}));
+        const TerrainEditWeightComposite result = compose(layer);
+        CHECK(result.skippedLayers == std::vector<std::string>{"lava", "mud"});
+        for (size_t index = 0; index < base.weights.size(); ++index)
+            CHECK(SameBits(result.tile.weights[index], base.weights[index]));
+    }
+}
+
+TEST_CASE("A weight-only tile leaves the height stack hash alone", "[terrain][edit][weights]")
+{
+    TerrainEditLayer layer = Layer("edit", 0, 0, TerrainEditBlend::Additive);
+    layer.tiles.emplace(TileCoord{0, 0}, FilledTile({0, 0}, 2, 1.0f));
+    std::array<TerrainEditLayer, 1> stack{layer};
+    const uint64_t hash = TerrainEditStackHash(stack);
+
+    std::array<TerrainEditLayer, 1> withChannel{layer};
+    withChannel[0].tiles.at({0, 0}).weights.push_back(FilledChannel("sand", 2, 0.5f));
+    CHECK(TerrainEditStackHash(withChannel) == hash);
+
+    std::array<TerrainEditLayer, 1> withWeightOnly{withChannel[0]};
+    withWeightOnly[0].tiles.emplace(TileCoord{1, 0},
+                                    WeightOnlyTile({1, 0}, 2, {FilledChannel("rock", 2, 0.25f)}));
+    CHECK(TerrainEditStackHash(withWeightOnly) == hash);
+    CHECK(TerrainEditWeightStackHash(withChannel) != 0);
+    CHECK(TerrainEditWeightStackHash(withWeightOnly) != 0);
+    CHECK(TerrainEditWeightStackHash(stack) == 0);
+}
+
+TEST_CASE("The weight stack hash follows weight values, names, order and enablement", "[terrain][edit][weights]")
+{
+    const auto makeStack = [](std::string name, float value, int32_t priority, bool enabled) {
+        TerrainEditLayer layer = Layer("paint", priority, 0, TerrainEditBlend::Additive, enabled);
+        layer.tiles.emplace(TileCoord{0, 0}, WeightOnlyTile({0, 0}, 1, {FilledChannel(std::move(name), 1, value)}));
+        return std::array<TerrainEditLayer, 1>{layer};
+    };
+
+    const std::array<TerrainEditLayer, 1> base = makeStack("sand", 0.25f, 0, true);
+    const uint64_t hash = TerrainEditWeightStackHash(base);
+    CHECK(hash != 0);
+    CHECK(TerrainEditWeightStackHash(makeStack("sand", 0.5f, 0, true)) != hash);
+    CHECK(TerrainEditWeightStackHash(makeStack("rock", 0.25f, 0, true)) != hash);
+    CHECK(TerrainEditWeightStackHash(makeStack("sand", 0.25f, 0, false)) == 0);
+
+    TerrainEditLayer first = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+    first.tiles.emplace(TileCoord{0, 0}, WeightOnlyTile({0, 0}, 1, {FilledChannel("sand", 1, 0.25f)}));
+    TerrainEditLayer second = Layer("other", 1, 1, TerrainEditBlend::Additive);
+    second.tiles.emplace(TileCoord{0, 0}, WeightOnlyTile({0, 0}, 1, {FilledChannel("rock", 1, 0.5f)}));
+    std::array<TerrainEditLayer, 2> ordered{first, second};
+    const uint64_t orderedHash = TerrainEditWeightStackHash(ordered);
+    std::array<TerrainEditLayer, 2> swapped{second, first};
+    swapped[0].info.priority = 0;
+    swapped[1].info.priority = 1;
+    CHECK(TerrainEditWeightStackHash(swapped) != orderedHash);
+
+    CHECK(TerrainEditWeightStackHash(std::span<const TerrainEditLayer>()) == 0);
+    TerrainEditLayer empty = Layer("empty", 0, 0, TerrainEditBlend::Additive);
+    std::array<TerrainEditLayer, 1> emptyStack{empty};
+    CHECK(TerrainEditWeightStackHash(emptyStack) == 0);
+}
+
+TEST_CASE("Writing a shared weight sample reaches every tile that holds it", "[terrain][edit][weights]")
+{
+    const TerrainLayout layout = EditLayout();
+    const int32_t intervals = layout.IntervalsPerTile();
+    const size_t count = Count(intervals);
+    TerrainEditLayer layer = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+
+    SetTerrainEditWeightSample(layer, layout, {4, 2}, "sand", 0.5f);
+    CHECK(layer.tiles.size() == 2);
+    for (const TileCoord coord : {TileCoord{0, 0}, TileCoord{1, 0}})
+    {
+        REQUIRE(FindTile(layer, coord));
+        const TerrainEditTile &tile = *FindTile(layer, coord);
+        CHECK(tile.values.empty());
+        REQUIRE(tile.weights.size() == 1);
+        CHECK(tile.weights[0].layer == "sand");
+        REQUIRE(tile.weights[0].values.size() == count);
+        const size_t localX = coord.x == 0 ? static_cast<size_t>(intervals) : 0;
+        CHECK(tile.weights[0].values[static_cast<size_t>(2) * static_cast<size_t>(intervals + 1) + localX] == 0.5f);
+    }
+
+    SetTerrainEditWeightSample(layer, layout, {4, 4}, "sand", 0.75f);
+    CHECK(layer.tiles.size() == 4);
+    for (const TileCoord coord : {TileCoord{0, 0}, TileCoord{1, 0}, TileCoord{0, 1}, TileCoord{1, 1}})
+    {
+        REQUIRE(FindTile(layer, coord));
+        CHECK(FindWeight(*FindTile(layer, coord), "sand") != nullptr);
+    }
+    CHECK(ValidateTerrainEditSharedSamples(layer, layout).empty());
+
+    SetTerrainEditWeightSample(layer, layout, {4, 2}, "rock", 0.25f);
+    const TerrainEditTile &right = *FindTile(layer, {1, 0});
+    REQUIRE(right.weights.size() == 2);
+    CHECK(right.weights[0].layer == "rock");
+    CHECK(right.weights[1].layer == "sand");
+
+    TerrainEditTile &broken = layer.tiles.at({1, 0});
+    FindWeight(broken, "sand")->values[static_cast<size_t>(2) * static_cast<size_t>(intervals + 1)] = 0.875f;
+    const std::vector<GlobalSampleIndex> mismatches = ValidateTerrainEditSharedSamples(layer, layout);
+    REQUIRE(mismatches.size() == 1);
+    CHECK(mismatches[0] == GlobalSampleIndex{4, 2});
+}
+
+TEST_CASE("A height sample on a weight-only tile keeps its weights", "[terrain][edit][weights]")
+{
+    const TerrainLayout layout = EditLayout();
+    const int32_t intervals = layout.IntervalsPerTile();
+    TerrainEditLayer layer = Layer("paint", 0, 0, TerrainEditBlend::Additive);
+    SetTerrainEditWeightSample(layer, layout, {4, 2}, "sand", 0.5f);
+
+    const TerrainEditTile before = *FindTile(layer, {1, 0});
+    SetTerrainEditSample(layer, layout, {4, 2}, 3.0f);
+    const TerrainEditTile &after = *FindTile(layer, {1, 0});
+    REQUIRE(after.values.size() == Count(intervals));
+    CHECK(after.values[static_cast<size_t>(2) * static_cast<size_t>(intervals + 1)] == 3.0f);
+    REQUIRE(after.weights.size() == 1);
+    CHECK(after.weights[0] == before.weights[0]);
+    CHECK(ValidateTerrainEditSharedSamples(layer, layout).empty());
 }

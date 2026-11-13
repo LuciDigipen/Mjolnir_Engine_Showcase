@@ -204,3 +204,46 @@ TEST_CASE("A missing base cache disables the brush and applies no overlay", "[te
     std::error_code ignored;
     std::filesystem::remove_all(dir, ignored);
 }
+
+TEST_CASE("A weight-only tile produces no overlay tile", "[terrain_editor][overlay][weights]")
+{
+    Surface surface;
+    TerrainEditOverlaySession session;
+    session.MarkEdited(TileCoord{ 0, 0 });
+    session.MarkEdited(TileCoord{ 1, 0 });
+
+    const auto base = [&surface](TileCoord tile) -> TerrainBaseHeightsResult<TerrainBaseTile> {
+        const auto found = surface.base.find(tile);
+        if (found == surface.base.end())
+            return { std::nullopt, { TerrainBaseHeightsErrorCode::MissingTile, "missing tile" } };
+        return { found->second, {} };
+    };
+
+    TerrainEditLayer layer;
+    layer.info.name = "Weights";
+    layer.info.sequence = 1;
+    layer.info.enabled = true;
+
+    mir::TerrainEditTile weightTile;
+    weightTile.tile = TileCoord{ 0, 0 };
+    weightTile.intervals = kIntervals;
+    weightTile.weights.push_back(
+        { "sand", std::vector<float>(static_cast<std::size_t>(kIntervals + 1) * static_cast<std::size_t>(kIntervals + 1),
+                                     0.5f) });
+    layer.tiles.emplace(weightTile.tile, weightTile);
+
+    mir::TerrainEditTile heightTile;
+    heightTile.tile = TileCoord{ 1, 0 };
+    heightTile.intervals = kIntervals;
+    heightTile.values.assign(
+        static_cast<std::size_t>(kIntervals + 1) * static_cast<std::size_t>(kIntervals + 1), 1.0f);
+    layer.tiles.emplace(heightTile.tile, heightTile);
+
+    const std::vector<TerrainEditLayer> layers{ layer };
+    std::string reason;
+    const std::shared_ptr<const TerrainOverlay> overlay = session.Build(kAsset, layers, base, reason);
+    REQUIRE(overlay);
+    REQUIRE(overlay->Tiles().size() == 1);
+    CHECK(overlay->Find(TileCoord{ 0, 0 }) == nullptr);
+    REQUIRE(overlay->Find(TileCoord{ 1, 0 }) != nullptr);
+}

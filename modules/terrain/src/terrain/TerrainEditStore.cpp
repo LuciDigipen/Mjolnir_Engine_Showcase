@@ -236,6 +236,8 @@ namespace mir
             const std::filesystem::path layerDir = TerrainEditLayerDirName(layer.info.sequence);
             for (const TerrainEditTile *tile : tiles)
             {
+                if (tile->values.empty() && tile->weights.empty())
+                    continue;
                 const std::filesystem::path path = layerDir / TerrainEditTileFileName(tile->tile);
                 TerrainResult<std::vector<std::byte>> encoded =
                     EncodeTerrainEditTile(*tile, layer.info.heightBlend);

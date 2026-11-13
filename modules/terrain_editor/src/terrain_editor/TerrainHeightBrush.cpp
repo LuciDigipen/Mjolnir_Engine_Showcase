@@ -76,6 +76,17 @@ namespace mir
                 if (!SameFloatBits(left->alpha[i], right->alpha[i]))
                     return false;
             }
+            if (left->weights.size() != right->weights.size())
+                return false;
+            for (std::size_t channel = 0; channel < left->weights.size(); ++channel)
+            {
+                if (left->weights[channel].layer != right->weights[channel].layer ||
+                    left->weights[channel].values.size() != right->weights[channel].values.size())
+                    return false;
+                for (std::size_t i = 0; i < left->weights[channel].values.size(); ++i)
+                    if (!SameFloatBits(left->weights[channel].values[i], right->weights[channel].values[i]))
+                        return false;
+            }
             return true;
         }
 
@@ -382,7 +393,8 @@ namespace mir
                             const std::size_t index = SampleIndex(tile->second, intervals, sample);
                             if (index >= tile->second.values.size())
                             {
-                                needsWrite = true;
+                                needsWrite = !SameFloatBits(newValue, 0.0f) ||
+                                             (alphaBlend && !SameFloatBits(newAlpha, 0.0f));
                                 continue;
                             }
                             const float value = tile->second.values[index];

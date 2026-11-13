@@ -96,6 +96,8 @@ namespace mir::terrainbake
         std::shared_ptr<const std::vector<TerrainEditLayer>> editStack;
         // TerrainEditStackHash of the enabled layers; 0 when none of them stores a tile.
         uint64_t editStackHash = 0;
+        // TerrainEditWeightStackHash of the enabled layers; 0 when none stores a weight channel.
+        uint64_t editWeightStackHash = 0;
 
         bool IsHeightmap() const { return generatorId == kHeightmapGeneratorId; }
         std::optional<double> SourceSpacing(TileCoord tile) const;

@@ -261,3 +261,36 @@ TEST_CASE("Every Edit Layer mutation moves the document's change count", "[terra
     CHECK(document.ChangeCount() == start + 5);
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("A saved Edit Layer stack keeps its weight channels", "[terrain_editor][editlayersave][weights]")
+{
+    const std::filesystem::path root = MakeScratchDir("weights");
+    const std::filesystem::path layersDir = mir::TerrainEditLayersDir(ScratchRecipe(root));
+
+    TerrainLayerDocument document(layersDir);
+    document.Load();
+    REQUIRE(document.Editable());
+
+    TerrainEditLayer layer = EmptyLayer("Paint", document.TakeSequence());
+    TerrainEditTile tile = Tile({0, 0}, 2, 0.5f);
+    tile.weights.push_back({"sand", std::vector<float>(9, 0.75f)});
+    layer.tiles.emplace(tile.tile, std::move(tile));
+    document.Append(std::move(layer));
+    REQUIRE(document.Save());
+
+    const mir::TerrainResult<std::vector<TerrainEditLayer>> loaded = LoadTerrainEditStack(layersDir);
+    INFO(loaded.error.message);
+    REQUIRE(loaded);
+    CHECK(*loaded.value == document.Layers());
+
+    TerrainLayerDocument reopened(layersDir);
+    reopened.Load();
+    REQUIRE(reopened.Editable());
+    const TerrainEditLayer *stored = reopened.Find(loaded.value->front().info.sequence);
+    REQUIRE(stored != nullptr);
+    const TerrainEditTile &reloaded = stored->tiles.at({0, 0});
+    REQUIRE(reloaded.weights.size() == 1);
+    CHECK(reloaded.weights[0].layer == "sand");
+    CHECK(reloaded.weights[0].values == std::vector<float>(9, 0.75f));
+    std::filesystem::remove_all(root);
+}

@@ -52,6 +52,7 @@ namespace
     using mir::TerrainEditBlend;
     using mir::TerrainEditLayer;
     using mir::TerrainEditOverlaySession;
+    using mir::TerrainEditTile;
     using mir::TerrainEditTileStates;
     using mir::TerrainLayerDocument;
     using mir::TerrainLayout;
@@ -237,4 +238,59 @@ TEST_CASE("One brush stroke is one History step and undo removes the tiles it cr
     CHECK(document.Layers() == afterStack);
     CHECK(document.Unsaved());
     CHECK_FALSE(editing.Steps().IsUnsaved(kSceneDocument));
+}
+
+TEST_CASE("A height stroke over a weight tile keeps the weights and undo restores the tile",
+    "[terrain_editor][brush][weights]")
+{
+    Editing editing;
+    TerrainLayerDocument &document = editing.Document();
+    REQUIRE(document.Editable());
+    editing.Run(std::make_unique<AddTerrainLayerCommand>(document, TerrainEditBlend::Additive));
+    REQUIRE(document.Layers().size() == 1);
+    REQUIRE(document.Save());
+
+    const uint32_t sequence = document.Layers().front().info.sequence;
+    TerrainEditLayer *layer = document.MutableLayer(sequence);
+    REQUIRE(layer != nullptr);
+
+    const TerrainLayout layout = MakeLayout();
+    const int32_t intervals = layout.IntervalsPerTile();
+    TerrainEditTile weighted;
+    weighted.tile = TileCoord{0, 0};
+    weighted.intervals = intervals;
+    weighted.weights.push_back(
+        {"sand", std::vector<float>(static_cast<size_t>(intervals + 1) * static_cast<size_t>(intervals + 1), 0.25f)});
+    layer->tiles.emplace(weighted.tile, weighted);
+    const std::vector<TerrainEditLayer> beforeStack = document.Layers();
+
+    TerrainBrushTileSource source{layout, [layout](TileCoord) { return std::optional<TerrainLayout>(layout); },
+        [](TileCoord coord) -> TerrainBaseHeightsResult<TerrainBaseTile> {
+            return { MakeBaseTile(coord, 8), {} };
+        } };
+    TerrainBrushStroke stroke(*layer, document.Layers(), source, 7.0);
+    TerrainBrushSettings settings;
+    settings.brush = mir::TerrainBrush::RaiseLower;
+    settings.radius = 2.5;
+    settings.strength = 0.5;
+    settings.falloff = 0.5;
+    const std::optional<TerrainLocalPosition> center =
+        TerrainLocalPosition::FromMeters(glm::dvec3(4.0, 0.0, 4.0));
+    REQUIRE(center);
+    REQUIRE(stroke.Dab(*center, settings, 0.1).Ok());
+    CHECK_FALSE(stroke.Empty());
+
+    const TerrainEditTile &stroked = layer->tiles.at(TileCoord{0, 0});
+    CHECK_FALSE(stroked.values.empty());
+    REQUIRE(stroked.weights.size() == 1);
+    CHECK(stroked.weights[0] == weighted.weights[0]);
+    const std::vector<TerrainEditLayer> afterStack = document.Layers();
+
+    editing.Run(std::make_unique<TerrainBrushCommand>(document, sequence, stroke.Before(), stroke.After()));
+    CHECK(document.Layers() == afterStack);
+    CHECK(document.Layers().front().tiles.at(TileCoord{0, 0}).weights == weighted.weights);
+
+    editing.Undo();
+    CHECK(document.Layers() == beforeStack);
+    CHECK(document.Layers().front().tiles.at(TileCoord{0, 0}) == weighted);
 }

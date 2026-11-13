@@ -47,6 +47,23 @@ namespace mir
         tiles.reserve(mEdited.size());
         for (const TileCoord &tile : mEdited)
         {
+            bool anyLayerTile = false;
+            bool hasHeight = false;
+            for (const TerrainEditLayer *layer : TerrainEditCompositingOrder(layers))
+            {
+                const auto found = layer->tiles.find(tile);
+                if (found == layer->tiles.end())
+                    continue;
+                anyLayerTile = true;
+                if (!found->second.values.empty())
+                {
+                    hasHeight = true;
+                    break;
+                }
+            }
+            if (anyLayerTile && !hasHeight)
+                continue;
+
             TerrainBaseHeightsResult<TerrainBaseTile> read = base(tile);
             if (!read || !read.value)
             {

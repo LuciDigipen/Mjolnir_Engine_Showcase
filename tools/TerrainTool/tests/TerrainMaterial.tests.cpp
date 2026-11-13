@@ -424,4 +424,17 @@ TEST_CASE("The weight fingerprint follows material fields, order and heights", "
         CHECK(FingerprintRecipe(withBase) == heights);
         CHECK(FingerprintWeights(withBase, FingerprintRecipe(withBase)) == FingerprintWeights(plain, heights));
     }
+    SECTION("the edit weight stack hash")
+    {
+        TerrainRecipe withWeights = dressed;
+        CHECK(FingerprintWeights(withWeights, heights).value == dressedHash);
+
+        withWeights.editWeightStackHash = 0x5eed;
+        CHECK(FingerprintWeights(withWeights, heights).value != dressedHash);
+
+        TerrainRecipe withHeightEdit = dressed;
+        withHeightEdit.editStackHash = 0x5eed;
+        CHECK(FingerprintWeights(withHeightEdit, heights).value == dressedHash);
+        CHECK(FingerprintRecipe(withHeightEdit) != heights);
+    }
 }

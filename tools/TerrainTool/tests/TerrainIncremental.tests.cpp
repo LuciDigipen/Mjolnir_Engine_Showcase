@@ -285,6 +285,52 @@ TEST_CASE("An unchanged base supplies every payload and still matches a full bak
     }
 }
 
+TEST_CASE("A weight-only Edit Layer reuses every height payload and keeps the release bytes",
+          "[terraintool][incremental][weights]")
+{
+    FixtureTree tree("incremental_weights", "relief-2x2.terrain.json");
+    const TerrainRecipe plain = RecipeOf(tree.recipe);
+
+    TerrainBakeRequest base = tree.Request(tree.scratch.path / "base", kNonce);
+    const TerrainReport baked = RunTerrainBake(base);
+    for (const TerrainDiagnostic &d : baked.diagnostics)
+        UNSCOPED_INFO(FormatDiagnostic(d));
+    REQUIRE(baked.Ok());
+    REQUIRE(baked.release);
+    const fs::path baseDir = PublishRelease(base.candidateDir, tree.releases, tree.asset, baked.release->release);
+
+    TerrainEditLayer layer = AdditiveEditLayer("weights");
+    TerrainEditTile tile;
+    tile.tile = {-1, -1};
+    tile.intervals = plain.layout.IntervalsPerTile();
+    const size_t count = static_cast<size_t>(tile.intervals + 1) * static_cast<size_t>(tile.intervals + 1);
+    tile.weights.push_back({"sand", std::vector<float>(count, 1.0f)});
+    layer.tiles.emplace(tile.tile, std::move(tile));
+    WriteEditLayers(tree.recipe, std::span(&layer, 1));
+
+    const TerrainRecipe weighted = RecipeOf(tree.recipe);
+    CHECK(weighted.editStackHash == 0);
+    CHECK(weighted.editWeightStackHash != 0);
+    CHECK(FingerprintRecipe(weighted) == FingerprintRecipe(plain));
+    CHECK(FingerprintWeights(weighted, FingerprintRecipe(weighted)) !=
+          FingerprintWeights(plain, FingerprintRecipe(plain)));
+
+    TerrainBakeRequest incremental =
+        WithBase(tree.Request(tree.scratch.path / "incremental", kNonce), tree.releases, tree.asset);
+    const TerrainReport report = RunTerrainBake(incremental);
+    for (const TerrainDiagnostic &d : report.diagnostics)
+        UNSCOPED_INFO(FormatDiagnostic(d));
+    REQUIRE(report.Ok());
+    const TerrainReport full = RunTerrainBake(tree.Request(tree.scratch.path / "full", kNonce));
+    REQUIRE(full.Ok());
+    CHECK(Snapshot(incremental.candidateDir) == Snapshot(tree.scratch.path / "full"));
+    CHECK(ReleaseFiles(incremental.candidateDir) == ReleaseFiles(baseDir));
+    const std::string detail = CheckDetail(report, check::kEncode);
+    CHECK(detail.find("0 changed") != std::string::npos);
+    CHECK(detail.find("0 tiles rederived") != std::string::npos);
+    CHECK(detail.find("4 reused") != std::string::npos);
+}
+
 TEST_CASE("An unusable base falls back to a full bake with the reason in the report", "[terraintool][incremental]")
 {
     const fs::path mixedRecipe = fs::path(TERRAIN_FIXTURE_DIR) / "mixed-2x2.terrain.json";

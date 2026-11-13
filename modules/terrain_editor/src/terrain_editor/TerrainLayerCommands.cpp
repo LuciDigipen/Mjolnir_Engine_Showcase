@@ -265,7 +265,11 @@ namespace mir
             {
                 (void)tile;
                 if (value)
+                {
                     size += sizeof(TerrainEditTile) + (value->values.size() + value->alpha.size()) * sizeof(float);
+                    for (const TerrainEditWeight &channel : value->weights)
+                        size += sizeof(TerrainEditWeight) + channel.layer.size() + channel.values.size() * sizeof(float);
+                }
             }
             return size;
         };
