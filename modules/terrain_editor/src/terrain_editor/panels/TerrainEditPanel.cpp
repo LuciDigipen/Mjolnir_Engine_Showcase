@@ -83,9 +83,12 @@ namespace mir
         if (widgets::CategoryHeader("Edit Layers"))
             DrawLayers(layers, history);
 
-        if (widgets::CategoryHeader("Brush"))
+        const bool brushOpen = widgets::CategoryHeader("Brush");
+        ImGui::SetItemTooltip("Left-drag in the viewport to sculpt the selected edit layer (hold Ctrl to lower).\n"
+                              "Edits show at once in the view, collision and Play; each stroke is one undo step.");
+        if (brushOpen)
         {
-            if (ImGui::BeginCombo("Brush", LabelOf(mode.Brush())))
+            if (ImGui::BeginCombo("Brush##type", LabelOf(mode.Brush())))
             {
                 for (const BrushLabel &label : kBrushLabels)
                 {
@@ -121,10 +124,13 @@ namespace mir
             }
         }
 
-        if (widgets::CategoryHeader("Bake"))
+        const bool bakeOpen = widgets::CategoryHeader("Bake");
+        ImGui::SetItemTooltip("Saves the layers, then runs TerrainTool sync in the background to publish a new release,\n"
+                              "the same one a build makes. Distant regions and coarse LODs then show the edits.");
+        if (bakeOpen)
         {
             ImGui::BeginDisabled(!bake.mCanStart);
-            if (ImGui::Button("Bake"))
+            if (ImGui::Button("Bake##start"))
                 actions.mStart = true;
             ImGui::EndDisabled();
 
