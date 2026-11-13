@@ -233,3 +233,31 @@ TEST_CASE("An Edit Layer stack that fails to load is never written", "[terrain_e
     CHECK(*manifest == "not a manifest");
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("Every Edit Layer mutation moves the document's change count", "[terrain_editor][editlayersave]")
+{
+    const std::filesystem::path root = MakeScratchDir("changes");
+    const std::filesystem::path layersDir = mir::TerrainEditLayersDir(ScratchRecipe(root));
+
+    TerrainLayerDocument document(layersDir);
+    document.Load();
+    const uint64_t start = document.ChangeCount();
+
+    document.Append(Layer("Ridge", 1, TerrainEditBlend::Additive));
+    CHECK(document.ChangeCount() == start + 1);
+
+    TerrainEditLayerInfo info = document.Layers().front().info;
+    info.name = "Path";
+    document.SetInfo(0, info);
+    CHECK(document.ChangeCount() == start + 2);
+
+    TerrainEditLayer removed = document.Remove(0);
+    CHECK(document.ChangeCount() == start + 3);
+
+    document.Insert(0, std::move(removed));
+    CHECK(document.ChangeCount() == start + 4);
+
+    document.MarkChanged();
+    CHECK(document.ChangeCount() == start + 5);
+    std::filesystem::remove_all(root);
+}

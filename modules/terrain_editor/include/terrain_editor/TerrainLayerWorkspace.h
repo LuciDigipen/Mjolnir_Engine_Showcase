@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <assets/AssetId.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -27,6 +29,7 @@ namespace mir
     {
         std::string recipePath;
         std::string logicalPath;
+        AssetId asset;
     };
 
     class TerrainLayerWorkspace

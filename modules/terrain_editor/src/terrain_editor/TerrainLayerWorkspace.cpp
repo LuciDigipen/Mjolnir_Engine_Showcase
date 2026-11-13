@@ -49,7 +49,7 @@ namespace mir
                     break;
                 }
             }
-            next.push_back({ instance.recipePath, std::move(logicalPath) });
+            next.push_back({ instance.recipePath, std::move(logicalPath), instance.placement.asset });
         }
 
         std::ranges::sort(next, {}, &TerrainEditAsset::recipePath);

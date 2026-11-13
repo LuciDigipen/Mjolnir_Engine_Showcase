@@ -20,11 +20,13 @@ namespace mir
     class TerrainEditMode;
     class TerrainLayerDocument;
     class TerrainLayerWorkspace;
+    struct TerrainBrushAvailability;
 
     class TerrainEditPanel
     {
     public:
-        void Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history);
+        void Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
+                  const TerrainBrushAvailability &brush);
 
     private:
         void DrawLayers(TerrainLayerWorkspace &layers, History &history);

@@ -14,7 +14,10 @@
 
 #include <core/Registration.h>
 #include <core/ecs/ModuleContext.h>
+#include <terrain/TerrainOverlay.h>
+#include <assets/AssetId.h>
 
+#include <functional>
 #include <memory>
 
 namespace mir
@@ -22,10 +25,14 @@ namespace mir
     class EditorModule;
     struct GameProject;
 
+    using TerrainOverlayApplier =
+        std::function<TerrainOverlayApplyResult(AssetId, std::shared_ptr<const TerrainOverlay>)>;
+
     class TerrainEditorModule
     {
     public:
-        TerrainEditorModule(ModuleContext context, EditorModule &editor, const GameProject &project);
+        TerrainEditorModule(ModuleContext context, EditorModule &editor, const GameProject &project,
+                            TerrainOverlayApplier overlay);
         ~TerrainEditorModule();
 
         TerrainEditorModule(const TerrainEditorModule &) = delete;

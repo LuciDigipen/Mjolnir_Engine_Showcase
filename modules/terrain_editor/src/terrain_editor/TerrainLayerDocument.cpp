@@ -125,18 +125,27 @@ namespace mir
                                 : layer.info.sequence + 1;
         mLayers.insert(mLayers.begin() + static_cast<std::ptrdiff_t>(std::min(index, mLayers.size())),
             std::move(layer));
+        MarkChanged();
     }
 
     TerrainEditLayer TerrainLayerDocument::Remove(std::size_t index)
     {
         TerrainEditLayer removed = std::move(mLayers[index]);
         mLayers.erase(mLayers.begin() + static_cast<std::ptrdiff_t>(index));
+        MarkChanged();
         return removed;
     }
 
     void TerrainLayerDocument::SetInfo(std::size_t index, const TerrainEditLayerInfo &info)
     {
         mLayers[index].info = info;
+        MarkChanged();
+    }
+
+    TerrainEditLayer *TerrainLayerDocument::MutableLayer(uint32_t sequence)
+    {
+        const std::size_t index = IndexOf(sequence);
+        return index < mLayers.size() ? &mLayers[index] : nullptr;
     }
 
     bool TerrainLayerDocument::Save()

@@ -240,4 +240,52 @@ namespace mir
         mDocument.SetInfo(neighbourIndex, neighbour);
         return true;
     }
+
+    TerrainBrushCommand::TerrainBrushCommand(TerrainLayerDocument &document, uint32_t sequence,
+        TerrainEditTileStates before, TerrainEditTileStates after)
+        : TerrainLayerCommand(document), mSequence(sequence), mBefore(std::move(before)), mAfter(std::move(after))
+    {
+    }
+
+    bool TerrainBrushCommand::Do(CommandContext &)
+    {
+        return Apply(mAfter);
+    }
+
+    bool TerrainBrushCommand::Undo(CommandContext &)
+    {
+        return Apply(mBefore);
+    }
+
+    std::size_t TerrainBrushCommand::Size() const
+    {
+        const auto bytes = [](const TerrainEditTileStates &states) {
+            std::size_t size = 0;
+            for (const auto &[tile, value] : states)
+            {
+                (void)tile;
+                if (value)
+                    size += sizeof(TerrainEditTile) + (value->values.size() + value->alpha.size()) * sizeof(float);
+            }
+            return size;
+        };
+        return sizeof(*this) + bytes(mBefore) + bytes(mAfter);
+    }
+
+    bool TerrainBrushCommand::Apply(const TerrainEditTileStates &states)
+    {
+        TerrainEditLayer *layer = mDocument.MutableLayer(mSequence);
+        if (layer == nullptr)
+            return false;
+
+        for (const auto &[tile, value] : states)
+        {
+            if (value)
+                layer->tiles[tile] = *value;
+            else
+                layer->tiles.erase(tile);
+        }
+        mDocument.MarkChanged();
+        return true;
+    }
 } // namespace mir

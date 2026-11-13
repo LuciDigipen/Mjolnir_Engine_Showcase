@@ -6,8 +6,11 @@ endif()
 engine_add_module(terrain_editor)
 
 target_sources(engine_terrain_editor PRIVATE
+    src/terrain_editor/TerrainEditBase.cpp
     src/terrain_editor/TerrainEditMode.cpp
+    src/terrain_editor/TerrainEditOverlay.cpp
     src/terrain_editor/TerrainEditorModule.cpp
+    src/terrain_editor/TerrainHeightBrush.cpp
     src/terrain_editor/TerrainLayerCommands.cpp
     src/terrain_editor/TerrainLayerDocument.cpp
     src/terrain_editor/TerrainLayerWorkspace.cpp

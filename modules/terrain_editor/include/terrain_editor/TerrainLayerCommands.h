@@ -10,6 +10,7 @@
 
 #include <editor/history/Command.h>
 #include <terrain/TerrainEditLayer.h>
+#include <terrain_editor/TerrainEditTiles.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -139,5 +140,25 @@ namespace mir
         uint32_t mNeighbour = 0;
         int32_t mMovedBefore = 0;
         int32_t mNeighbourBefore = 0;
+    };
+
+    // One brush stroke: whole layer tiles before and after, so undo and redo restore them bit for bit.
+    class TerrainBrushCommand : public TerrainLayerCommand
+    {
+    public:
+        TerrainBrushCommand(TerrainLayerDocument &document, uint32_t sequence, TerrainEditTileStates before,
+                            TerrainEditTileStates after);
+
+        bool Do(CommandContext &context) override;
+        bool Undo(CommandContext &context) override;
+        std::size_t Size() const override;
+        std::string Name() const override { return "Edit Terrain Height"; }
+
+    private:
+        bool Apply(const TerrainEditTileStates &states);
+
+        uint32_t mSequence;
+        TerrainEditTileStates mBefore;
+        TerrainEditTileStates mAfter;
     };
 } // namespace mir

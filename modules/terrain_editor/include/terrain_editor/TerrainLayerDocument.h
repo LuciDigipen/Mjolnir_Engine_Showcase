@@ -35,6 +35,9 @@ namespace mir
 
         // Differs from the stack last loaded or saved.
         bool Unsaved() const { return Editable() && mLayers != mSavedLayers; }
+        // Increases on every edit, so a consumer rebuilds only when the stack actually moved.
+        uint64_t ChangeCount() const { return mChangeCount; }
+        void MarkChanged() { ++mChangeCount; }
 
         const std::vector<TerrainEditLayer> &Layers() const { return mLayers; }
 
@@ -56,6 +59,8 @@ namespace mir
         void Insert(std::size_t index, TerrainEditLayer layer);
         TerrainEditLayer Remove(std::size_t index);
         void SetInfo(std::size_t index, const TerrainEditLayerInfo &info);
+        // Null when no layer has that sequence; the brush writes its tiles through this.
+        TerrainEditLayer *MutableLayer(uint32_t sequence);
 
         // Replaces the directory only when every file was written; false keeps Unsaved() and SaveError().
         bool Save();
@@ -67,5 +72,6 @@ namespace mir
         std::string mLoadError;
         std::string mSaveError;
         uint32_t mNextSequence = 1;
+        uint64_t mChangeCount = 0;
     };
 } // namespace mir

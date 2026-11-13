@@ -10,6 +10,7 @@
 
 #include <editor/EditorWidgets.h>
 #include <editor/history/History.h>
+#include <terrain_editor/TerrainEditBase.h>
 #include <terrain_editor/TerrainEditMode.h>
 #include <terrain_editor/TerrainLayerCommands.h>
 #include <terrain_editor/TerrainLayerDocument.h>
@@ -75,7 +76,8 @@ namespace mir
         }
     } // namespace
 
-    void TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history)
+    void TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
+        const TerrainBrushAvailability &brush)
     {
         if (widgets::CategoryHeader("Edit Layers"))
             DrawLayers(layers, history);
@@ -106,6 +108,16 @@ namespace mir
             float falloff = mode.Falloff();
             if (ImGui::SliderFloat("Falloff", &falloff, 0.0f, 1.0f))
                 mode.SetFalloff(falloff);
+
+            if (!brush.message.empty())
+            {
+                ImGui::PushTextWrapPos(0.0f);
+                if (brush.enabled)
+                    ImGui::TextDisabled("%s", brush.message.c_str());
+                else
+                    TextError(brush.message);
+                ImGui::PopTextWrapPos();
+            }
         }
 
         if (widgets::CategoryHeader("Bake"))
