@@ -11,6 +11,7 @@
 #include "TerrainStreamingTestSupport.h"
 
 #include <terrain/TerrainHeightQuery.h>
+#include <terrain/TerrainLayerWeightQuery.h>
 #include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainOverlayHandover.h>
 #include <terrain/TerrainScene.h>
@@ -20,7 +21,9 @@
 #include <glm/vec2.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -212,6 +215,112 @@ namespace
         for (int n = 0; n < 200; ++n)
             points.push_back({-256.0 + 512.0 * unit(), -256.0 + 512.0 * unit()});
         return points;
+    }
+
+    using WeightMap = std::unordered_map<TileCoord, std::shared_ptr<const TerrainDecodedWeights>>;
+
+    std::vector<std::string> OverlayWeightLayers()
+    {
+        return {"dirt", "sand", "rock"};
+    }
+
+    std::vector<TerrainWeightTile> BuildOverlayWeights(const TerrainLayout &layout, int64_t salt)
+    {
+        const std::vector<std::string> layers = OverlayWeightLayers();
+        std::vector<TerrainWeightTile> tiles;
+        const TileRange range = layout.Tiles();
+        const int32_t n = layout.IntervalsPerTile();
+        for (int32_t z = range.min.z; z <= range.max.z; ++z)
+            for (int32_t x = range.min.x; x <= range.max.x; ++x)
+            {
+                TerrainWeightTile tile;
+                tile.tile = {x, z};
+                tile.intervals = n;
+                tile.layers = layers;
+                const size_t count = tile.SampleCount();
+                tile.weights.resize(count * layers.size());
+                for (int32_t k = 0; k <= n; ++k)
+                    for (int32_t i = 0; i <= n; ++i)
+                    {
+                        const int64_t gi = layout.TileFirstSample(x) + i;
+                        const int64_t gk = layout.TileFirstSample(z) + k;
+                        const float u = float(((gi * 5 + gk * 11 + salt) % 7 + 7) % 7) / 6.0f;
+                        const std::array<float, 3> channels{0.15f + 0.4f * u, 0.15f + 0.4f * (1.0f - u),
+                                                            0.1f + 0.2f * u};
+                        const float sum = channels[0] + channels[1] + channels[2];
+                        const size_t sample = size_t(k) * size_t(n + 1) + size_t(i);
+                        for (size_t layer = 0; layer < layers.size(); ++layer)
+                            tile.weights[layer * count + sample] = channels[layer] / sum;
+                    }
+                tiles.push_back(std::move(tile));
+            }
+        return tiles;
+    }
+
+    struct WeightedReleases
+    {
+        TerrainLayout layout = OverlayLayout();
+        TerrainReleaseInfo base;
+        TerrainReleaseInfo edited;
+        std::filesystem::path root;
+    };
+
+    WeightedReleases PublishWeightedReleases()
+    {
+        WeightedReleases releases;
+        releases.base = Info(TerrainAsset(kRecipe), 0xB0BA);
+        releases.edited = Info(TerrainAsset(kRecipe), 0xED17);
+        const std::vector<TileHeights> heights = BuildTiles(releases.layout);
+        std::vector<TerrainWeightTile> baseWeights = BuildOverlayWeights(releases.layout, 0);
+        std::vector<TerrainWeightTile> editedWeights = BuildOverlayWeights(releases.layout, 3);
+        TerrainWeightsWrites baseWrites;
+        baseWrites.layers = OverlayWeightLayers();
+        baseWrites.fingerprint = 0x1111;
+        baseWrites.tiles = baseWeights;
+        TerrainWeightsWrites editedWrites;
+        editedWrites.layers = OverlayWeightLayers();
+        editedWrites.fingerprint = 0x2222;
+        editedWrites.tiles = editedWeights;
+        releases.root = MakeScratchDir("overlay-weights");
+        WriteRelease(releases.root, releases.base,
+                     EncodeWithWeights(releases.base, releases.layout, heights, baseWrites, {.chunkTiles = 2}));
+        WriteRelease(releases.root, releases.edited,
+                     EncodeWithWeights(releases.edited, releases.layout, heights, editedWrites, {.chunkTiles = 2}));
+        PointCurrentAt(releases.root, releases.base.asset, releases.base.release);
+        return releases;
+    }
+
+    WeightMap OneWeightTile(const TerrainDecodedWeights &weights)
+    {
+        WeightMap held;
+        held.emplace(weights.tile, std::make_shared<const TerrainDecodedWeights>(weights));
+        return held;
+    }
+
+    std::shared_ptr<const TerrainOverlay> WeightOverlay(AssetId asset, uint64_t revision, WeightMap weights)
+    {
+        return std::make_shared<const TerrainOverlay>(
+            asset, revision, std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>>{}, std::move(weights));
+    }
+
+    std::shared_ptr<const TerrainDecodedWeights> ReadWeightsOk(const TerrainReleaseHandle &handle, TileCoord tile)
+    {
+        TerrainResult<TerrainDecodedWeights> read = handle.ReadWeights(tile);
+        INFO(read.error.message);
+        REQUIRE(read);
+        return std::make_shared<const TerrainDecodedWeights>(std::move(*read.value));
+    }
+
+    void CheckWeightLayers(const std::vector<TerrainLayerWeight> &actual,
+                           const std::vector<TerrainLayerWeight> &expected)
+    {
+        REQUIRE(actual.size() == expected.size());
+        for (size_t i = 0; i < actual.size(); ++i)
+        {
+            INFO("layer " << i);
+            CHECK(actual[i].name == expected[i].name);
+            CHECK(std::abs(actual[i].weight - expected[i].weight) <= 1e-12);
+        }
     }
 }
 
@@ -457,5 +566,140 @@ TEST_CASE("Offered overlays apply once their release loads, once, and a refused 
     CHECK(refused[0].recipePath == kRecipe);
     CHECK(refused[0].message.find(kRecipe) != std::string::npos);
     CHECK(resolved.world.Assets().front().overlay == overlay);
+    std::filesystem::remove_all(releases.root);
+}
+
+TEST_CASE("A weight-only overlay tile answers the layer query and leaves heights to the release",
+          "[terrain][overlay][weights]")
+{
+    const WeightedReleases releases = PublishWeightedReleases();
+    Resolved resolved = Resolve(releases.root, releases.base.asset, TerrainResidencyMode::Eager);
+    TerrainWorld base = resolved.world;
+    const TerrainReleaseHandle edited =
+        OpenOk(OpenTerrainRelease(releases.root, releases.edited.asset, releases.edited.release));
+    TerrainResidentRelease &resident = *resolved.world.Instances().front().release;
+
+    const TileCoord tile{0, 0};
+    const std::shared_ptr<const TerrainDecodedWeights> editedWeights = ReadWeightsOk(edited, tile);
+    const auto overlay = WeightOverlay(releases.base.asset, 11, OneWeightTile(*editedWeights));
+    CHECK(overlay->Tiles().empty());
+    CHECK(overlay->Find(tile) == nullptr);
+    REQUIRE(overlay->FindWeights(tile) != nullptr);
+    CHECK_FALSE(ValidateTerrainOverlay(*overlay, resident.Handle()));
+
+    const TerrainOverlayApplyResult applied = resolved.world.SetOverlay(releases.base.asset, overlay);
+    INFO(applied.reason);
+    REQUIRE(applied.applied);
+
+    TerrainLayerWeightQuery editedQuery = TerrainLayerWeightQuery::Create(edited);
+    REQUIRE(editedQuery.Insert(edited.Info(), editedWeights).code == TerrainPackErrorCode::None);
+
+    const std::vector<glm::dvec2> points{{100.5, 80.25}, {0.5, 0.5}, {255.5, 128.0}, {37.375, 201.5},
+                                         {128.25, 0.75}};
+    const TerrainPlacement editedPlacement{edited.Info().asset, WorldAt(0.0, 0.0)};
+    for (const glm::dvec2 point : points)
+    {
+        INFO("point " << point.x << ", " << point.y);
+        const TerrainLayerWeightsResult got = resolved.world.LayerWeightsAt(WorldAt(point.x, point.y));
+        const TerrainLayerWeightsResult want = editedQuery.WeightsAt(
+            WorldAt(point.x, point.y), editedPlacement, TerrainLayerWeightsRequest{edited.Info()});
+        CHECK(got.status == TerrainLayerWeightsStatus::Ready);
+        REQUIRE(want.status == TerrainLayerWeightsStatus::Ready);
+        CheckWeightLayers(got.layers, want.layers);
+        CheckSameAnswer(resolved.world.HeightAt(WorldAt(point.x, point.y), 4.0),
+                        base.HeightAt(WorldAt(point.x, point.y), 4.0));
+    }
+    CHECK(resident.WeightQuery().PayloadRequests().empty());
+    CHECK(resident.WeightQuery().Residency(tile) == TerrainTileResidency::Absent);
+
+    TerrainLayerWeightQuery baseQuery = TerrainLayerWeightQuery::Create(resident.Handle());
+    for (const TileCoord source : {tile, TileCoord{-1, -1}})
+    {
+        const std::shared_ptr<const TerrainDecodedWeights> weights = ReadWeightsOk(resident.Handle(), source);
+        REQUIRE(resident.WeightQuery().Insert(resident.Info(), weights).code == TerrainPackErrorCode::None);
+        REQUIRE(baseQuery.Insert(resident.Info(), weights).code == TerrainPackErrorCode::None);
+    }
+
+    const TerrainPlacement basePlacement{resident.Info().asset, WorldAt(0.0, 0.0)};
+    const glm::dvec2 outside{-100.5, -80.25};
+    const TerrainLayerWeightsResult fellBack = resolved.world.LayerWeightsAt(WorldAt(outside.x, outside.y));
+    const TerrainLayerWeightsResult baseOutside = baseQuery.WeightsAt(
+        WorldAt(outside.x, outside.y), basePlacement, TerrainLayerWeightsRequest{resident.Info()});
+    CHECK(fellBack.status == TerrainLayerWeightsStatus::Ready);
+    CheckWeightLayers(fellBack.layers, baseOutside.layers);
+
+    REQUIRE(resolved.world.SetOverlay(releases.base.asset, nullptr).applied);
+    for (const glm::dvec2 point : points)
+    {
+        INFO("cleared " << point.x << ", " << point.y);
+        const TerrainLayerWeightsResult got = resolved.world.LayerWeightsAt(WorldAt(point.x, point.y));
+        const TerrainLayerWeightsResult want = baseQuery.WeightsAt(
+            WorldAt(point.x, point.y), basePlacement, TerrainLayerWeightsRequest{resident.Info()});
+        CHECK(got.status == TerrainLayerWeightsStatus::Ready);
+        CheckWeightLayers(got.layers, want.layers);
+    }
+    std::filesystem::remove_all(releases.root);
+}
+
+TEST_CASE("A weight overlay tile is accepted only when it fits the release's tiles and weight layers",
+          "[terrain][overlay][weights]")
+{
+    const WeightedReleases releases = PublishWeightedReleases();
+    const TerrainReleaseHandle handle =
+        OpenOk(OpenTerrainRelease(releases.root, releases.base.asset, releases.base.release));
+    const TerrainDecodedWeights good = *ReadWeightsOk(handle, {0, 0});
+    CHECK_FALSE(ValidateTerrainOverlay(*WeightOverlay(releases.base.asset, 1, OneWeightTile(good)), handle));
+
+    const auto refuse = [&](const TerrainDecodedWeights &weights) -> std::string
+    {
+        const std::optional<std::string> reason =
+            ValidateTerrainOverlay(*WeightOverlay(releases.base.asset, 2, OneWeightTile(weights)), handle);
+        const std::string shown = reason ? *reason : std::string("accepted");
+        INFO(shown);
+        REQUIRE(reason);
+        return *reason;
+    };
+
+    TerrainDecodedWeights unknown = good;
+    unknown.tile = {7, 7};
+    const std::string unknownReason = refuse(unknown);
+    CHECK(unknownReason.find("(7, 7)") != std::string::npos);
+    CHECK(unknownReason.find("source tile") != std::string::npos);
+
+    TerrainDecodedWeights intervals = good;
+    intervals.intervals /= 2;
+    const std::string intervalReason = refuse(intervals);
+    CHECK(intervalReason.find("(0, 0)") != std::string::npos);
+    CHECK(intervalReason.find("intervals") != std::string::npos);
+
+    TerrainDecodedWeights slot = good;
+    slot.slots[0] = 9;
+    const std::string slotReason = refuse(slot);
+    CHECK(slotReason.find("(0, 0)") != std::string::npos);
+    CHECK(slotReason.find("slot") != std::string::npos);
+
+    TerrainDecodedWeights name = good;
+    name.layers[0] = "snow";
+    const std::string nameReason = refuse(name);
+    CHECK(nameReason.find("(0, 0)") != std::string::npos);
+    CHECK(nameReason.find("snow") != std::string::npos);
+
+    TerrainDecodedWeights length = good;
+    length.bytes.pop_back();
+    const std::string lengthReason = refuse(length);
+    CHECK(lengthReason.find("(0, 0)") != std::string::npos);
+    CHECK(lengthReason.find("length") != std::string::npos);
+
+    const TerrainLayout layout = OverlayLayout();
+    const TerrainReleaseInfo plain = Info(TerrainAsset(kRecipe), 0x0BAD);
+    const OpenedRelease unweighted = OpenInMemory(Encode(plain, layout, BuildTiles(layout), {.chunkTiles = 2}));
+    const std::optional<std::string> plainReason =
+        ValidateTerrainOverlay(*WeightOverlay(plain.asset, 3, OneWeightTile(good)), unweighted.handle);
+    const std::string shown = plainReason ? *plainReason : std::string("accepted");
+    INFO(shown);
+    REQUIRE(plainReason);
+    CHECK(plainReason->find("(0, 0)") != std::string::npos);
+    CHECK(plainReason->find("weight layers") != std::string::npos);
+
     std::filesystem::remove_all(releases.root);
 }

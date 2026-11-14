@@ -41,16 +41,32 @@ namespace mir
         // What the index says about one unit's image before it is read.
         struct WeightSource
         {
-            uint64_t checksum = 0;
+            // An overlay tile's payload address, or a release payload's checksum.
+            bool overlay = false;
+            uint64_t identity = 0;
             std::array<uint8_t, kTerrainDrawSlots> slots{};
             uint32_t side = 0;
             float invFootprint = 0.0f;
+            std::shared_ptr<const TerrainDecodedWeights> held;
         };
 
-        std::optional<WeightSource> FindWeightSource(const TerrainReleaseHandle &release, const TerrainWeightUnit &unit)
+        std::optional<WeightSource> FindWeightSource(const TerrainReleaseHandle &release, const TerrainWeightUnit &unit,
+                                                     const TerrainOverlay *overlay)
         {
             const TerrainIndex &index = release.Index();
             WeightSource source;
+            if (unit.kind == TerrainUnitKind::Tile && overlay && overlay->Asset() == unit.asset)
+                if (const std::shared_ptr<const TerrainDecodedWeights> *held = overlay->FindWeights(unit.coord);
+                    held && *held)
+                {
+                    source.overlay = true;
+                    source.identity = uint64_t(reinterpret_cast<uintptr_t>(held->get()));
+                    source.slots = (*held)->slots;
+                    source.side = static_cast<uint32_t>((*held)->intervals + 1);
+                    source.invFootprint = static_cast<float>(1.0 / index.layout.TileSize());
+                    source.held = *held;
+                    return source;
+                }
             if (unit.kind == TerrainUnitKind::Region)
             {
                 if (!index.regionGrid)
@@ -63,7 +79,7 @@ namespace mir
                 const double span = rect.maxX - rect.minX;
                 if (!(span > 0.0))
                     return std::nullopt;
-                source.checksum = record->checksum;
+                source.identity = record->checksum;
                 source.slots = record->slots;
                 source.side = record->side;
                 source.invFootprint = static_cast<float>(1.0 / span);
@@ -72,7 +88,7 @@ namespace mir
             const TerrainWeightRecord *record = index.FindWeight(unit.coord);
             if (!record)
                 return std::nullopt;
-            source.checksum = record->checksum;
+            source.identity = record->checksum;
             source.slots = record->slots;
             source.side = static_cast<uint32_t>(index.layout.IntervalsPerTile() + 1);
             source.invFootprint = static_cast<float>(1.0 / index.layout.TileSize());
@@ -93,7 +109,8 @@ namespace mir
 
     struct TerrainWeightResidency::Entry
     {
-        uint64_t checksum = 0;
+        bool overlay = false;
+        uint64_t identity = 0;
         uint64_t ticket = 0;
         uint64_t bytes = 0;
         float invFootprint = 0.0f;
@@ -102,6 +119,8 @@ namespace mir
         std::array<uint8_t, kTerrainDrawSlots> recordSlots{};
         WeightState state = WeightState::Reading;
         TextureHandle texture;
+        // Keeps an overlay payload alive so its address stays a valid identity.
+        std::shared_ptr<const TerrainDecodedWeights> overlayWeights;
     };
 
     TerrainSlotTable::TerrainSlotTable()
@@ -198,12 +217,33 @@ namespace mir
         }
     }
 
-    void TerrainWeightResidency::StartRead(const TerrainWeightWant &want, uint32_t side, uint64_t checksum,
+    bool TerrainWeightResidency::QueueUpload(Entry &entry, uint32_t side, std::span<const std::byte> bytes)
+    {
+        if (mSamplerRow == UINT32_MAX)
+            return false;
+
+        const TextureDesc desc{.width = side,
+                               .height = side,
+                               .pixels = bytes,
+                               .srgb = false,
+                               .generateMips = false};
+        TextureUploadSource source = PrepareTextureUpload(desc);
+        TextureHandle handle = source.desc.width != 0 ? mTextures.QueueTexture(std::move(source)) : kNullTexture;
+        if (handle.IsNull())
+            return false;
+        entry.texture = handle;
+        entry.bytes = bytes.size();
+        entry.state = WeightState::Uploading;
+        ++mQueued;
+        return true;
+    }
+
+    void TerrainWeightResidency::StartRead(const TerrainWeightWant &want, uint32_t side, uint64_t identity,
                                            const std::array<uint8_t, kTerrainDrawSlots> &recordSlots, float invFootprint,
                                            double now)
     {
         Entry entry;
-        entry.checksum = checksum;
+        entry.identity = identity;
         entry.ticket = mNextTicket++;
         entry.bytes = uint64_t(side) * side * 4;
         entry.invFootprint = invFootprint;
@@ -238,6 +278,24 @@ namespace mir
         mEntries.insert_or_assign(want.unit, std::move(entry));
     }
 
+    void TerrainWeightResidency::StartUpload(const TerrainWeightWant &want,
+                                             const std::shared_ptr<const TerrainDecodedWeights> &weights,
+                                             float invFootprint, double now)
+    {
+        Entry entry;
+        entry.overlay = true;
+        entry.identity = uint64_t(reinterpret_cast<uintptr_t>(weights.get()));
+        entry.overlayWeights = weights;
+        entry.ticket = mNextTicket++;
+        entry.invFootprint = invFootprint;
+        entry.distance = want.distance;
+        entry.lastRequested = now;
+        entry.recordSlots = weights->slots;
+        if (!QueueUpload(entry, static_cast<uint32_t>(weights->intervals + 1), weights->bytes))
+            return;
+        mEntries.insert_or_assign(want.unit, std::move(entry));
+    }
+
     void TerrainWeightResidency::TakeFinished()
     {
         std::deque<ReadResult> finished;
@@ -269,21 +327,9 @@ namespace mir
                 continue;
             }
 
-            const TextureDesc desc{.width = result.side,
-                                   .height = result.side,
-                                   .pixels = std::span<const std::byte>(result.bytes),
-                                   .srgb = false,
-                                   .generateMips = false};
-            TextureUploadSource source = PrepareTextureUpload(desc);
-            TextureHandle handle = source.desc.width != 0 ? mTextures.QueueTexture(std::move(source))
-                                                          : kNullTexture;
-            if (handle.IsNull())
-                continue;
-            entry.texture = handle;
-            entry.bytes = result.bytes.size();
             entry.recordSlots = result.recordSlots;
-            entry.state = WeightState::Uploading;
-            ++mQueued;
+            if (!QueueUpload(entry, result.side, result.bytes))
+                continue;
             mEntries.emplace(result.unit, std::move(entry));
         }
     }
@@ -336,7 +382,8 @@ namespace mir
         std::vector<std::pair<TerrainWeightUnit, TerrainWeightWant>> reads;
         for (const auto &[key, want] : wants)
         {
-            const std::optional<WeightSource> source = FindWeightSource(*want.release, key);
+            const std::optional<WeightSource> source =
+                FindWeightSource(*want.release, key, want.overlay.get());
             auto found = mEntries.find(key);
             if (!source)
             {
@@ -349,7 +396,7 @@ namespace mir
             }
             if (found != mEntries.end())
             {
-                if (found->second.checksum == source->checksum)
+                if (found->second.overlay == source->overlay && found->second.identity == source->identity)
                 {
                     found->second.recordSlots = source->slots;
                     found->second.invFootprint = source->invFootprint;
@@ -377,10 +424,12 @@ namespace mir
 
         for (const auto &[key, want] : reads)
         {
-            const std::optional<WeightSource> source = FindWeightSource(*want.release, key);
+            const std::optional<WeightSource> source =
+                FindWeightSource(*want.release, key, want.overlay.get());
             if (!source)
                 continue;
-            const uint64_t bytes = uint64_t(source->side) * source->side * 4;
+            const uint64_t bytes =
+                source->overlay ? source->held->bytes.size() : uint64_t(source->side) * source->side * 4;
             if (mSamplerRow == UINT32_MAX)
             {
                 ++mSkippedBudget;
@@ -392,7 +441,10 @@ namespace mir
                 ++mSkippedBudget;
                 continue;
             }
-            StartRead(want, source->side, source->checksum, source->slots, source->invFootprint, now);
+            if (source->overlay)
+                StartUpload(want, source->held, source->invFootprint, now);
+            else
+                StartRead(want, source->side, source->identity, source->slots, source->invFootprint, now);
         }
     }
 

@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -28,6 +29,8 @@
 
 namespace mir
 {
+    class TerrainOverlay;
+
     // One material layer with a nonzero share of a point's weights.
     struct TerrainLayerWeight
     {
@@ -99,6 +102,15 @@ namespace mir
         TerrainLayerWeightsResult WeightsAt(TerrainLocalPosition local, const TerrainLayerWeightsRequest &request);
         TerrainLayerWeightsResult WeightsAt(WorldPosition world, const TerrainPlacement &placement,
                                             const TerrainLayerWeightsRequest &request);
+
+        // Answers from a weight tile the overlay holds, before the release's own payload; nullopt elsewhere, so
+        // the release answers unchanged.
+        std::optional<TerrainLayerWeightsResult> OverlayWeightsAt(const TerrainOverlay &overlay,
+                                                                  TerrainLocalPosition local,
+                                                                  const TerrainLayerWeightsRequest &request);
+        std::optional<TerrainLayerWeightsResult> OverlayWeightsAt(const TerrainOverlay &overlay, WorldPosition world,
+                                                                  const TerrainPlacement &placement,
+                                                                  const TerrainLayerWeightsRequest &request);
 
         // Replaces whatever the slot held.
         TerrainPackError Insert(const TerrainReleaseInfo &from, std::shared_ptr<const TerrainDecodedWeights> weights);

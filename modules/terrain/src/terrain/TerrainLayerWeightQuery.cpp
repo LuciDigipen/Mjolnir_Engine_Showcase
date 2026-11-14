@@ -11,6 +11,7 @@
 
 #include "PackInternal.h"
 
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TileAddressing.h>
 
 #include <algorithm>
@@ -32,6 +33,60 @@ namespace mir
             result.status = TerrainLayerWeightsStatus::Failed;
             result.failure = failure;
             result.layers.clear();
+            return result;
+        }
+
+        TerrainLayerWeightsResult Sample(const TerrainDecodedWeights &weights, const TerrainLayout &layout,
+                                         const TileAddress &address, TerrainLayerWeightsResult result)
+        {
+            const int32_t side = weights.intervals + 1;
+            const int32_t x0 = address.cell.origin.x - layout.TileFirstSample(address.tile.x);
+            const int32_t z0 = address.cell.origin.z - layout.TileFirstSample(address.tile.z);
+            const int32_t x1 = std::min(x0 + 1, side - 1);
+            const int32_t z1 = std::min(z0 + 1, side - 1);
+            const double fx = address.cell.fraction.x;
+            const double fz = address.cell.fraction.y;
+
+            const auto texel = [&weights, side](int32_t x, int32_t z, size_t slot)
+            {
+                const size_t index = size_t(z) * size_t(side) + size_t(x);
+                return double(std::to_integer<uint8_t>(weights.bytes[index * kTerrainWeightSlots + slot])) / 255.0;
+            };
+
+            size_t used = 0;
+            while (used < kTerrainWeightSlots && weights.slots[used] != 0xFF)
+                ++used;
+
+            std::array<double, kTerrainWeightSlots> channels{};
+            double sum = 0.0;
+            for (size_t slot = 0; slot < used; ++slot)
+            {
+                const double bottom = texel(x0, z0, slot) * (1.0 - fx) + texel(x1, z0, slot) * fx;
+                const double top = texel(x0, z1, slot) * (1.0 - fx) + texel(x1, z1, slot) * fx;
+                channels[slot] = bottom * (1.0 - fz) + top * fz;
+                sum += channels[slot];
+            }
+            if (!(sum > 0.0))
+            {
+                result.status = TerrainLayerWeightsStatus::NoWeights;
+                return result;
+            }
+
+            result.layers.reserve(used);
+            for (size_t slot = 0; slot < used; ++slot)
+            {
+                const double weight = channels[slot] / sum;
+                if (weight > 0.0)
+                    result.layers.push_back({weights.layers[slot], weight});
+            }
+            std::sort(result.layers.begin(), result.layers.end(),
+                      [](const TerrainLayerWeight &a, const TerrainLayerWeight &b)
+                      {
+                          if (a.weight != b.weight)
+                              return a.weight > b.weight;
+                          return a.name < b.name;
+                      });
+            result.status = TerrainLayerWeightsStatus::Ready;
             return result;
         }
     }
@@ -94,56 +149,7 @@ namespace mir
             mUsed.push_back({mRelease.release, {mRelease.asset, tile}});
         }
 
-        const TerrainDecodedWeights &weights = *it->second.weights;
-        const int32_t side = weights.intervals + 1;
-        const int32_t x0 = address.cell.origin.x - mLayout.TileFirstSample(tile.x);
-        const int32_t z0 = address.cell.origin.z - mLayout.TileFirstSample(tile.z);
-        const int32_t x1 = std::min(x0 + 1, side - 1);
-        const int32_t z1 = std::min(z0 + 1, side - 1);
-        const double fx = address.cell.fraction.x;
-        const double fz = address.cell.fraction.y;
-
-        const auto texel = [&weights, side](int32_t x, int32_t z, size_t slot)
-        {
-            const size_t index = size_t(z) * size_t(side) + size_t(x);
-            return double(std::to_integer<uint8_t>(weights.bytes[index * kTerrainWeightSlots + slot])) / 255.0;
-        };
-
-        size_t used = 0;
-        while (used < kTerrainWeightSlots && weights.slots[used] != 0xFF)
-            ++used;
-
-        std::array<double, kTerrainWeightSlots> channels{};
-        double sum = 0.0;
-        for (size_t slot = 0; slot < used; ++slot)
-        {
-            const double bottom = texel(x0, z0, slot) * (1.0 - fx) + texel(x1, z0, slot) * fx;
-            const double top = texel(x0, z1, slot) * (1.0 - fx) + texel(x1, z1, slot) * fx;
-            channels[slot] = bottom * (1.0 - fz) + top * fz;
-            sum += channels[slot];
-        }
-        if (!(sum > 0.0))
-        {
-            result.status = TerrainLayerWeightsStatus::NoWeights;
-            return result;
-        }
-
-        result.layers.reserve(used);
-        for (size_t slot = 0; slot < used; ++slot)
-        {
-            const double weight = channels[slot] / sum;
-            if (weight > 0.0)
-                result.layers.push_back({weights.layers[slot], weight});
-        }
-        std::sort(result.layers.begin(), result.layers.end(),
-                  [](const TerrainLayerWeight &a, const TerrainLayerWeight &b)
-                  {
-                      if (a.weight != b.weight)
-                          return a.weight > b.weight;
-                      return a.name < b.name;
-                  });
-        result.status = TerrainLayerWeightsStatus::Ready;
-        return result;
+        return Sample(*it->second.weights, mLayout, address, result);
     }
 
     TerrainLayerWeightsResult TerrainLayerWeightQuery::WeightsAt(WorldPosition world, const TerrainPlacement &placement,
@@ -157,6 +163,37 @@ namespace mir
         if (!local)
             return Fail(result, TerrainLayerWeightsFailure::InvalidInput);
         return WeightsAt(*local, request);
+    }
+
+    std::optional<TerrainLayerWeightsResult> TerrainLayerWeightQuery::OverlayWeightsAt(
+        const TerrainOverlay &overlay, TerrainLocalPosition local, const TerrainLayerWeightsRequest &request)
+    {
+        if (request.release != mRelease)
+            return std::nullopt;
+
+        const TileAddress address = AddressLocal(mLayout, local);
+        if (!address.IsInside())
+            return std::nullopt;
+        const std::shared_ptr<const TerrainDecodedWeights> *held = overlay.FindWeights(address.tile);
+        if (!held || !*held)
+            return std::nullopt;
+
+        TerrainLayerWeightsResult result;
+        result.release = mRelease;
+        result.tile = address.tile;
+        return Sample(**held, mLayout, address, result);
+    }
+
+    std::optional<TerrainLayerWeightsResult> TerrainLayerWeightQuery::OverlayWeightsAt(
+        const TerrainOverlay &overlay, WorldPosition world, const TerrainPlacement &placement,
+        const TerrainLayerWeightsRequest &request)
+    {
+        if (placement.asset != mRelease.asset)
+            return std::nullopt;
+        const std::optional<TerrainLocalPosition> local = TryWorldToTerrainLocal(world, placement.translation);
+        if (!local)
+            return std::nullopt;
+        return OverlayWeightsAt(overlay, *local, request);
     }
 
     TerrainPackError TerrainLayerWeightQuery::CheckSlot(const TerrainReleaseInfo &from, TileCoord tile) const

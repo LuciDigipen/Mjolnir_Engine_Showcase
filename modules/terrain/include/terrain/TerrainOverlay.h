@@ -9,6 +9,7 @@
 #pragma once
 
 #include <assets/AssetId.h>
+#include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainRelease.h>
 #include <terrain/TileHeights.h>
 #include <terrain/TileKey.h>
@@ -26,19 +27,27 @@ namespace mir
     {
       public:
         TerrainOverlay(AssetId asset, uint64_t revision,
-                       std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>> tiles);
+                       std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>> tiles,
+                       std::unordered_map<TileCoord, std::shared_ptr<const TerrainDecodedWeights>> weights = {});
 
         AssetId Asset() const { return mAsset; }
         uint64_t Revision() const { return mRevision; }
         const std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>> &Tiles() const { return mTiles; }
+        const std::unordered_map<TileCoord, std::shared_ptr<const TerrainDecodedWeights>> &WeightTiles() const
+        {
+            return mWeights;
+        }
 
         // Null unless this snapshot holds the tile.
         const std::shared_ptr<const TileHeights> *Find(TileCoord tile) const;
+        // Null unless this snapshot holds the tile's weights.
+        const std::shared_ptr<const TerrainDecodedWeights> *FindWeights(TileCoord tile) const;
 
       private:
         AssetId mAsset;
         uint64_t mRevision = 0;
         std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>> mTiles;
+        std::unordered_map<TileCoord, std::shared_ptr<const TerrainDecodedWeights>> mWeights;
     };
 
     // reason is one line when the snapshot was refused.
@@ -48,8 +57,8 @@ namespace mir
         std::string reason;
     };
 
-    // Empty when every tile is a source tile of the release with its intervals and finite samples; otherwise
-    // one line naming the offending tile.
+    // Empty when every tile is a source tile of the release with its intervals, finite samples and weight slots
+    // that name the release's layers; otherwise one line naming the offending tile.
     std::optional<std::string> ValidateTerrainOverlay(const TerrainOverlay &overlay,
                                                       const TerrainReleaseHandle &release);
 }

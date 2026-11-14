@@ -1297,7 +1297,8 @@ namespace mir
 
     void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain)
     {
-        const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
+        const TerrainWorld &world = mWorld->Resource<TerrainWorld>();
+        const std::span<const TerrainInstanceState> instances = world.Instances();
         for (const TerrainDrawUnit &unit : units)
         {
             if (unit.instance >= instances.size())
@@ -1312,11 +1313,18 @@ namespace mir
             const TerrainWeightUnit key{instance.release->Info().asset, unit.kind,
                                          unit.kind == TerrainUnitKind::Region ? unit.geometry.level : 0u,
                                          unit.geometry.coord};
+            std::shared_ptr<const TerrainOverlay> overlay;
+            for (const TerrainWorld::AssetState &asset : world.Assets())
+                if (asset.asset == instance.placement.asset)
+                {
+                    overlay = asset.overlay;
+                    break;
+                }
             std::array<uint32_t, 4> terrain{};
             if (mWeights && slots)
             {
                 mWeights->Request({instance.release->SharedHandle(), key,
-                                   static_cast<float>(unit.distance)});
+                                   static_cast<float>(unit.distance), std::move(overlay)});
                 terrain = mWeights->Words(key, *slots);
             }
             const MaterialHandle material =

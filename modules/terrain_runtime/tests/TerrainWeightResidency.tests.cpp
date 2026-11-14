@@ -12,6 +12,7 @@
 #include <terrain_runtime/TerrainWeightResidency.h>
 
 #include <renderer/TerrainDrawData.h>
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainRegionWeights.h>
 
 #include "support/FakeTextureUploader.h"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -203,10 +205,10 @@ namespace
         }
 
         void DrawUnit(const std::shared_ptr<const TerrainReleaseHandle> &release, const TerrainWeightUnit &unit,
-                      float distance)
+                      float distance, std::shared_ptr<const TerrainOverlay> overlay = {})
         {
             Begin();
-            residency.Request({release, unit, distance});
+            residency.Request({release, unit, distance, std::move(overlay)});
             Install();
         }
 
@@ -216,6 +218,35 @@ namespace
             Install();
         }
     };
+
+    using OverlayWeightMap = std::unordered_map<TileCoord, std::shared_ptr<const TerrainDecodedWeights>>;
+
+    std::shared_ptr<const TerrainDecodedWeights> OverlayWeights(
+        TileCoord tile, int32_t intervals, std::array<uint8_t, kTerrainWeightSlots> slots,
+        std::array<std::string, kTerrainWeightSlots> layers, uint8_t first)
+    {
+        auto weights = std::make_shared<TerrainDecodedWeights>();
+        weights->tile = tile;
+        weights->intervals = intervals;
+        weights->slots = slots;
+        weights->layers = std::move(layers);
+        const int32_t side = intervals + 1;
+        weights->bytes.resize(size_t(side) * size_t(side) * kTerrainWeightSlots);
+        for (int32_t z = 0; z < side; ++z)
+            for (int32_t x = 0; x < side; ++x)
+            {
+                const size_t texel = (size_t(z) * size_t(side) + size_t(x)) * kTerrainWeightSlots;
+                weights->bytes[texel] = std::byte(first);
+                weights->bytes[texel + 1] = std::byte(255 - first);
+            }
+        return weights;
+    }
+
+    std::shared_ptr<const TerrainOverlay> OverlayWith(AssetId asset, uint64_t revision, OverlayWeightMap weights)
+    {
+        return std::make_shared<const TerrainOverlay>(
+            asset, revision, std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>>{}, std::move(weights));
+    }
 }
 
 TEST_CASE("A drawn tile queues one weight texture and draws with its words", "[terrain_runtime][weights]")
@@ -571,4 +602,99 @@ TEST_CASE("A release without weights queues nothing for tiles or Regions", "[ter
 
     CHECK(rig.residency.Words(TileUnit(weighted.asset, {0, 0}), slots) != kNoTerrainDrawWords);
     CHECK(rig.residency.Words({weighted.asset, TerrainUnitKind::Region, 0, {0, 0}}, slots) == kNoTerrainDrawWords);
+}
+
+TEST_CASE("An overlay weight tile uploads without a read and draws its texture", "[terrain_runtime][weights]")
+{
+    WeightedRelease release(0xF2, {0.5f, 0.5f});
+    Rig rig(uint64_t(1) << 24);
+    const TileCoord tile{0, 0};
+    const int32_t intervals = release.layout.IntervalsPerTile();
+    const TerrainWeightUnit unit = TileUnit(release.asset, tile);
+    const std::shared_ptr<const TerrainDecodedWeights> weights =
+        OverlayWeights(tile, intervals, {0, 1, 0xFF, 0xFF}, {"dirt", "sand", "", ""}, 200);
+    const std::shared_ptr<const TerrainOverlay> overlay = OverlayWith(release.asset, 1, {{tile, weights}});
+    const TerrainByteStats before = release.source->Stats();
+
+    rig.Begin();
+    rig.residency.Request({release.handle, unit, 1.0f, overlay});
+    rig.Install();
+    CHECK(rig.executor->RunAll() == 0);
+    CHECK(release.source->Stats().reads == before.reads);
+    REQUIRE(rig.textures.mQueued == 1);
+
+    const uint32_t side = uint32_t(intervals + 1);
+    const FakeTextureUploader::Entry &entry = rig.textures.mEntries.at(0);
+    CHECK(entry.mSource.desc.width == side);
+    CHECK(entry.mSource.desc.height == side);
+    CHECK(std::equal(weights->bytes.begin(), weights->bytes.end(), entry.mSource.desc.pixels.begin()));
+
+    const TerrainSlotTable slots;
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.Install();
+
+    const std::array<uint32_t, 4> words = rig.residency.Words(unit, slots);
+    CHECK(words[0] == 1);
+    CHECK(words[1] == kSamplerRow);
+    CHECK(words[2] == 0xFFFF0000u);
+    CHECK(std::bit_cast<float>(words[3]) == 1.0f / float(release.layout.TileSize()));
+
+    TerrainSlotTable custom;
+    const uint8_t table[2] = {3, 2};
+    custom.Set(table);
+    CHECK(rig.residency.Words(unit, custom)[2] == 0xFFFF0203u);
+}
+
+TEST_CASE("A new overlay payload re-uploads a weight tile, a kept one does not, and dropping it returns to the "
+          "release",
+          "[terrain_runtime][weights]")
+{
+    WeightedRelease release(0xF3, {0.5f, 0.5f});
+    Rig rig(uint64_t(1) << 24);
+    const TerrainSlotTable slots;
+    const TileCoord tile{0, 0};
+    const int32_t intervals = release.layout.IntervalsPerTile();
+    const TerrainWeightUnit unit = TileUnit(release.asset, tile);
+
+    const auto first = OverlayWeights(tile, intervals, {0, 1, 0xFF, 0xFF}, {"dirt", "sand", "", ""}, 200);
+    rig.DrawUnit(release.handle, unit, 1.0f, OverlayWith(release.asset, 1, {{tile, first}}));
+    CHECK(rig.executor->RunAll() == 0);
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.Install();
+    REQUIRE(rig.residency.Words(unit, slots)[0] == 1);
+
+    rig.DrawUnit(release.handle, unit, 1.0f, OverlayWith(release.asset, 2, {{tile, first}}));
+    CHECK(rig.textures.mQueued == 1);
+    CHECK(rig.textures.mRetired.empty());
+    CHECK(rig.residency.Words(unit, slots)[0] == 1);
+
+    const auto changed = OverlayWeights(tile, intervals, {0, 1, 0xFF, 0xFF}, {"dirt", "sand", "", ""}, 64);
+    rig.DrawUnit(release.handle, unit, 1.0f, OverlayWith(release.asset, 3, {{tile, changed}}));
+    CHECK(rig.textures.mRetired.size() == 1);
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
+    CHECK(rig.executor->RunAll() == 0);
+    CHECK(rig.textures.mQueued == 2);
+    rig.textures.Complete(TextureHandle{1, 1});
+    rig.Install();
+    CHECK(rig.residency.Words(unit, slots)[0] == 2);
+    CHECK(std::equal(changed->bytes.begin(), changed->bytes.end(),
+                     rig.textures.mEntries.at(1).mSource.desc.pixels.begin()));
+
+    const TerrainByteStats before = release.source->Stats();
+    rig.DrawUnit(release.handle, unit, 1.0f, OverlayWith(release.asset, 4, {}));
+    CHECK(rig.textures.mRetired.size() == 2);
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
+    CHECK(rig.executor->RunAll() == 1);
+    CHECK(release.source->Stats().reads == before.reads + 1);
+    rig.Install();
+    CHECK(rig.textures.mQueued == 3);
+    rig.textures.Complete(TextureHandle{2, 1});
+    rig.Install();
+    CHECK(rig.residency.Words(unit, slots)[0] == 3);
+
+    const TerrainResult<TerrainDecodedWeights> decoded = release.handle->ReadWeights(tile);
+    REQUIRE(decoded);
+    CHECK(std::equal(decoded.value->bytes.begin(), decoded.value->bytes.end(),
+                     rig.textures.mEntries.at(2).mSource.desc.pixels.begin()));
 }

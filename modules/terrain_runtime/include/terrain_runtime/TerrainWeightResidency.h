@@ -11,6 +11,7 @@
 #include <renderer/ITextureUploader.h>
 #include <renderer/TerrainDrawData.h>
 #include <terrain/TerrainExecutor.h>
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainRelease.h>
 #include <terrain/TerrainStreamingSettings.h>
@@ -18,6 +19,7 @@
 #include <terrain/TileKey.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -72,6 +74,9 @@ namespace mir
         TerrainWeightUnit unit;
         // Meters from the viewer; nearer units get the budget first within their kind.
         float distance = 0.0f;
+        // The asset's edited weight tiles, when it has a snapshot; a tile they hold is uploaded in place of the
+        // release payload.
+        std::shared_ptr<const TerrainOverlay> overlay;
     };
 
     struct TerrainWeightStats
@@ -135,8 +140,11 @@ namespace mir
         void Retire(Entry &entry);
         // Frees room by retiring entries that rank behind an incoming unit.
         void MakeRoom(uint64_t bytes, TerrainUnitKind kind, float distance);
-        void StartRead(const TerrainWeightWant &want, uint32_t side, uint64_t checksum,
+        bool QueueUpload(Entry &entry, uint32_t side, std::span<const std::byte> bytes);
+        void StartRead(const TerrainWeightWant &want, uint32_t side, uint64_t identity,
                        const std::array<uint8_t, kTerrainDrawSlots> &recordSlots, float invFootprint, double now);
+        void StartUpload(const TerrainWeightWant &want, const std::shared_ptr<const TerrainDecodedWeights> &weights,
+                         float invFootprint, double now);
         void TakeFinished();
 
         std::shared_ptr<TerrainExecutor> mExecutor;

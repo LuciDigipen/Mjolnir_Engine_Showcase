@@ -385,6 +385,11 @@ namespace mir
         for (const TerrainInstanceState &instance : mInstances)
         {
             const TerrainLayerWeightsRequest request{instance.release->Info()};
+            if (const AssetState *asset = FindAsset(mAssets, instance.placement.asset); asset && asset->overlay)
+                if (std::optional<TerrainLayerWeightsResult> overlay =
+                        instance.release->WeightQuery().OverlayWeightsAt(*asset->overlay, world, instance.placement,
+                                                                         request))
+                    return *overlay;
             TerrainLayerWeightsResult result =
                 instance.release->WeightQuery().WeightsAt(world, instance.placement, request);
             if (result.status != TerrainLayerWeightsStatus::OutsideMap)
