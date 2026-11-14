@@ -407,6 +407,7 @@ namespace mir
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mRayTracer->ResetDeformations(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
+            mImGuiOverlay->Collect(mFrameSync->CompletedValue());
             CollectReleasedResources(mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
             mMaterialStore->RefreshTextures(*mResources, mFrameSync->CompletedValue(), frame->signalValue);

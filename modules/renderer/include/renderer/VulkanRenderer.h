@@ -225,12 +225,15 @@ namespace mir
 
         // abstraction from imgui
         void SetImGuiDrawData(ImDrawData *drawData);
+        // Returns zero unless the texture is ready. Retirement also releases its UI binding.
+        uint64_t ImGuiTexture(TextureHandle handle);
         MeshHandle CreateMesh(std::span<const Vertex> vertices, std::span<const uint32_t> indices) override;
 
         bool DestroyMesh(MeshHandle handle);
 
         TextureHandle CreateTexture(const TextureDesc &desc);
         TextureHandle QueueTexture(TextureUploadSource source) override;
+        std::size_t TextureSlotsAvailable() const override;
         TextureUploadState TextureState(TextureHandle handle) const override;
         bool RetireTexture(TextureHandle handle) override;
         uint64_t TextureFootprint(TextureHandle handle) const override;

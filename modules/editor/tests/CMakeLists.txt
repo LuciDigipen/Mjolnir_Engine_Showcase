@@ -9,6 +9,7 @@ engine_add_module_tests(editor
     BuildSettings.tests.cpp
     ComponentCommands.tests.cpp
     ContentBrowserWatcher.tests.cpp
+    ContentThumbnails.tests.cpp
     DocumentNodeCommands.tests.cpp
     EditorCamera.tests.cpp
     EntityCommands.tests.cpp
@@ -19,6 +20,7 @@ engine_add_module_tests(editor
     PrefabAuthoringAdapter.tests.cpp
     PrefabPlayMarks.tests.cpp
     PrefabWorkspace.tests.cpp
+    SettingsPanels.tests.cpp
     SnapToTerrain.tests.cpp
     ViewPie.tests.cpp
     WorldSceneOps.tests.cpp

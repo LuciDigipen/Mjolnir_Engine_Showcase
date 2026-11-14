@@ -68,10 +68,10 @@ namespace mir
         AssetUploadCache(AsyncAssetService *assets, const AssetDecoder<Decoded> &decoder,
             Queue queue, State state, Retire retire, Footprint footprint, Metadata metadata,
             std::function<uint64_t()> retiring = {}, std::shared_ptr<GpuResidency> residency = nullptr,
-            GpuCategory category = GpuCategory::Mesh)
+            GpuCategory category = GpuCategory::Mesh, std::function<bool()> admit = {})
             : mAssets(assets), mDecoder(decoder), mQueue(std::move(queue)), mState(std::move(state)),
               mRetire(std::move(retire)), mFootprint(std::move(footprint)), mMetadata(std::move(metadata)),
-              mRetiring(std::move(retiring)), mResidency(std::move(residency)), mCategory(category)
+              mRetiring(std::move(retiring)), mResidency(std::move(residency)), mCategory(category), mAdmit(std::move(admit))
         {
             if (mResidency)
             {
@@ -144,6 +144,7 @@ namespace mir
         std::vector<UploadKey> mWaiting;
         std::shared_ptr<GpuResidency> mResidency;
         GpuCategory mCategory;
+        std::function<bool()> mAdmit;
         uint32_t mHolder = 0;
         std::optional<uint64_t> mCap;
         uint64_t mUseSerial = 0;

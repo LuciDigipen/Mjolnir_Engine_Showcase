@@ -40,6 +40,10 @@ namespace mir
     {
         EditorThemeChoice theme = EditorThemeChoice::Midnight;
 
+        bool contentGrid = false;
+        int contentThumbnailSize = 80;
+        int contentThumbnailCapacity = 256;
+
         bool backgroundEnabled = false;
         // file name inside EditorPreferencesDir(); empty is no image
         std::string backgroundFile;

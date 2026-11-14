@@ -114,6 +114,7 @@ namespace mir::vk
         VkImageView ImageViewAt(uint32_t slot) const;
         uint64_t TextureTableVersion() const { return mTextureTableVersion; }
         uint64_t TextureAllocatedBytes() const;
+        std::size_t TextureSlotsAvailable() const { return mTextureTable.Available(); }
 
         TextureHandle DefaultWhiteTexture() const { return mDefaultWhiteTexture; }
         TextureHandle DefaultNormalTexture() const { return mDefaultNormalTexture; }

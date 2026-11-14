@@ -86,3 +86,20 @@ TEST_CASE("Texture release skips empty slots and reuses each row only once", "[r
     CHECK(table.Contains(third));
     CHECK(table.Add().IsNull());
 }
+
+TEST_CASE("TextureTable reports reusable capacity after retirement", "[renderer][texture-table]")
+{
+    mir::TextureTable table(2);
+    CHECK(table.Available() == 2);
+    const auto first = table.Add();
+    const auto second = table.Add();
+    CHECK(table.Available() == 0);
+    CHECK(table.Add().IsNull());
+    REQUIRE(table.Remove(first));
+    CHECK(table.Available() == 1);
+    const auto recycled = table.Add();
+    CHECK(recycled.mIndex == first.mIndex);
+    CHECK(recycled.mGeneration != first.mGeneration);
+    CHECK(table.Available() == 0);
+    CHECK(table.Contains(second));
+}
