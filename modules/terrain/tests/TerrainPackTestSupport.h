@@ -198,6 +198,8 @@ namespace mir::test
         REQUIRE(WriteBytes(dir / kTerrainIndexFileName, encoded.index));
         for (const TerrainEncodedPack &pack : encoded.packs)
             REQUIRE(WriteBytes(dir / pack.fileName, pack.bytes));
+        for (const TerrainEncodedPack &pack : encoded.weightPacks)
+            REQUIRE(WriteBytes(dir / pack.fileName, pack.bytes));
         return dir;
     }
 

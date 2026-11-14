@@ -381,6 +381,21 @@ over the same tiles. Format 2 permits sparse layers and one source spacing
 per tile; optional coarse payloads can answer while a fine payload loads.
 P2 bakes coarse levels and measured per-tile deviation bounds.
 
+### Layer weight queries
+
+A `TerrainLayerWeightQuery` sits next to a release's `TerrainHeightQuery` and
+answers the material layer weights of a point from the tile payloads. It uses
+the same non-blocking model: `WeightsAt` never reads files, and a missing tile
+records one `TerrainLayerWeightPayloadRequest` that the streamer fills with
+`TerrainReleaseHandle::ReadWeights`. The decoded RGBA8 tile stays resident
+until the streamer's CPU query retain time expires. The value is the bilinear
+blend of the four surrounding reference-grid texels of the tile containing the
+point, renormalised over the used slots, with zero-weight layers dropped and
+the rest sorted by weight then name. A release or tile without weight records
+answers `NoWeights` without requesting a read; overlay heights never affect
+the answer. `TerrainWorld::LayerWeightsAt` takes the first instance containing
+the world point, like `HeightAt`.
+
 ### Streaming and CPU residency (issue #126)
 
 A `TerrainStreamer` (`terrain/TerrainStreamer.h`) makes payloads resident.
@@ -1300,6 +1315,8 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainHeightQuery` | `terrain/TerrainHeightQuery.h` | resident heights of one release; `HeightAt` (terrain-local, or world plus placement), `Insert`, `MarkFailed`, `Evict`, `Residency`, `ResidentTile`, `TileError`, `PayloadRequests`, `TakePayloadRequests`, `TakeUsedTiles` |
 | `TerrainHeightRequest`, `TerrainHeightResult`, `TerrainHeightStatus`, `TerrainHeightFailure` | `terrain/TerrainHeightQuery.h` | bound release and required spacing in; status, local height, `worldPoint`, spacing, source spacing, known or unknown `maxError`, release, tile and layer out |
 | `TerrainHeightLayer`, `TerrainPayloadRequest`, `TerrainTileResidency` | `terrain/TerrainHeightQuery.h` | one spacing of the release (baked tiles, measured deviation); a missing payload for a loader; a tile's slot state |
+| `TerrainLayerWeightQuery` | `terrain/TerrainLayerWeightQuery.h` | resident material layer weights of one release; `WeightsAt` (terrain-local, or world plus placement), `Insert`, `MarkFailed`, `Evict`, `Residency`, `ResidentTile`, `TileError`, `PayloadRequests`, `TakePayloadRequests`, `TakeUsedTiles` |
+| `TerrainLayerWeightsResult`, `TerrainLayerWeight`, `TerrainLayerWeightPayloadRequest`, `TerrainLayerWeightsStatus`, `TerrainLayerWeightsFailure` | `terrain/TerrainLayerWeightQuery.h` | status, failure, sorted nonzero layers, release and tile out; one named layer weight; a missing weight payload for a loader; the query's statuses and failures |
 | `PreloadTerrainTiles`, `PreloadAllTerrainTiles` | `terrain/TerrainHeightQuery.h` | synchronous fill of a query from its own release handle, recording per-tile failures; tools and tests |
 | `TerrainStreamer` | `terrain/TerrainStreamer.h` | asynchronous payload reads and CPU residency: `Add` (residency mode; staged for a release switch), `Find`, `ModeOf`, `AddInterest`/`SetInterest`/`RemoveInterest`, `Update` (the per-frame install point), `WaitForEager`, `WaitForCompletion`, `Status`, `Heights`/`Lod`/`Normals`/`Region`, `RetryFailed`, `Stats`, `Usage` |
 | `TerrainReleaseUsage` | `terrain/TerrainStreamer.h` | one release's share of a residency (waiting, in flight, ready, failed, bytes, first failure); `Usage(release)` on the streamer, the mesh residency and the collision residency |

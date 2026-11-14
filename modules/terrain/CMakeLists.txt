@@ -14,6 +14,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainExecutor.cpp
     src/terrain/TerrainGround.cpp
     src/terrain/TerrainHeightQuery.cpp
+    src/terrain/TerrainLayerWeightQuery.cpp
     src/terrain/TerrainLayout.cpp
     src/terrain/TerrainLod.cpp
     src/terrain/TerrainMaterialUv.cpp

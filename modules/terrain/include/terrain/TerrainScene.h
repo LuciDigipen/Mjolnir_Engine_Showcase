@@ -13,6 +13,7 @@
 #include <core/math/WorldCoordinates.h>
 #include <terrain/TerrainHeightQuery.h>
 #include <terrain/TerrainIdentity.h>
+#include <terrain/TerrainLayerWeightQuery.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainPackFormat.h>
@@ -131,6 +132,8 @@ namespace mir
       }
         TerrainHeightQuery &Query() { return mQuery; }
         const TerrainHeightQuery &Query() const { return mQuery; }
+        TerrainLayerWeightQuery &WeightQuery() { return mWeightQuery; }
+        const TerrainLayerWeightQuery &WeightQuery() const { return mWeightQuery; }
 
         // Valid while this object lives.
         TileSampleLookup Lookup(uint32_t layer = 0) const;
@@ -140,6 +143,7 @@ namespace mir
 
       std::shared_ptr<const TerrainReleaseHandle> mHandle;
       TerrainHeightQuery mQuery;
+      TerrainLayerWeightQuery mWeightQuery;
     };
 
     enum class TerrainEagerLoad : uint8_t
@@ -211,6 +215,9 @@ namespace mir
 
         // On a shared edge, the first instance answers.
         TerrainHeightResult HeightAt(WorldPosition world, double requiredSpacing);
+
+        // On a shared edge, the first instance answers.
+        TerrainLayerWeightsResult LayerWeightsAt(WorldPosition world);
 
         // Applied whole or refused, keeping the previous snapshot; null clears it.
         TerrainOverlayApplyResult SetOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay);

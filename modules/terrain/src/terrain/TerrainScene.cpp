@@ -318,7 +318,8 @@ namespace mir
     }
 
     TerrainResidentRelease::TerrainResidentRelease(std::shared_ptr<const TerrainReleaseHandle> handle)
-        : mHandle(std::move(handle)), mQuery(TerrainHeightQuery::Create(*mHandle))
+        : mHandle(std::move(handle)), mQuery(TerrainHeightQuery::Create(*mHandle)),
+          mWeightQuery(TerrainLayerWeightQuery::Create(*mHandle))
     {
     }
 
@@ -376,6 +377,21 @@ namespace mir
         }
         TerrainHeightResult outside;
         outside.status = TerrainHeightStatus::OutsideMap;
+        return outside;
+    }
+
+    TerrainLayerWeightsResult TerrainWorld::LayerWeightsAt(WorldPosition world)
+    {
+        for (const TerrainInstanceState &instance : mInstances)
+        {
+            const TerrainLayerWeightsRequest request{instance.release->Info()};
+            TerrainLayerWeightsResult result =
+                instance.release->WeightQuery().WeightsAt(world, instance.placement, request);
+            if (result.status != TerrainLayerWeightsStatus::OutsideMap)
+                return result;
+        }
+        TerrainLayerWeightsResult outside;
+        outside.status = TerrainLayerWeightsStatus::OutsideMap;
         return outside;
     }
 

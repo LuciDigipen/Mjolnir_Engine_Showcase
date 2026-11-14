@@ -60,8 +60,9 @@ namespace
         std::optional<OpenedRelease> memory;
         TerrainSceneSpec spec;
         World world;
+        bool weighted = false;
 
-        Fixture(glm::dvec3 translation = {}, bool flat = false)
+        Fixture(glm::dvec3 translation = {}, bool flat = false, bool weights = false) : weighted(weights)
         {
             world.EmplaceResource<EngineModeState>();
             EmplaceTestStreamer(world);
@@ -119,7 +120,33 @@ namespace
             std::vector<TerrainTileWrite> writes;
             for (size_t i = 0; i < tiles.size(); ++i)
                 writes.push_back({&tiles[i], layers[i], sources[i], 0.0});
-            auto value = EncodeTerrainRelease(identity, layouts, writes);
+
+            TerrainWeightsWrites weightWrites;
+            std::vector<TerrainWeightTile> weightTiles;
+            if (weighted)
+            {
+                weightWrites.layers = {"dirt", "sand"};
+                weightWrites.fingerprint = 0x1EAF;
+                for (const TileCoord coord : coordinates)
+                {
+                    TerrainWeightTile tile;
+                    tile.tile = coord;
+                    tile.intervals = layouts[0].IntervalsPerTile();
+                    tile.layers = weightWrites.layers;
+                    const size_t count = tile.SampleCount();
+                    tile.weights.resize(count * weightWrites.layers.size());
+                    for (size_t sample = 0; sample < count; ++sample)
+                    {
+                        tile.weights[sample] = 0.25f;
+                        tile.weights[count + sample] = 0.75f;
+                    }
+                    weightTiles.push_back(std::move(tile));
+                }
+                weightWrites.tiles = weightTiles;
+            }
+            TerrainResult<TerrainEncodedRelease> value =
+                weighted ? EncodeTerrainRelease(identity, layouts, writes, {}, {}, weightWrites)
+                         : EncodeTerrainRelease(identity, layouts, writes);
             INFO(value.error.message);
             REQUIRE(value);
             return std::move(*value.value);
@@ -180,6 +207,13 @@ namespace
             lua["point"] = lua.create_table_with("x", meters.x, "y", meters.y, "z", meters.z);
             lua["spacing"] = spacing;
             return Eval("return world:terrain_height_at(point, spacing)");
+        }
+
+        sol::table CallWeights(WorldPosition position)
+        {
+            const auto meters = position.Meters();
+            lua["point"] = lua.create_table_with("x", meters.x, "y", meters.y, "z", meters.z);
+            return Eval("return world:terrain_layer_weights_at(point)");
         }
 
         sol::table Eval(std::string_view source)
@@ -510,4 +544,88 @@ return T
     fixture.Resolve();
     tick(kReleaseB, 3);
     host.DestroyInstance(instance);
+}
+
+TEST_CASE("Lua terrain layer weights query answers loading then ready with sorted layers",
+          "[script][terrain][weights]")
+{
+    Fixture fixture({}, false, true);
+    LuaQuery lua(fixture.world);
+    const auto point = fixture.At(-8.125, -8.375);
+    const sol::table loading = lua.CallWeights(point);
+    CHECK(loading.get<std::string>("status") == "loading");
+    CHECK(loading.get<std::string>("failure") == "None");
+    CHECK(loading.get<sol::table>("layers").size() == 0);
+    CHECK(fixture.Resident().WeightQuery().Residency({-1, -1}) == TerrainTileResidency::Requested);
+
+    UpdateUntil(fixture.world.Resource<TerrainStreamer>(), [&]
+                { return fixture.Resident().WeightQuery().Residency({-1, -1}) == TerrainTileResidency::Resident; });
+
+    const sol::table ready = lua.CallWeights(point);
+    CHECK(ready.get<std::string>("status") == "ready");
+    CHECK(ready.get<std::string>("failure") == "None");
+    const sol::table layers = ready["layers"];
+    REQUIRE(layers.size() == 2);
+    const sol::table first = layers[1];
+    const sol::table second = layers[2];
+    CHECK(first.get<std::string>("name") == "sand");
+    CHECK(second.get<std::string>("name") == "dirt");
+    CHECK(first.get<double>("weight") > second.get<double>("weight"));
+    CHECK(std::abs(first.get<double>("weight") + second.get<double>("weight") - 1.0) <= 1e-9);
+    CHECK(ready.get<std::string>("releaseId") == TerrainIdHex(kReleaseA));
+    const sol::table tile = ready["tile"];
+    CHECK(tile.get<int32_t>("x") == -1);
+    CHECK(tile.get<int32_t>("z") == -1);
+}
+
+TEST_CASE("Lua terrain layer weights query reports malformed and nonfinite arguments", "[script][terrain][weights]")
+{
+    World world;
+    LuaQuery lua(world);
+    Fixture fixture({}, false, true);
+    LuaQuery loaded(fixture.world);
+    const auto before = fixture.Resident().Handle().Source().Stats();
+    InitLog({.consoleLevel = LogLevel::Error, .fileLevel = LogLevel::Off});
+    LogHistory::Clear();
+    const char *calls[]{"()",
+                        "(nil)",
+                        "(false)",
+                        "(1)",
+                        "('position')",
+                        "({})",
+                        "({x=0,z=0})",
+                        "({x='0',y=0,z=0})",
+                        "({x=0,y=false,z=0})",
+                        "({x=0,y=0,z={}})",
+                        "({x=0/0,y=0,z=0})",
+                        "({x=0,y=math.huge,z=0})",
+                        "({x=0,y=0,z=-math.huge})",
+                        "({x=0,y=0,z=0}, 1)",
+                        "({x=0,y=0,z=0}, nil)",
+                        "(setmetatable({}, {__index=function() error('must not run') end}))"};
+    for (const char *call : calls)
+    {
+        INFO(call);
+        const std::string source = std::string("return world:terrain_layer_weights_at") + call;
+        for (const sol::table &value : {lua.Eval(source), loaded.Eval(source)})
+        {
+            CHECK(value.get<std::string>("status") == "failed");
+            CHECK(value.get<std::string>("failure") == "InvalidInput");
+            CHECK(value.get<sol::table>("layers").size() == 0);
+            CHECK(value.get<std::string>("releaseId") == TerrainIdHex(0));
+        }
+    }
+    const auto entries = LogHistory::Snapshot();
+    uint64_t logged = 0;
+    for (const auto &entry : entries)
+        logged += entry.count;
+    CHECK(logged == std::size(calls) * 2);
+    CHECK(fixture.Resident().Handle().Source().Stats().reads == before.reads);
+    CHECK(fixture.Resident().Handle().Source().Stats().bytes == before.bytes);
+    for (const auto &entry : entries)
+    {
+        CHECK(entry.level == LogLevel::Error);
+        CHECK(entry.message.find("world:terrain_layer_weights_at") != std::string::npos);
+    }
+    ShutdownLog();
 }

@@ -11,6 +11,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainGround.tests.cpp
     TerrainHeightQuery.tests.cpp
     TerrainIdentity.tests.cpp
+    TerrainLayerWeightQuery.tests.cpp
     TerrainLayout.tests.cpp
     TerrainMaterialUv.tests.cpp
     TerrainMeshResidency.tests.cpp
