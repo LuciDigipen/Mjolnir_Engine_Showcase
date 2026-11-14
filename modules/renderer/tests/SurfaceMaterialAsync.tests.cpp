@@ -1168,6 +1168,15 @@ namespace
             mAssets.CommitReload();
         }
 
+        void CookSandTilePeriod(float period)
+        {
+            Set(kSand, TerrainMaterial(std::format(R"({{"tint":0.25,"tileSizeMeters":{}}})", period)));
+            Set(kDirt, TerrainMaterial(R"({"tint":0.75})"));
+            SetRaw(kLayered, kLayeredJson);
+            mAssets.BeginReload();
+            mAssets.CommitReload();
+        }
+
         void Frame()
         {
             mService.DrainCompletions();
@@ -1226,6 +1235,7 @@ TEST_CASE("A layered material publishes one composite record over its child reco
     INFO(resolution.error);
     REQUIRE(resolution.status == SurfaceMaterialStatus::Ready);
     REQUIRE(resolution.binding);
+    CHECK_FALSE(resolution.binding->material.IsNull());
     CHECK(resolution.binding->layers == std::vector<std::string>{ "sand", "dirt" });
 
     const auto sand = f.RecordFor("test_sand");
@@ -1257,6 +1267,32 @@ TEST_CASE("A failed layered child fails the whole layered material and names the
     CHECK(resolution.error.find("dirt") != std::string::npos);
     CHECK(f.mHost.createdMaterials.size() == 1);
     CHECK(f.mHost.releasedMaterials == std::vector<MaterialHandle>{ MaterialHandle{ 0, 1 } });
+}
+
+TEST_CASE("A layer failing the terrain parameter rules fails the layered material and names the layer",
+    "[renderer][material][async][layered]")
+{
+    LayeredFixture f;
+    MaterialLayout sandLayout = TintLayout();
+    sandLayout.fields.push_back(
+        { .name = "tileSizeMeters", .kind = MaterialFieldKind::Float, .offset = 4, .size = 4 });
+    f.mHost.stemLayouts["test_sand"] = sandLayout;
+    f.mLibrary.SetMaterialValidator([](const SurfaceMaterialBinding &binding, std::string &error)
+    {
+        if (binding.tilePeriodMeters)
+        {
+            error = "tileSizeMeters is not a supported terrain period";
+            return false;
+        }
+        return true;
+    });
+    f.CookSandTilePeriod(3.0f);
+    f.Use();
+    const SurfaceMaterialResolution resolution = f.Settle();
+    CHECK(resolution.status == SurfaceMaterialStatus::Failed);
+    CHECK(resolution.error.find("sand") != std::string::npos);
+    CHECK_FALSE(resolution.binding.has_value());
+    CHECK(f.mHost.createdMaterials.empty());
 }
 
 TEST_CASE("Republishing a layered child rebuilds the layered record", "[renderer][material][async][layered]")

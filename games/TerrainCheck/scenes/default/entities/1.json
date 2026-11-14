@@ -28,7 +28,7 @@
     {
       "fields": {
         "recipePath": "terrain/relief-2x2.terrain.json",
-        "materialPath": "materials/icelandicSand.material.json"
+        "materialPath": "materials/sandLayers.terrainmaterial.json"
       },
       "type": "TerrainInstance"
     },

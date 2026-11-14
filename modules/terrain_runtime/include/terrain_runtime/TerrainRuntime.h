@@ -9,6 +9,7 @@
 #pragma once
 
 #include <terrain_runtime/TerrainGroundBridge.h>
+#include <terrain_runtime/TerrainMaterialSlots.h>
 #include <terrain_runtime/TerrainRender.h>
 #include <terrain_runtime/TerrainJobExecutor.h>
 #include <terrain_runtime/TerrainWeightResidency.h>
@@ -125,8 +126,10 @@ namespace mir
             std::string materialLogicalPath;
             AssetId materialAsset;
             std::vector<TerrainMaterialLayer> materialLayers;
+            std::vector<std::string> materialLayerNames;
             MaterialHandle material;
             uint64_t materialGeneration = 0;
+            TerrainMaterialSlotBinding materialSlots;
             TerrainSlotTable slotTable;
         };
 
@@ -173,6 +176,7 @@ namespace mir
         void SyncBindings(const TerrainSceneSpec &spec);
         void SyncSpecMaterials(const TerrainSceneSpec &spec);
         void ResolveBinding(InstanceResources &instance);
+        void SyncMaterialSlots(InstanceResources &instance, const TerrainInstanceState &state);
         const TerrainInstanceSpec *SpecFor(const TerrainSceneSpec &spec, Entity entity) const;
         const TerrainInstanceSpec *SpecForPlacement(const TerrainSceneSpec &spec,
             const TerrainInstanceState &instance) const;

@@ -366,8 +366,12 @@ namespace mir
         // A completed material load moves the library generation outside Edit too.
         if (mSurfaceMaterials != nullptr)
         {
-            for (InstanceResources &resources : mResources)
-                ResolveBinding(resources);
+            const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
+            for (size_t i = 0; i < mResources.size() && i < instances.size(); ++i)
+            {
+                ResolveBinding(mResources[i]);
+                SyncMaterialSlots(mResources[i], instances[i]);
+            }
             mSurfaceMaterials->AcknowledgeGeneration(0, mSurfaceMaterials->Generation());
         }
         if (mMeshes)
@@ -716,6 +720,9 @@ namespace mir
         }
         for (InstanceResources &resources : mResources)
             ResolveBinding(resources);
+        const std::span<const TerrainInstanceState> instances = world.Instances();
+        for (size_t i = 0; i < mResources.size() && i < instances.size(); ++i)
+            SyncMaterialSlots(mResources[i], instances[i]);
 
         std::vector<SurfaceMaterialUse> uses;
         for (const InstanceResources &resources : mResources)
@@ -729,6 +736,7 @@ namespace mir
         if (!mSurfaceMaterials || instance.materialPath.empty())
         {
             instance.material = kNullMaterial;
+            instance.materialLayerNames.clear();
             instance.materialGeneration = mSurfaceMaterials ? mSurfaceMaterials->Generation() : 0;
             return;
         }
@@ -737,6 +745,7 @@ namespace mir
 
         instance.materialGeneration = mSurfaceMaterials->Generation();
         instance.material = kNullMaterial;
+        instance.materialLayerNames.clear();
         const auto baseLayer = std::find_if(instance.materialLayers.begin(), instance.materialLayers.end(),
             [](const TerrainMaterialLayer &layer) { return layer.name == "base"; });
         if (instance.materialLayers.size() != 1 || baseLayer == instance.materialLayers.end() ||
@@ -773,6 +782,17 @@ namespace mir
             return;
         }
         instance.material = resolution.binding->material;
+        instance.materialLayerNames = resolution.binding->layers;
+    }
+
+    void TerrainRuntime::SyncMaterialSlots(InstanceResources &instance, const TerrainInstanceState &state)
+    {
+        const std::vector<std::string> &releaseLayers = state.release->Handle().Index().weightLayers;
+        if (!instance.materialSlots.Update(releaseLayers, instance.materialLayerNames))
+            return;
+        instance.slotTable.Set(instance.materialSlots.Layers());
+        if (const std::string message = instance.materialSlots.ReportOnce(instance.materialPath); !message.empty())
+            Report(message);
     }
 
     bool TerrainRuntime::HasMeshPayloads(const TerrainInstanceState &instance)
