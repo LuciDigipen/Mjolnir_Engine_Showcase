@@ -242,8 +242,9 @@ namespace mir
     }
 
     TerrainBrushCommand::TerrainBrushCommand(TerrainLayerDocument &document, uint32_t sequence,
-        TerrainEditTileStates before, TerrainEditTileStates after)
-        : TerrainLayerCommand(document), mSequence(sequence), mBefore(std::move(before)), mAfter(std::move(after))
+        TerrainEditTileStates before, TerrainEditTileStates after, std::string name)
+        : TerrainLayerCommand(document), mSequence(sequence), mBefore(std::move(before)), mAfter(std::move(after)),
+          mName(std::move(name))
     {
     }
 

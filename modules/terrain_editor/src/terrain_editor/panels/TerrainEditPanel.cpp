@@ -77,7 +77,8 @@ namespace mir
     } // namespace
 
     TerrainBakeActions TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
-        const TerrainBrushAvailability &brush, const TerrainBakeView &bake)
+        const TerrainBrushAvailability &brush, const TerrainBakeView &bake, std::span<const std::string> materialLayers,
+        std::string &chosenMaterial)
     {
         TerrainBakeActions actions;
         if (widgets::CategoryHeader("Edit Layers"))
@@ -96,6 +97,23 @@ namespace mir
                         mode.SetBrush(label.mBrush);
                 }
                 ImGui::EndCombo();
+            }
+
+            if (mode.Brush() == TerrainBrush::Paint)
+            {
+                const char *preview = chosenMaterial.empty() ? "Choose a material" : chosenMaterial.c_str();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::BeginCombo("Material##paint", preview))
+                {
+                    for (const std::string &layer : materialLayers)
+                    {
+                        if (ImGui::Selectable(layer.c_str(), layer == chosenMaterial))
+                            chosenMaterial = layer;
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SetItemTooltip("Left-drag paints this material into the selected Edit Layer.\n"
+                                      "Hold Ctrl to erase it.");
             }
 
             float radius = mode.Radius();

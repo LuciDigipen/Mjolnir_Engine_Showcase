@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace mir
@@ -43,7 +44,8 @@ namespace mir
     {
     public:
         TerrainBakeActions Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
-                                const TerrainBrushAvailability &brush, const TerrainBakeView &bake);
+                                const TerrainBrushAvailability &brush, const TerrainBakeView &bake,
+                                std::span<const std::string> materialLayers, std::string &chosenMaterial);
 
     private:
         void DrawLayers(TerrainLayerWorkspace &layers, History &history);

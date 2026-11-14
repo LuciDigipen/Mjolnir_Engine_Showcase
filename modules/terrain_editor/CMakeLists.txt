@@ -18,6 +18,7 @@ target_sources(engine_terrain_editor PRIVATE
     src/terrain_editor/TerrainLayerCommands.cpp
     src/terrain_editor/TerrainLayerDocument.cpp
     src/terrain_editor/TerrainLayerWorkspace.cpp
+    src/terrain_editor/TerrainPaintBrush.cpp
     src/terrain_editor/panels/TerrainEditPanel.cpp
 )
 

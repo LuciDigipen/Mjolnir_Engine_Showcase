@@ -147,12 +147,12 @@ namespace mir
     {
     public:
         TerrainBrushCommand(TerrainLayerDocument &document, uint32_t sequence, TerrainEditTileStates before,
-                            TerrainEditTileStates after);
+                            TerrainEditTileStates after, std::string name = "Edit Terrain Height");
 
         bool Do(CommandContext &context) override;
         bool Undo(CommandContext &context) override;
         std::size_t Size() const override;
-        std::string Name() const override { return "Edit Terrain Height"; }
+        std::string Name() const override { return mName; }
 
     private:
         bool Apply(const TerrainEditTileStates &states);
@@ -160,5 +160,6 @@ namespace mir
         uint32_t mSequence;
         TerrainEditTileStates mBefore;
         TerrainEditTileStates mAfter;
+        std::string mName;
     };
 } // namespace mir

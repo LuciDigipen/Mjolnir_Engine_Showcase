@@ -13,10 +13,13 @@
 #include <terrain/TerrainEditLayer.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainOverlay.h>
+#include <terrain/TerrainPackWriter.h>
+#include <terrain/TerrainWeights.h>
 #include <terrain/TileHeights.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <filesystem>
@@ -24,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -246,4 +250,196 @@ TEST_CASE("A weight-only tile produces no overlay tile", "[terrain_editor][overl
     REQUIRE(overlay->Tiles().size() == 1);
     CHECK(overlay->Find(TileCoord{ 0, 0 }) == nullptr);
     REQUIRE(overlay->Find(TileCoord{ 1, 0 }) != nullptr);
+}
+
+namespace
+{
+    using mir::CompositeTerrainEditWeights;
+    using mir::EncodeTerrainWeightPayload;
+    using mir::EvaluateTerrainPaintAvailability;
+    using mir::TerrainBaseWeightTile;
+    using mir::TerrainBaseWeightsCache;
+    using mir::TerrainBaseWeightsErrorCode;
+    using mir::TerrainBaseWeightsResult;
+    using mir::TerrainDecodedWeights;
+    using mir::TerrainEditTile;
+    using mir::TerrainEditWeight;
+    using mir::TerrainWeightTile;
+
+    const std::vector<std::string> kWeightTable{ "base", "sand" };
+
+    TerrainWeightTile MakeBaseWeights(TileCoord coord)
+    {
+        TerrainWeightTile tile;
+        tile.tile = coord;
+        tile.intervals = kIntervals;
+        tile.layers = kWeightTable;
+        const std::size_t count = tile.SampleCount();
+        tile.weights.assign(count * tile.layers.size(), 0.0f);
+        for (std::size_t sample = 0; sample < count; ++sample)
+        {
+            tile.weights[sample] = 0.7f;
+            tile.weights[count + sample] = 0.3f;
+        }
+        return tile;
+    }
+
+    TerrainEditTile WeightEdit(TileCoord coord, float sand)
+    {
+        TerrainEditTile tile;
+        tile.tile = coord;
+        tile.intervals = kIntervals;
+        const std::size_t count = static_cast<std::size_t>(kIntervals + 1) * static_cast<std::size_t>(kIntervals + 1);
+        tile.weights.push_back(TerrainEditWeight{ "sand", std::vector<float>(count, sand) });
+        return tile;
+    }
+
+    TerrainEditTile HeightEdit(TileCoord coord)
+    {
+        TerrainEditTile tile;
+        tile.tile = coord;
+        tile.intervals = kIntervals;
+        tile.values.assign(static_cast<std::size_t>(kIntervals + 1) * static_cast<std::size_t>(kIntervals + 1), 1.0f);
+        return tile;
+    }
+
+    mir::TerrainResult<mir::TerrainEncodedWeights> ExpectedEncoded(std::span<const TerrainEditLayer> layers,
+                                                                  TileCoord tile)
+    {
+        const TerrainWeightTile baseTile = MakeBaseWeights(tile);
+        const mir::TerrainResult<mir::TerrainEditWeightComposite> composite =
+            CompositeTerrainEditWeights(baseTile, layers);
+        if (!composite)
+            return { std::nullopt, composite.error };
+        return EncodeTerrainWeightPayload(composite.value->tile, kWeightTable);
+    }
+}
+
+TEST_CASE("The overlay builds weight tiles for weight edits and keeps unchanged payloads",
+    "[terrain_editor][overlay][weights]")
+{
+    Surface surface;
+    TerrainEditOverlaySession session;
+    session.MarkWeightEdited(TileCoord{ 0, 0 });
+    session.MarkEdited(TileCoord{ 1, 0 });
+
+    const auto base = [&surface](TileCoord tile) -> TerrainBaseHeightsResult<TerrainBaseTile> {
+        const auto found = surface.base.find(tile);
+        if (found == surface.base.end())
+            return { std::nullopt, { TerrainBaseHeightsErrorCode::MissingTile, "missing tile" } };
+        return { found->second, {} };
+    };
+    std::map<TileCoord, TerrainBaseWeightTile, TerrainTileOrder> ruleTiles{
+        { TileCoord{ 0, 0 }, std::make_shared<const TerrainWeightTile>(MakeBaseWeights({ 0, 0 })) },
+        { TileCoord{ 1, 0 }, std::make_shared<const TerrainWeightTile>(MakeBaseWeights({ 1, 0 })) },
+    };
+    const auto weights = [&ruleTiles](TileCoord tile) -> TerrainBaseWeightsResult<TerrainBaseWeightTile> {
+        const auto found = ruleTiles.find(tile);
+        if (found == ruleTiles.end())
+            return { std::nullopt, { TerrainBaseWeightsErrorCode::MissingTile, "missing rule weights" } };
+        return { found->second, {} };
+    };
+
+    TerrainEditLayer layer;
+    layer.info.name = "Paint";
+    layer.info.sequence = 1;
+    layer.info.enabled = true;
+    layer.tiles.emplace(TileCoord{ 0, 0 }, WeightEdit({ 0, 0 }, 0.5f));
+    layer.tiles.emplace(TileCoord{ 1, 0 }, HeightEdit({ 1, 0 }));
+
+    std::vector<TerrainEditLayer> layers{ layer };
+    std::string reason;
+    std::shared_ptr<const TerrainOverlay> first = session.Build(kAsset, layers, base, weights, kWeightTable,
+        kWeightTable, 77, reason);
+    REQUIRE(first);
+    CHECK(reason.empty());
+    CHECK(first->Tiles().size() == 1);
+    CHECK(first->Find(TileCoord{ 0, 0 }) == nullptr);
+    REQUIRE(first->Find(TileCoord{ 1, 0 }) != nullptr);
+    REQUIRE(first->WeightTiles().size() == 1);
+    CHECK(first->FindWeights(TileCoord{ 0, 0 }) != nullptr);
+
+    const mir::TerrainResult<mir::TerrainEncodedWeights> encodedZero =
+        ExpectedEncoded(layers, TileCoord{ 0, 0 });
+    REQUIRE(encodedZero);
+    const std::shared_ptr<const TerrainDecodedWeights> *zero = first->FindWeights(TileCoord{ 0, 0 });
+    REQUIRE(zero);
+    CHECK((*zero)->tile == TileCoord{ 0, 0 });
+    CHECK((*zero)->slots == encodedZero.value->slots);
+    CHECK((*zero)->bytes == encodedZero.value->bytes);
+
+    std::shared_ptr<const TerrainOverlay> unchanged = session.Build(kAsset, layers, base, weights, kWeightTable,
+        kWeightTable, 77, reason);
+    REQUIRE(unchanged);
+    CHECK(unchanged->FindWeights(TileCoord{ 0, 0 })->get() == (*zero).get());
+
+    session.MarkWeightEdited(TileCoord{ 1, 0 });
+    TerrainEditTile paintedTile = WeightEdit({ 1, 0 }, 0.75f);
+    paintedTile.values = HeightEdit({ 1, 0 }).values;
+    layer.tiles[TileCoord{ 1, 0 }] = std::move(paintedTile);
+    layers = std::vector<TerrainEditLayer>{ layer };
+    std::shared_ptr<const TerrainOverlay> painted = session.Build(kAsset, layers, base, weights, kWeightTable,
+        kWeightTable, 77, reason);
+    REQUIRE(painted);
+    const std::shared_ptr<const TerrainDecodedWeights> *paintedZero = painted->FindWeights(TileCoord{ 0, 0 });
+    REQUIRE(paintedZero);
+    CHECK(paintedZero->get() == (*zero).get());
+    const std::shared_ptr<const TerrainDecodedWeights> *paintedOne = painted->FindWeights(TileCoord{ 1, 0 });
+    REQUIRE(paintedOne);
+    const mir::TerrainResult<mir::TerrainEncodedWeights> encodedOne =
+        ExpectedEncoded(layers, TileCoord{ 1, 0 });
+    REQUIRE(encodedOne);
+    CHECK((*paintedOne)->slots == encodedOne.value->slots);
+    CHECK((*paintedOne)->bytes == encodedOne.value->bytes);
+
+    TerrainEditLayer undoneLayer = layer;
+    undoneLayer.tiles.clear();
+    undoneLayer.tiles.emplace(TileCoord{ 0, 0 }, WeightEdit({ 0, 0 }, 0.5f));
+    undoneLayer.tiles.emplace(TileCoord{ 1, 0 }, HeightEdit({ 1, 0 }));
+    layers = std::vector<TerrainEditLayer>{ undoneLayer };
+    std::shared_ptr<const TerrainOverlay> undone = session.Build(kAsset, layers, base, weights, kWeightTable,
+        kWeightTable, 77, reason);
+    REQUIRE(undone);
+    CHECK(undone->FindWeights(TileCoord{ 0, 0 })->get() == (*zero).get());
+    CHECK(undone->FindWeights(TileCoord{ 1, 0 })->get() != paintedOne->get());
+
+    std::shared_ptr<const TerrainOverlay> stable = session.Build(kAsset, layers, base, weights, kWeightTable,
+        kWeightTable, 77, reason);
+    REQUIRE(stable);
+    CHECK(stable->FindWeights(TileCoord{ 1, 0 })->get() == undone->FindWeights(TileCoord{ 1, 0 })->get());
+
+    const std::vector<std::string> otherTable{ "base", "clay" };
+    CHECK(session.Build(kAsset, layers, base, weights, kWeightTable, otherTable, 77, reason) == nullptr);
+    CHECK(reason.find("layer table") != std::string::npos);
+}
+
+TEST_CASE("Paint availability disables each missing prerequisite with its message",
+    "[terrain_editor][overlay][paint]")
+{
+    CHECK_FALSE(EvaluateTerrainPaintAvailability(false, true, true, true, true, true, "", true).enabled);
+    CHECK(EvaluateTerrainPaintAvailability(true, false, true, true, true, true, "", true).message ==
+          "Terrain brushes work in Edit.");
+    CHECK(EvaluateTerrainPaintAvailability(true, true, false, true, true, true, "", true).message.find("Prefab") !=
+          std::string::npos);
+    CHECK_FALSE(EvaluateTerrainPaintAvailability(true, true, true, false, true, true, "", true).enabled);
+    CHECK(EvaluateTerrainPaintAvailability(true, true, true, true, false, true, "", true).message.find("Edit Layer") !=
+          std::string::npos);
+    CHECK(EvaluateTerrainPaintAvailability(true, true, true, true, true, false, "", true).message.find(
+              "material weights cache") != std::string::npos);
+    CHECK(EvaluateTerrainPaintAvailability(true, true, true, true, true, true, "", false).message.find(
+              "material layer") != std::string::npos);
+    CHECK(EvaluateTerrainPaintAvailability(true, true, true, true, true, true, "", true).enabled);
+
+    const std::filesystem::path dir = MakeScratchDir();
+    TerrainBaseWeightsCache cache;
+    CHECK_FALSE(cache.Ensure(dir, kAsset));
+    CHECK_FALSE(cache.Ready());
+    CHECK_FALSE(cache.Error().empty());
+    const mir::TerrainBrushAvailability availability = EvaluateTerrainPaintAvailability(
+        true, true, true, true, true, cache.Ready(), cache.Error(), true);
+    CHECK_FALSE(availability.enabled);
+    CHECK(availability.message.find("material weights cache") != std::string::npos);
+
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
 }

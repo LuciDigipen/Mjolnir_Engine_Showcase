@@ -7,4 +7,5 @@ engine_add_module_tests(terrain_editor
     TerrainHeightBrush.tests.cpp
     TerrainLayerCommands.tests.cpp
     TerrainLayerDocument.tests.cpp
+    TerrainPaintBrush.tests.cpp
 )

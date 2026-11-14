@@ -11,6 +11,7 @@
 #include <terrain_editor/TerrainHeightBrush.h>
 #include <terrain_editor/TerrainLayerCommands.h>
 #include <terrain_editor/TerrainLayerDocument.h>
+#include <terrain_editor/TerrainPaintBrush.h>
 
 #include <editor/history/History.h>
 #include <editor/history/SceneOps.h>
@@ -38,6 +39,7 @@ namespace
     using mir::AddTerrainLayerCommand;
     using mir::CapturedSubtree;
     using mir::Entity;
+    using mir::GlobalSampleIndex;
     using mir::History;
     using mir::kNullEntity;
     using mir::kSceneDocument;
@@ -57,7 +59,9 @@ namespace
     using mir::TerrainLayerDocument;
     using mir::TerrainLayout;
     using mir::TerrainLocalPosition;
+    using mir::TerrainPaintStroke;
     using mir::TerrainTileOrder;
+    using mir::SampleRange;
     using mir::TileCoord;
     using mir::TileHeights;
     using mir::World;
@@ -293,4 +297,60 @@ TEST_CASE("A height stroke over a weight tile keeps the weights and undo restore
     editing.Undo();
     CHECK(document.Layers() == beforeStack);
     CHECK(document.Layers().front().tiles.at(TileCoord{0, 0}) == weighted);
+}
+
+TEST_CASE("A paint stroke is one History step and undo and redo restore the channels",
+    "[terrain_editor][brush][paint][weights]")
+{
+    Editing editing;
+    TerrainLayerDocument &document = editing.Document();
+    REQUIRE(document.Editable());
+    editing.Run(std::make_unique<AddTerrainLayerCommand>(document, TerrainEditBlend::Additive));
+    REQUIRE(document.Layers().size() == 1);
+    REQUIRE(document.Save());
+
+    const uint32_t sequence = document.Layers().front().info.sequence;
+    TerrainEditLayer *layer = document.MutableLayer(sequence);
+    REQUIRE(layer != nullptr);
+
+    const TerrainLayout layout = MakeLayout();
+    const std::optional<SampleRange> samples = layout.TileSamples(TileCoord{ 0, 0 });
+    REQUIRE(samples);
+    for (int64_t z = samples->min.z; z <= samples->max.z; ++z)
+    {
+        for (int64_t x = samples->min.x; x <= samples->max.x; ++x)
+        {
+            const mir::GlobalSampleIndex sample{ x, z };
+            if (layout.IsPaddingSample(sample))
+                continue;
+            mir::SetTerrainEditWeightSample(*layer, layout, sample, "sand", 0.5f);
+            mir::SetTerrainEditWeightSample(*layer, layout, sample, "base", 0.25f);
+        }
+    }
+    const std::vector<TerrainEditLayer> beforeStack = document.Layers();
+    const std::size_t steps = editing.Steps().StepCount();
+
+    mir::TerrainPaintStroke stroke(*layer, layout, "sand", [&document]() { document.MarkChanged(); });
+    TerrainBrushSettings settings;
+    settings.brush = mir::TerrainBrush::Paint;
+    settings.radius = 2.5;
+    settings.strength = 0.5;
+    settings.falloff = 0.0;
+    const std::optional<TerrainLocalPosition> center =
+        TerrainLocalPosition::FromMeters(glm::dvec3(4.0, 0.0, 4.0));
+    REQUIRE(center);
+    REQUIRE(stroke.Dab(*center, settings, 0.25).Ok());
+    CHECK_FALSE(stroke.Empty());
+    const std::vector<TerrainEditLayer> afterStack = document.Layers();
+
+    editing.Run(std::make_unique<TerrainBrushCommand>(document, sequence, stroke.Before(), stroke.After(),
+        "Paint Terrain Material"));
+    CHECK(editing.Steps().StepCount() == steps + 1);
+    CHECK(document.Layers() == afterStack);
+
+    editing.Undo();
+    CHECK(document.Layers() == beforeStack);
+
+    editing.Redo();
+    CHECK(document.Layers() == afterStack);
 }

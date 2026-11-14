@@ -19,6 +19,7 @@
 #include <terrain_editor/TerrainHeightBrush.h>
 #include <terrain_editor/TerrainLayerCommands.h>
 #include <terrain_editor/TerrainLayerDocument.h>
+#include <terrain_editor/TerrainPaintBrush.h>
 
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/GroundQuery.h>
@@ -45,6 +46,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -129,8 +131,11 @@ namespace mir
                 return;
             if (ImGui::Begin("Terrain"))
             {
-                const TerrainBakeActions actions =
-                    mPanel.Draw(mMode, mWorkspace, context.mHistory, Availability(context), BakeView(context));
+                std::string chosenMaterial = ChosenMaterial();
+                const TerrainBakeActions actions = mPanel.Draw(mMode, mWorkspace, context.mHistory,
+                    Availability(context), BakeView(context), mWeights.Layers(), chosenMaterial);
+                if (mWeights.Ready() && chosenMaterial != ChosenMaterial())
+                    mMaterialLayers[SelectedAsset().value] = std::move(chosenMaterial);
                 if (actions.mStart)
                     StartBake();
                 if (actions.mCancel)
@@ -176,13 +181,36 @@ namespace mir
             return std::nullopt;
         }
 
+        std::string ChosenMaterial() const
+        {
+            const auto found = mMaterialLayers.find(SelectedAsset().value);
+            if (found == mMaterialLayers.end())
+                return {};
+            const std::span<const std::string> layers = mWeights.Layers();
+            if (std::find(layers.begin(), layers.end(), found->second) == layers.end())
+                return {};
+            return found->second;
+        }
+
         TerrainBrushAvailability Availability(const EditorExtensionContext &context)
         {
             TerrainLayerDocument *document = mWorkspace.SelectedDocument();
-            TerrainBrushAvailability availability = EvaluateTerrainBrushAvailability(
-                mMode.Active(), context.mMode.mMode == EngineMode::Edit, context.mDocument == kSceneDocument,
-                document != nullptr && document->Editable(), mWorkspace.SelectedLayer().has_value(), mBase.Ready(),
-                mBase.Error());
+            const bool editing = context.mMode.mMode == EngineMode::Edit;
+            const bool sceneDocument = context.mDocument == kSceneDocument;
+            const bool documentEditable = document != nullptr && document->Editable();
+            const bool hasLayer = mWorkspace.SelectedLayer().has_value();
+
+            TerrainBrushAvailability availability;
+            if (mMode.Brush() == TerrainBrush::Paint)
+            {
+                availability = EvaluateTerrainPaintAvailability(mMode.Active(), editing, sceneDocument,
+                    documentEditable, hasLayer, mWeights.Ready(), mWeights.Error(), !ChosenMaterial().empty());
+            }
+            else
+            {
+                availability = EvaluateTerrainBrushAvailability(mMode.Active(), editing, sceneDocument,
+                    documentEditable, hasLayer, mBase.Ready(), mBase.Error());
+            }
             if (!mStrokeError.empty())
             {
                 availability.enabled = false;
@@ -206,15 +234,24 @@ namespace mir
             if (asset.IsNull())
             {
                 mBase.Clear();
+                mWeights.Clear();
                 return;
             }
 
             mBase.Ensure(mReleasesRoot, asset);
+            mWeights.Ensure(mReleasesRoot, asset);
             const uint64_t baseKey = mBase.KeyValue();
             const auto knownKey = mBaseKeys.find(asset.value);
             if (knownKey == mBaseKeys.end() || knownKey->second != baseKey)
             {
                 mBaseKeys[asset.value] = baseKey;
+                mDocumentChanges.erase(asset.value);
+            }
+            const uint64_t weightsKey = mWeights.KeyValue();
+            const auto knownWeightsKey = mWeightsKeys.find(asset.value);
+            if (knownWeightsKey == mWeightsKeys.end() || knownWeightsKey->second != weightsKey)
+            {
+                mWeightsKeys[asset.value] = weightsKey;
                 mDocumentChanges.erase(asset.value);
             }
 
@@ -234,15 +271,23 @@ namespace mir
                 mOverlayMessage.clear();
                 return;
             }
-            if (!mBase.Ready())
+            if (session.HasHeightEdits() && !mBase.Ready())
             {
                 mOverlayMessage = mBase.Error();
                 return;
             }
+            if (session.HasWeightEdits() && !mWeights.Ready())
+            {
+                mOverlayMessage = mWeights.Error();
+                return;
+            }
 
+            const std::span<const std::string> releaseWeightLayers =
+                mBase.Ready() ? mBase.ReleaseWeightLayers() : mWeights.Layers();
             std::string reason;
-            std::shared_ptr<const TerrainOverlay> overlay = session.Build(asset, document->Layers(), mBase.Provider(),
-                reason);
+            std::shared_ptr<const TerrainOverlay> overlay =
+                session.Build(asset, document->Layers(), mBase.Provider(), mWeights.Provider(), mWeights.Layers(),
+                    releaseWeightLayers, weightsKey, reason);
             if (!overlay)
             {
                 mOverlayMessage = std::move(reason);
@@ -270,24 +315,41 @@ namespace mir
         void BeginStroke(const EditorExtensionContext &context, WorldPosition cursor)
         {
             const AssetId asset = SelectedAsset();
-            if (asset.IsNull() || !mBase.Ready() || mMode.Brush() == TerrainBrush::Paint)
+            if (asset.IsNull())
                 return;
 
             const std::optional<TerrainLocalPosition> local = LocalCursor(context, asset, cursor);
             TerrainLayerDocument *document = mWorkspace.SelectedDocument();
             const std::optional<uint32_t> sequence = mWorkspace.SelectedLayer();
-            const std::optional<TerrainLayout> reference = mBase.ReferenceLayout();
-            if (!local || document == nullptr || !document->Editable() || !sequence || !reference)
+            if (!local || document == nullptr || !document->Editable() || !sequence)
                 return;
 
             TerrainEditLayer *layer = document->MutableLayer(*sequence);
             if (layer == nullptr)
                 return;
 
-            TerrainBrushTileSource source{ *reference,
-                [this](TileCoord tile) { return mBase.Layout(tile); }, mBase.Provider() };
-            mStroke = std::make_unique<TerrainBrushStroke>(*layer, document->Layers(), std::move(source),
-                local->Meters().y, [document]() { document->MarkChanged(); });
+            if (mMode.Brush() == TerrainBrush::Paint)
+            {
+                const std::optional<TerrainLayout> reference = mWeights.Layout();
+                const std::string material = ChosenMaterial();
+                if (!mWeights.Ready() || !reference || material.empty())
+                    return;
+                mPaintStroke = std::make_unique<TerrainPaintStroke>(*layer, *reference, material,
+                    [document]() { document->MarkChanged(); });
+                mStroke.reset();
+            }
+            else
+            {
+                const std::optional<TerrainLayout> reference = mBase.ReferenceLayout();
+                if (!mBase.Ready() || !reference)
+                    return;
+                TerrainBrushTileSource source{ *reference,
+                    [this](TileCoord tile) { return mBase.Layout(tile); }, mBase.Provider() };
+                mStroke = std::make_unique<TerrainBrushStroke>(*layer, document->Layers(), std::move(source),
+                    local->Meters().y, [document]() { document->MarkChanged(); });
+                mPaintStroke.reset();
+            }
+
             mStrokeDocument = document;
             mStrokeAsset = asset;
             mStrokeSequence = *sequence;
@@ -297,14 +359,18 @@ namespace mir
 
         void Dab(const EditorExtensionContext &context, WorldPosition cursor)
         {
-            if (!mStroke)
+            if (!mStroke && !mPaintStroke)
                 return;
             const std::optional<TerrainLocalPosition> local = LocalCursor(context, mStrokeAsset, cursor);
             if (!local)
                 return;
 
             const double seconds = std::clamp(static_cast<double>(ImGui::GetIO().DeltaTime), 0.0, 0.1);
-            TerrainBrushDabResult result = mStroke->Dab(*local, BrushSettings(), seconds);
+            TerrainBrushDabResult result;
+            if (mPaintStroke)
+                result = mPaintStroke->Dab(*local, BrushSettings(), seconds);
+            else
+                result = mStroke->Dab(*local, BrushSettings(), seconds);
             if (!result.Ok())
             {
                 mStrokeError = result.error;
@@ -312,21 +378,35 @@ namespace mir
                 return;
             }
             if (!result.changed.empty())
-                mOverlays[mStrokeAsset.value].MarkEdited(result.changed);
+            {
+                TerrainEditOverlaySession &session = mOverlays[mStrokeAsset.value];
+                if (mPaintStroke)
+                    session.MarkWeightEdited(result.changed);
+                else
+                    session.MarkEdited(result.changed);
+            }
         }
 
         void FinishStroke(History &history)
         {
-            if (mPainting && mStroke && mStrokeDocument != nullptr && !mStroke->Empty())
+            if (mPainting && mStrokeDocument != nullptr)
             {
-                TerrainEditTileStates after = mStroke->After();
-                if (!after.empty())
+                const bool paint = mPaintStroke != nullptr;
+                const bool empty = paint ? !mPaintStroke || mPaintStroke->Empty() : !mStroke || mStroke->Empty();
+                if (!empty)
                 {
-                    history.Submit(std::make_unique<TerrainBrushCommand>(*mStrokeDocument, mStrokeSequence,
-                        mStroke->Before(), std::move(after)), true);
+                    TerrainEditTileStates before = paint ? mPaintStroke->Before() : mStroke->Before();
+                    TerrainEditTileStates after = paint ? mPaintStroke->After() : mStroke->After();
+                    if (!after.empty())
+                    {
+                        history.Submit(std::make_unique<TerrainBrushCommand>(*mStrokeDocument, mStrokeSequence,
+                            std::move(before), std::move(after),
+                            paint ? "Paint Terrain Material" : "Edit Terrain Height"), true);
+                    }
                 }
             }
             mStroke.reset();
+            mPaintStroke.reset();
             mStrokeDocument = nullptr;
             mPainting = false;
         }
@@ -485,10 +565,14 @@ namespace mir
         TerrainBakeProject mBakeProject;
         TerrainOverlayApplier mApplyOverlay;
         TerrainBaseCache mBase;
+        TerrainBaseWeightsCache mWeights;
         std::map<uint64_t, TerrainEditOverlaySession> mOverlays;
         std::map<uint64_t, uint64_t> mDocumentChanges;
         std::map<uint64_t, uint64_t> mBaseKeys;
+        std::map<uint64_t, uint64_t> mWeightsKeys;
+        std::map<uint64_t, std::string> mMaterialLayers;
         std::unique_ptr<TerrainBrushStroke> mStroke;
+        std::unique_ptr<TerrainPaintStroke> mPaintStroke;
         TerrainLayerDocument *mStrokeDocument = nullptr;
         AssetId mStrokeAsset;
         AssetId mStatusAsset;
