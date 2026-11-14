@@ -1,7 +1,7 @@
 /**
  * @file TerrainBaseCache.h
  * @author Jackey Cen
- * @brief Writes the generator's source heights as a local cache beside an asset's releases.
+ * @brief Writes the generator's source heights and rule weights as local caches beside an asset's releases.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -11,8 +11,10 @@
 #include "TerrainRecipe.h"
 
 #include <assets/AssetId.h>
+#include <terrain/TerrainBaseWeights.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainPackWriter.h>
+#include <terrain/TerrainWeights.h>
 #include <terrain/TileHeights.h>
 
 #include <filesystem>
@@ -45,4 +47,29 @@ namespace mir::terrainbake
     // The caller holds the asset's publish lock.
     bool WriteBaseHeights(const std::filesystem::path &releasesRoot, AssetId asset,
                           const TerrainBaseHeightsEncoding &base, std::string &error);
+
+    struct TerrainBaseWeightsEncoding
+    {
+        TerrainSourceFingerprint key;
+        // Empty when encoding failed; error then says why.
+        std::optional<TerrainEncodedBaseWeights> encoded;
+        std::string error;
+    };
+
+    // The weights fingerprint with the edit weight stack cleared, so painting weights never invalidates the cache.
+    TerrainSourceFingerprint BaseWeightsFingerprint(const TerrainRecipe &recipe);
+
+    // The rule weights of these tiles, quantised as a release's weight payloads are.
+    std::optional<TerrainEncodedBaseWeights> EncodeBaseWeights(const TerrainRecipe &recipe, AssetId asset,
+                                                              TerrainSourceFingerprint key,
+                                                              std::span<const TerrainWeightTile> tiles,
+                                                              std::string &error);
+
+    // True when base-weights/current names key and its index is there.
+    bool BaseWeightsCurrent(const std::filesystem::path &releasesRoot, AssetId asset, TerrainSourceFingerprint key);
+
+    // Stages the key's directory, renames it into place, replaces base-weights/current last and removes older keys.
+    // The caller holds the asset's publish lock.
+    bool WriteBaseWeights(const std::filesystem::path &releasesRoot, AssetId asset,
+                          const TerrainBaseWeightsEncoding &base, std::string &error);
 }

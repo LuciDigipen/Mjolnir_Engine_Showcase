@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,6 +60,14 @@ namespace mir::terrainbake
 
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report);
 
+    // Edit layers and seams in place; adds generate diagnostics and returns false on failure.
+    bool ApplyTerrainEditsAndSeams(const TerrainRecipe &recipe, std::vector<TileHeights> &tiles, TerrainReport &report);
+
+    // Rule weights of every tile on the final surface, before the Edit Layer weight channels.
+    std::optional<std::vector<TerrainWeightTile>> BakeRuleWeights(const TerrainRecipe &recipe,
+                                                                  std::span<const TileHeights> finalHeights,
+                                                                  TerrainReport &report);
+
     // Fills the "encode" check.
     std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
                                                           const TerrainLayout &layout, std::vector<TileHeights> tiles,
@@ -68,7 +77,8 @@ namespace mir::terrainbake
                                                           const TerrainRecipe &recipe, std::vector<TileHeights> tiles,
                                                           const TerrainBakeOptions &options, TerrainReport &report,
                                                           const TerrainReleaseHandle *baseRelease = nullptr,
-                                                          std::string baseUnavailable = {});
+                                                          std::string baseUnavailable = {},
+                                                          TerrainBaseWeightsEncoding *baseWeights = nullptr);
 
     TerrainCandidateManifest MakeCandidateManifest(const TerrainBakedRelease &baked, std::string assetPath,
                                                    std::string recipePath);
@@ -94,6 +104,8 @@ namespace mir::terrainbake
         std::optional<TerrainBaseRelease> base;
         // When set, receives the source heights as a base cache entry, encoded before the edit layers.
         TerrainBaseHeightsEncoding *baseHeights = nullptr;
+        // When set, receives the rule weights as a base cache entry, encoded before the weight channels.
+        TerrainBaseWeightsEncoding *baseWeights = nullptr;
     };
 
     // Builds a .partial sibling, then renames it, so candidateDir is absent or complete.

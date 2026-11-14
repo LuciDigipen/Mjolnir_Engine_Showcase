@@ -31,7 +31,8 @@ namespace mir::terrainbake
             check::kGenerate, check::kEncode,  check::kWrite,    check::kCandidate, check::kFormat,
             check::kIndex,    check::kPacks,   check::kCoverage, check::kPayloads,  check::kFinite,
             check::kEdges,    check::kCorners, check::kRegions,  check::kIdentity,  check::kTarget,
-            check::kCopy,     check::kVerify,  check::kRename,   check::kPointer,   check::kBase};
+            check::kCopy,     check::kVerify,  check::kRename,   check::kPointer,   check::kBase,
+            check::kBaseWeights};
 
         void Fail(TerrainReport &report, std::string_view check, std::string field, std::string message)
         {
@@ -79,37 +80,110 @@ namespace mir::terrainbake
                                                  TerrainIdHex(base.key.value)));
         }
 
-        // Generation only: the release is current, but the editor's cache may be missing or stale.
-        void EnsureBaseCache(TerrainRecipe &recipe, AssetId asset, const fs::path &releases, TerrainReport &report)
+        void WarnBaseWeights(TerrainReport &report, std::string message)
         {
-            TerrainBaseHeightsEncoding base;
-            base.key = BaseHeightsFingerprint(recipe);
-            if (BaseHeightsCurrent(releases, asset, base.key))
+            report.Warn({std::string(check::kBaseWeights), std::string(kTerrainBaseWeightsDirName), {}, std::nullopt,
+                         std::move(message)});
+        }
+
+        void ReportWrittenBaseWeights(TerrainReport &report, const fs::path &releases, AssetId asset,
+                                      const TerrainBaseWeightsEncoding &base)
+        {
+            if (base.key.IsNull() || !base.encoded)
             {
-                report.Ran(check::kBase, std::format("base {} is current", TerrainIdHex(base.key.value)));
+                const std::string why = "the base weights cache was not written: " +
+                                        (base.error.empty() ? std::string("no rule weights") : base.error);
+                WarnBaseWeights(report, why);
+                report.Skip(check::kBaseWeights, why);
                 return;
             }
+            if (BaseWeightsCurrent(releases, asset, base.key))
+            {
+                report.Ran(check::kBaseWeights,
+                           std::format("base weights {} are current", TerrainIdHex(base.key.value)));
+                return;
+            }
+            std::string error;
+            if (!WriteBaseWeights(releases, asset, base, error))
+            {
+                const std::string why = "the base weights cache was not written: " + error;
+                WarnBaseWeights(report, why);
+                report.Skip(check::kBaseWeights, why);
+                return;
+            }
+            report.Ran(check::kBaseWeights, std::format("wrote base weights {} beside the releases",
+                                                        TerrainIdHex(base.key.value)));
+        }
+
+        // Generation only: the release is current, but the editor's caches may be missing or stale.
+        void EnsureBaseCaches(TerrainRecipe &recipe, AssetId asset, const fs::path &releases, TerrainReport &report)
+        {
+            TerrainBaseHeightsEncoding heights;
+            heights.key = BaseHeightsFingerprint(recipe);
+            const bool wantsWeights = recipe.hasMaterialsSection;
+            TerrainBaseWeightsEncoding weights;
+            weights.key = wantsWeights ? BaseWeightsFingerprint(recipe) : TerrainSourceFingerprint();
+            const bool heightsCurrent = BaseHeightsCurrent(releases, asset, heights.key);
+            const bool weightsCurrent = !wantsWeights || BaseWeightsCurrent(releases, asset, weights.key);
+            if (heightsCurrent)
+                report.Ran(check::kBase, std::format("base {} is current", TerrainIdHex(heights.key.value)));
+            if (!wantsWeights)
+                report.Skip(check::kBaseWeights, "the recipe has no materials section");
+            else if (weightsCurrent)
+                report.Ran(check::kBaseWeights,
+                           std::format("base weights {} are current", TerrainIdHex(weights.key.value)));
+            if (heightsCurrent && weightsCurrent)
+                return;
+
             TerrainReport inner("base", {check::kGenerate});
             std::string why;
+            std::optional<std::vector<TileHeights>> source;
             if (!LoadRecipeHeightSource(recipe, inner))
                 why = inner.diagnostics.empty() ? "the height source did not load" : inner.diagnostics.front().message;
-            else if (std::optional<std::vector<TileHeights>> source = GenerateSourceHeights(recipe, inner))
-            {
-                std::string error;
-                base.encoded = EncodeBaseHeights(recipe, asset, base.key, *source, error);
-                base.error = std::move(error);
-            }
-            else
+            else if ((source = GenerateSourceHeights(recipe, inner)) == std::nullopt)
                 why = inner.diagnostics.empty() ? "generation failed" : inner.diagnostics.front().message;
-            if (!base.encoded)
+
+            if (!heightsCurrent)
             {
-                const std::string message = "the base heights cache was not written: " +
-                                            (why.empty() ? base.error : why);
-                WarnBase(report, message);
-                report.Skip(check::kBase, message);
+                if (source)
+                {
+                    std::string error;
+                    heights.encoded = EncodeBaseHeights(recipe, asset, heights.key, *source, error);
+                    heights.error = std::move(error);
+                }
+                else if (!why.empty())
+                    heights.error = why;
+                ReportWrittenBase(report, releases, asset, heights);
+            }
+            if (!wantsWeights || weightsCurrent)
+                return;
+            if (!source)
+            {
+                const std::string message =
+                    "the base weights cache was not written: " + (why.empty() ? "generation failed" : why);
+                WarnBaseWeights(report, message);
+                report.Skip(check::kBaseWeights, message);
                 return;
             }
-            ReportWrittenBase(report, releases, asset, base);
+
+            TerrainReport weightReport("base weights", {check::kGenerate});
+            std::vector<TileHeights> finalTiles = *source;
+            if (!ApplyTerrainEditsAndSeams(recipe, finalTiles, weightReport))
+                why = weightReport.diagnostics.empty() ? "the final surface did not bake"
+                                                       : weightReport.diagnostics.front().message;
+            else if (std::optional<std::vector<TerrainWeightTile>> rule =
+                         BakeRuleWeights(recipe, finalTiles, weightReport))
+            {
+                std::string error;
+                weights.encoded = EncodeBaseWeights(recipe, asset, weights.key, *rule, error);
+                weights.error = std::move(error);
+            }
+            else
+                why = weightReport.diagnostics.empty() ? "the rule weights did not bake"
+                                                       : weightReport.diagnostics.front().message;
+            if (!weights.encoded && !why.empty())
+                weights.error = why;
+            ReportWrittenBaseWeights(report, releases, asset, weights);
         }
 
         // Only an empty directory or candidate.json plus candidate files; a release never has candidate.json.
@@ -231,7 +305,8 @@ namespace mir::terrainbake
                               check::kEncode,    check::kWrite,    check::kCandidate, check::kFormat,  check::kIndex,
                               check::kPacks,     check::kCoverage, check::kPayloads,  check::kFinite,  check::kEdges,
                               check::kCorners,   check::kRegions,  check::kIdentity,  check::kTarget,  check::kCopy,
-                              check::kVerify,    check::kRename,   check::kPointer,   check::kBase,    check::kPrune});
+                              check::kVerify,    check::kRename,   check::kPointer,   check::kBase,
+                              check::kBaseWeights, check::kPrune});
         report.recipePath = request.recipePath;
         report.candidateDir = request.candidateDir;
         const fs::path releases = request.gameDir.empty() ? fs::path() : TerrainReleasesRoot(request.gameDir);
@@ -297,8 +372,8 @@ namespace mir::terrainbake
                                                 TerrainIdHex(current->value));
             report.Ran(check::kCurrent, why + "; nothing to publish");
             SkipAll(report, kAfterCurrent, "not needed: " + why);
-            // The editor's cache is working data: a failure here never fails the sync.
-            EnsureBaseCache(recipe, asset->asset, releases, report);
+            // The editor's caches are working data: a failure here never fails the sync.
+            EnsureBaseCaches(recipe, asset->asset, releases, report);
             opened.reset();
             PruneTerrainReleases(releases, asset->asset, report);
             return report;
@@ -309,6 +384,7 @@ namespace mir::terrainbake
         {
             Fail(report, check::kWrite, "--candidate", error);
             report.Skip(check::kBase, "nothing was baked, so no base heights cache was written");
+            report.Skip(check::kBaseWeights, "nothing was baked, so no base weights cache was written");
             report.Skip(check::kPrune, "nothing was published, so nothing was removed");
             return report;
         }
@@ -320,6 +396,9 @@ namespace mir::terrainbake
         bake.candidateDir = request.candidateDir;
         bake.options = request.options;
         bake.baseHeights = &baseHeights;
+        TerrainBaseWeightsEncoding baseWeights;
+        if (recipe.hasMaterialsSection)
+            bake.baseWeights = &baseWeights;
         if (opened)
         {
             TerrainBaseRelease base;
@@ -330,6 +409,7 @@ namespace mir::terrainbake
         {
             report.publish->current = PeekTerrainCurrent(releases, asset->asset);
             report.Skip(check::kBase, "the bake failed, so no base heights cache was written");
+            report.Skip(check::kBaseWeights, "the bake failed, so no base weights cache was written");
             report.Skip(check::kPrune, "nothing was published, so nothing was removed");
             return report;
         }
@@ -344,12 +424,17 @@ namespace mir::terrainbake
         if (!published)
         {
             report.Skip(check::kBase, "nothing was published, so no base heights cache was written");
+            report.Skip(check::kBaseWeights, "nothing was published, so no base weights cache was written");
             report.Skip(check::kPrune, "nothing was published, so nothing was removed");
             return report;
         }
-        // The cache follows current: an editor reading it composites against the release it matches.
+        // The caches follow current: an editor reading them composites against the release they match.
         // From the same generated tiles; a failure here is only a warning.
         ReportWrittenBase(report, releases, asset->asset, baseHeights);
+        if (recipe.hasMaterialsSection)
+            ReportWrittenBaseWeights(report, releases, asset->asset, baseWeights);
+        else
+            report.Skip(check::kBaseWeights, "the recipe has no materials section");
         PruneTerrainReleases(releases, asset->asset, report);
         return report;
     }

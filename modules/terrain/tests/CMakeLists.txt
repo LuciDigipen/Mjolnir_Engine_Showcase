@@ -2,6 +2,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainAreaSamples.tests.cpp
     TerrainAssetPath.tests.cpp
     TerrainBaseHeights.tests.cpp
+    TerrainBaseWeights.tests.cpp
     TerrainCollider.tests.cpp
     TerrainCollision.tests.cpp
     TerrainCollisionResidency.tests.cpp

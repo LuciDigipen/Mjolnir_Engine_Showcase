@@ -5,6 +5,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/ComponentRegistration.cpp
     src/terrain/TerrainAreaSamples.cpp
     src/terrain/TerrainBaseHeights.cpp
+    src/terrain/TerrainBaseWeights.cpp
     src/terrain/TerrainCollision.cpp
     src/terrain/TerrainCollisionResidency.cpp
     src/terrain/TerrainEditLayer.cpp

@@ -48,6 +48,7 @@ if(BUILD_TESTING)
         tests/TerrainBake.tests.cpp
         tests/TerrainBakeWeights.tests.cpp
         tests/TerrainBaseCache.tests.cpp
+        tests/TerrainBaseWeightsCache.tests.cpp
         tests/TerrainGenerator.tests.cpp
         tests/TerrainHeightmap.tests.cpp
         tests/TerrainIncremental.tests.cpp

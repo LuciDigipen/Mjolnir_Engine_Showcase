@@ -238,28 +238,6 @@ namespace mir::terrainbake
 
     namespace
     {
-        bool ApplyEditsAndSeams(const TerrainRecipe &recipe, std::vector<TileHeights> &tiles, TerrainReport &report)
-        {
-            if (recipe.editStack && !recipe.editStack->empty())
-                for (TileHeights &tile : tiles)
-                {
-                    const TileCoord at = tile.Tile();
-                    TerrainResult<TileHeights> composed = CompositeTerrainEditLayers(tile, *recipe.editStack);
-                    if (!composed)
-                    {
-                        report.Add({std::string(check::kGenerate),
-                                    "edits",
-                                    {at},
-                                    std::nullopt,
-                                    std::format("tile ({}, {}): {}", at.x, at.z, composed.error.message)});
-                        return false;
-                    }
-                    tile = std::move(*composed.value);
-                }
-            TerrainProgressStage("seams");
-            return AdjustTerrainSeams(recipe, tiles, report);
-        }
-
         std::optional<std::vector<TileHeights>> BakeCandidateHeights(const TerrainRecipe &recipe, AssetId asset,
                                                                      TerrainBaseHeightsEncoding *base,
                                                                      TerrainReport &report)
@@ -274,7 +252,7 @@ namespace mir::terrainbake
                 base->encoded = EncodeBaseHeights(recipe, asset, base->key, *tiles, error);
                 base->error = std::move(error);
             }
-            if (!ApplyEditsAndSeams(recipe, *tiles, report))
+            if (!ApplyTerrainEditsAndSeams(recipe, *tiles, report))
                 return std::nullopt;
             return tiles;
         }
@@ -286,61 +264,42 @@ namespace mir::terrainbake
             std::string error;
         };
 
-        std::optional<std::vector<TerrainWeightTile>> BakeTerrainWeights(const TerrainRecipe &recipe,
-                                                                         std::span<const TileHeights> heights,
-                                                                         TerrainReport &report)
+        // Applies the recipe's Edit Layer weight channels to the rule weights.
+        bool ApplyEditWeightChannels(const TerrainRecipe &recipe, std::vector<TerrainWeightTile> &weights,
+                                     TerrainReport &report)
         {
-            if (!recipe.hasMaterialsSection)
-                return std::vector<TerrainWeightTile>{};
+            if (!recipe.editStack || recipe.editStack->empty())
+                return true;
 
-            TerrainFinalSurface surface{recipe, {}};
-            for (const TileHeights &tile : heights)
-                surface.tiles.emplace(std::pair(tile.Tile().z, tile.Tile().x), &tile);
-
-            std::vector<WeightSlot> slots(heights.size());
-            const bool hasStack = recipe.editStack && !recipe.editStack->empty();
+            std::vector<WeightSlot> slots(weights.size());
             JobExecutor executor(JobExecutor::DefaultWorkerCount());
             std::atomic<std::size_t> completed{0};
             const auto caller = std::this_thread::get_id();
-            TerrainProgressStage("weights");
-            executor.ParallelFor(heights.size(), 1,
+            TerrainProgressStage("edit weights");
+            executor.ParallelFor(weights.size(), 1,
                                  [&](std::size_t begin, std::size_t end)
                                  {
                                      for (std::size_t index = begin; index < end; ++index)
                                      {
                                          WeightSlot &slot = slots[index];
-                                         const TileCoord tile = heights[index].Tile();
-                                         std::optional<TerrainWeightTile> weights =
-                                             EvaluateTerrainWeights(recipe, surface, tile);
-                                         if (!weights)
+                                         const TileCoord tile = weights[index].tile;
+                                         TerrainResult<TerrainEditWeightComposite> composite =
+                                             CompositeTerrainEditWeights(weights[index], *recipe.editStack);
+                                         if (!composite)
                                          {
-                                             slot.error = std::format("tile ({}, {}) has no samples on the final "
-                                                                      "surface",
-                                                                      tile.x, tile.z);
+                                             slot.error = std::format("tile ({}, {}): {}", tile.x, tile.z,
+                                                                      composite.error.message);
                                              continue;
                                          }
-                                         if (hasStack)
-                                         {
-                                             TerrainResult<TerrainEditWeightComposite> composite =
-                                                 CompositeTerrainEditWeights(*weights, *recipe.editStack);
-                                             if (!composite)
-                                             {
-                                                 slot.error = std::format("tile ({}, {}): {}", tile.x, tile.z,
-                                                                          composite.error.message);
-                                                 continue;
-                                             }
-                                             slot.skipped = std::move(composite.value->skippedLayers);
-                                             weights = std::move(composite.value->tile);
-                                         }
-                                         slot.weights = std::move(weights);
-                                         const std::size_t done =
-                                             completed.fetch_add(1, std::memory_order_relaxed) + 1;
+                                         slot.skipped = std::move(composite.value->skippedLayers);
+                                         slot.weights = std::move(composite.value->tile);
+                                         const std::size_t done = completed.fetch_add(1, std::memory_order_relaxed) + 1;
                                          // The progress sink is not thread safe, so only the caller reports.
                                          if (std::this_thread::get_id() == caller)
-                                             TerrainProgressStep("weights: tiles", done, heights.size());
+                                             TerrainProgressStep("edit weights: tiles", done, weights.size());
                                      }
                                  });
-            TerrainProgressStep("weights: tiles", heights.size(), heights.size());
+            TerrainProgressStep("edit weights: tiles", weights.size(), weights.size());
 
             std::set<std::string> skipped;
             for (const WeightSlot &slot : slots)
@@ -348,7 +307,7 @@ namespace mir::terrainbake
                 if (!slot.error.empty())
                 {
                     report.Add({std::string(check::kEncode), "weights", {}, std::nullopt, slot.error});
-                    return std::nullopt;
+                    return false;
                 }
                 skipped.insert(slot.skipped.begin(), slot.skipped.end());
             }
@@ -362,11 +321,28 @@ namespace mir::terrainbake
                                          "skipped: {}",
                                          names)});
             }
+            for (std::size_t index = 0; index < weights.size(); ++index)
+                weights[index] = std::move(*slots[index].weights);
+            return true;
+        }
 
-            std::vector<TerrainWeightTile> weights;
-            weights.reserve(heights.size());
-            for (WeightSlot &slot : slots)
-                weights.push_back(std::move(*slot.weights));
+        std::optional<std::vector<TerrainWeightTile>> BakeTerrainWeights(const TerrainRecipe &recipe, AssetId asset,
+                                                                         std::span<const TileHeights> heights,
+                                                                         TerrainReport &report,
+                                                                         TerrainBaseWeightsEncoding *baseWeights)
+        {
+            std::optional<std::vector<TerrainWeightTile>> weights = BakeRuleWeights(recipe, heights, report);
+            if (!weights)
+                return std::nullopt;
+            if (baseWeights && recipe.hasMaterialsSection)
+            {
+                baseWeights->key = BaseWeightsFingerprint(recipe);
+                std::string error;
+                baseWeights->encoded = EncodeBaseWeights(recipe, asset, baseWeights->key, *weights, error);
+                baseWeights->error = std::move(error);
+            }
+            if (!ApplyEditWeightChannels(recipe, *weights, report))
+                return std::nullopt;
             return weights;
         }
 
@@ -418,12 +394,86 @@ namespace mir::terrainbake
         }
     }
 
+    bool ApplyTerrainEditsAndSeams(const TerrainRecipe &recipe, std::vector<TileHeights> &tiles, TerrainReport &report)
+    {
+        if (recipe.editStack && !recipe.editStack->empty())
+            for (TileHeights &tile : tiles)
+            {
+                const TileCoord at = tile.Tile();
+                TerrainResult<TileHeights> composed = CompositeTerrainEditLayers(tile, *recipe.editStack);
+                if (!composed)
+                {
+                    report.Add({std::string(check::kGenerate),
+                                "edits",
+                                {at},
+                                std::nullopt,
+                                std::format("tile ({}, {}): {}", at.x, at.z, composed.error.message)});
+                    return false;
+                }
+                tile = std::move(*composed.value);
+            }
+        TerrainProgressStage("seams");
+        return AdjustTerrainSeams(recipe, tiles, report);
+    }
+
+    std::optional<std::vector<TerrainWeightTile>> BakeRuleWeights(const TerrainRecipe &recipe,
+                                                                  std::span<const TileHeights> finalHeights,
+                                                                  TerrainReport &report)
+    {
+        if (!recipe.hasMaterialsSection)
+            return std::vector<TerrainWeightTile>{};
+
+        TerrainFinalSurface surface{recipe, {}};
+        for (const TileHeights &tile : finalHeights)
+            surface.tiles.emplace(std::pair(tile.Tile().z, tile.Tile().x), &tile);
+
+        std::vector<WeightSlot> slots(finalHeights.size());
+        JobExecutor executor(JobExecutor::DefaultWorkerCount());
+        std::atomic<std::size_t> completed{0};
+        const auto caller = std::this_thread::get_id();
+        TerrainProgressStage("weights");
+        executor.ParallelFor(finalHeights.size(), 1,
+                             [&](std::size_t begin, std::size_t end)
+                             {
+                                 for (std::size_t index = begin; index < end; ++index)
+                                 {
+                                     WeightSlot &slot = slots[index];
+                                     const TileCoord tile = finalHeights[index].Tile();
+                                     slot.weights = EvaluateTerrainWeights(recipe, surface, tile);
+                                     if (!slot.weights)
+                                     {
+                                         slot.error = std::format("tile ({}, {}) has no samples on the final surface",
+                                                                  tile.x, tile.z);
+                                         continue;
+                                     }
+                                     const std::size_t done = completed.fetch_add(1, std::memory_order_relaxed) + 1;
+                                     // The progress sink is not thread safe, so only the caller reports.
+                                     if (std::this_thread::get_id() == caller)
+                                         TerrainProgressStep("weights: tiles", done, finalHeights.size());
+                                 }
+                             });
+        TerrainProgressStep("weights: tiles", finalHeights.size(), finalHeights.size());
+
+        std::vector<TerrainWeightTile> weights;
+        weights.reserve(finalHeights.size());
+        for (WeightSlot &slot : slots)
+        {
+            if (!slot.weights)
+            {
+                report.Add({std::string(check::kEncode), "weights", {}, std::nullopt, slot.error});
+                return std::nullopt;
+            }
+            weights.push_back(std::move(*slot.weights));
+        }
+        return weights;
+    }
+
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report)
     {
         std::optional<std::vector<TileHeights>> tiles = GenerateSourceHeights(recipe, report);
         if (!tiles)
             return std::nullopt;
-        if (!ApplyEditsAndSeams(recipe, *tiles, report))
+        if (!ApplyTerrainEditsAndSeams(recipe, *tiles, report))
             return std::nullopt;
         return tiles;
     }
@@ -470,7 +520,8 @@ namespace mir::terrainbake
                                                           const TerrainRecipe &recipe, std::vector<TileHeights> tiles,
                                                           const TerrainBakeOptions &options, TerrainReport &report,
                                                           const TerrainReleaseHandle *baseRelease,
-                                                          std::string baseUnavailable)
+                                                          std::string baseUnavailable,
+                                                          TerrainBaseWeightsEncoding *baseWeights)
     {
         if (recipe.recipeVersion != 1 && !report.seams)
         {
@@ -589,7 +640,8 @@ namespace mir::terrainbake
         TerrainWeightsWrites weights;
         if (recipe.hasMaterialsSection)
         {
-            std::optional<std::vector<TerrainWeightTile>> bakedWeights = BakeTerrainWeights(recipe, tiles, report);
+            std::optional<std::vector<TerrainWeightTile>> bakedWeights =
+                BakeTerrainWeights(recipe, asset, tiles, report, baseWeights);
             if (!bakedWeights)
                 return std::nullopt;
             weightTiles = std::move(*bakedWeights);
@@ -701,7 +753,8 @@ namespace mir::terrainbake
 
         std::optional<TerrainBakedRelease> baked =
             EncodeBakedRelease(asset, fingerprint, recipe, std::move(*tiles), request.options, report,
-                               baseRelease ? &*baseRelease : nullptr, std::move(baseUnavailable));
+                               baseRelease ? &*baseRelease : nullptr, std::move(baseUnavailable),
+                               request.baseWeights);
         if (!baked)
             return false;
         report.release = baked->info;
