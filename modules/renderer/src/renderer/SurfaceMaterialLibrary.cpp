@@ -458,8 +458,17 @@ namespace mir
     void SurfaceMaterialLibrary::TakeResources(std::vector<MaterialHandle> &materials) const
     {
         for (const auto &[key, entry] : mEntries)
+        {
             if (entry.binding && !entry.binding->material.IsNull())
                 materials.push_back(entry.binding->material);
+            for (const MaterialHandle layer : entry.layerMaterials)
+                if (!layer.IsNull())
+                    materials.push_back(layer);
+        }
+        for (const auto &[key, load] : mLoads)
+            for (const std::unique_ptr<Load> &layer : load.layerLoads)
+                if (layer != nullptr && layer->candidateCreated && !layer->candidate.material.IsNull())
+                    materials.push_back(layer->candidate.material);
         for (const RetiredResources &retired : mRetired)
             materials.insert(materials.end(), retired.materials.begin(), retired.materials.end());
         materials.insert(materials.end(), mUncommittedMaterials.begin(), mUncommittedMaterials.end());
@@ -601,7 +610,7 @@ namespace mir
             }
             const Entry &entry = found->second;
             if (current == 0)
-                current = CurrentIdentity(entry.asset);
+                current = EntryIdentity(entry);
             if (const auto load = mLoads.find(key);
                 load != mLoads.end() && load->second.failed)
             {
@@ -795,12 +804,22 @@ namespace mir
         TryReleaseRetired();
     }
 
-    uint64_t SurfaceMaterialLibrary::CurrentIdentity(AssetId asset) const
+    uint64_t SurfaceMaterialLibrary::CurrentIdentity(AssetId asset, std::span<const uint32_t> tags) const
     {
         if (mAssets == nullptr)
             return 0;
-        const uint64_t content = mAssets->ContentOfTags(asset, SurfaceMaterialIdentityTags());
+        const uint64_t content = mAssets->ContentOfTags(asset, tags);
         return content != 0 ? content : 0x8000000000000000ull | (uint64_t(mAssets->Revision()) + 1);
+    }
+
+    uint64_t SurfaceMaterialLibrary::EntryIdentity(const Entry &entry) const
+    {
+        if (!entry.layered)
+            return CurrentIdentity(entry.asset, SurfaceMaterialIdentityTags());
+        uint64_t hash = CurrentIdentity(entry.asset, std::span<const uint32_t>{});
+        for (const TerrainMaterialLayerAsset &layer : entry.layeredDefinition.layers)
+            hash = (hash ^ CurrentIdentity(layer.asset, SurfaceMaterialIdentityTags())) * 1099511628211ull;
+        return hash;
     }
 
     SurfaceMaterialLibrary::Entry &SurfaceMaterialLibrary::EnsureEntry(std::string_view logicalPath, AssetId asset,
@@ -814,6 +833,7 @@ namespace mir
             entry.logicalPath = std::string(logicalPath);
             entry.asset = asset;
             entry.frontend = std::string(frontend);
+            entry.layered = IsTerrainMaterialPath(logicalPath);
         }
         return entry;
     }
@@ -836,15 +856,58 @@ namespace mir
         entry.attemptContent = 0;
 
         Load load;
-        load.identity = CurrentIdentity(entry.asset);
+        load.identity = EntryIdentity(entry);
         load.revision = mAssets->Revision();
-        load.assetLease = mAssets->RequestLease(entry.asset, SurfaceMaterialDecoder());
+        if (entry.layered)
+            load.sourceLease = mAssets->RequestLease(entry.asset, TerrainMaterialDecoder());
+        else
+            load.assetLease = mAssets->RequestLease(entry.asset, SurfaceMaterialDecoder());
         mLoads.emplace(key, std::move(load));
         return true;
     }
 
     bool SurfaceMaterialLibrary::ParseLoad(Entry &entry, Load &load, std::string &error)
     {
+        if (entry.layered)
+        {
+            const auto source = load.sourceLease.Acquire();
+            if (!source)
+            {
+                error = "its decoded data is missing";
+                return false;
+            }
+            std::string parseError;
+            const std::optional<TerrainMaterialAsset> layered =
+                ReadTerrainMaterial(source->json, entry.logicalPath, &mHost->MaterialCatalog(), &parseError);
+            if (!layered)
+            {
+                error = "the layered material is invalid: " + parseError;
+                return false;
+            }
+
+            load.layered = *layered;
+            load.layerEntries.clear();
+            load.layerLoads.clear();
+            load.layerEntries.reserve(load.layered.layers.size());
+            load.layerLoads.reserve(load.layered.layers.size());
+            for (const TerrainMaterialLayerAsset &layer : load.layered.layers)
+            {
+                Entry child;
+                child.logicalPath = layer.material;
+                child.asset = layer.asset;
+                child.frontend = "terrain";
+                Load childLoad;
+                childLoad.identity = CurrentIdentity(layer.asset, SurfaceMaterialIdentityTags());
+                childLoad.revision = mAssets->Revision();
+                childLoad.assetLease = mAssets->RequestLease(layer.asset, SurfaceMaterialDecoder());
+                load.layerEntries.push_back(std::move(child));
+                load.layerLoads.push_back(std::make_unique<Load>(std::move(childLoad)));
+            }
+            load.parsed = true;
+            load.sourceLease.Reset();
+            return true;
+        }
+
         const auto asset = load.assetLease.Acquire();
         if (!asset)
         {
@@ -998,9 +1061,198 @@ namespace mir
         return true;
     }
 
+    bool SurfaceMaterialLibrary::AdvanceLayers(Entry &entry, Load &load, bool &pending, std::string &error)
+    {
+        pending = false;
+        if (load.layered.layers.size() != load.layerLoads.size())
+        {
+            error = "the layered material has no layer loads";
+            return false;
+        }
+
+        for (std::size_t index = 0; index < load.layerLoads.size(); ++index)
+        {
+            const TerrainMaterialLayerAsset &layer = load.layered.layers[index];
+            Entry &childEntry = load.layerEntries[index];
+            Load &childLoad = *load.layerLoads[index];
+            const auto layerError = [&](std::string message)
+            {
+                error = "layer '" + layer.name + "' (" + layer.material + "): " + std::move(message);
+                childLoad.failed = true;
+                childLoad.error = error;
+            };
+
+            if (childLoad.failed)
+            {
+                error = "layer '" + layer.name + "' (" + layer.material + "): " + childLoad.error;
+                return false;
+            }
+            if (!childLoad.parsed)
+            {
+                const AssetLoadState state = childLoad.assetLease.State();
+                if (state == AssetLoadState::Queued)
+                {
+                    pending = true;
+                    continue;
+                }
+                if (state != AssetLoadState::Ready)
+                {
+                    layerError(state == AssetLoadState::Failed ? childLoad.assetLease.FailureReason()
+                                                               : "its decoded data is no longer available");
+                    return false;
+                }
+                std::string parseError;
+                if (!ParseLoad(childEntry, childLoad, parseError))
+                {
+                    layerError(std::move(parseError));
+                    return false;
+                }
+            }
+            if (!TexturesSettled(childLoad))
+            {
+                pending = true;
+                continue;
+            }
+            for (const auto &[role, claim] : childLoad.textures)
+            {
+                const TextureLoad *view = claim.Get();
+                if (view == nullptr || view->phase == AssetUploadPhase::Failed)
+                {
+                    layerError("the packed texture did not load");
+                    return false;
+                }
+            }
+            if (!childLoad.candidateBuilt)
+            {
+                std::string buildError;
+                if (!BuildCandidateData(childEntry, childLoad, nullptr, {}, buildError))
+                {
+                    layerError(std::move(buildError));
+                    return false;
+                }
+            }
+            if (!childLoad.candidateCreated)
+            {
+                const SurfaceMaterialRegistration *registration =
+                    mHost->MaterialCatalog().FindByAsset(layer.material, "terrain");
+                if (registration == nullptr)
+                {
+                    layerError("no cooked terrain surface material registration names it");
+                    return false;
+                }
+                const SamplerDesc sampler{ .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                           .useMips = true,
+                                           .maxAnisotropy = 4.0f };
+                MaterialDesc desc;
+                desc.shaderName = registration->stem;
+                desc.surfaceMaterial = true;
+                desc.surfaceAsset = layer.material;
+                desc.sampler = sampler;
+                desc.record = childLoad.candidateRecord;
+                const MaterialHandle material = mHost->CreateSurfaceMaterial(desc);
+                if (material.IsNull())
+                {
+                    layerError("the material pipeline or record could not be created");
+                    return false;
+                }
+                childLoad.candidate.material = material;
+                childLoad.candidate.layers.clear();
+                childLoad.candidateCreated = true;
+            }
+        }
+        (void)entry;
+        return true;
+    }
+
+    void SurfaceMaterialLibrary::DiscardLayerCandidates(Load &load)
+    {
+        for (std::unique_ptr<Load> &layer : load.layerLoads)
+        {
+            if (layer == nullptr || !layer->candidateCreated || layer->candidate.material.IsNull())
+                continue;
+            mUncommittedMaterials.push_back(layer->candidate.material);
+            layer->candidate.material = {};
+            layer->candidateCreated = false;
+        }
+    }
+
+    bool SurfaceMaterialLibrary::BuildLayeredCandidateData(Entry &entry, Load &load, std::string &error)
+    {
+        const SurfaceMaterialRegistration *registration =
+            mHost->MaterialCatalog().FindByAsset(entry.logicalPath, entry.frontend);
+        if (registration == nullptr)
+        {
+            error = "no cooked surface material registration names this layered asset and frontend";
+            return false;
+        }
+        const std::optional<SurfaceMaterialSchema> schema = mHost->LoadSchema(*registration, &error);
+        if (!schema)
+            return false;
+        const MaterialLayout &layout = schema->layout;
+
+        std::vector<MaterialRecordSnapshot> children;
+        children.reserve(load.layerLoads.size());
+        uint32_t offset = layout.size;
+        std::vector<uint32_t> offsets;
+        offsets.reserve(load.layerLoads.size());
+        for (std::size_t index = 0; index < load.layerLoads.size(); ++index)
+        {
+            const Load &childLoad = *load.layerLoads[index];
+            const std::optional<MaterialRecordSnapshot> snapshot = mHost->MaterialRecord(childLoad.candidate.material);
+            if (!snapshot)
+            {
+                error = "layer '" + load.layered.layers[index].name + "' has no committed record";
+                return false;
+            }
+            if (snapshot->mLayout.size == 0 || snapshot->mBytes.size() < snapshot->mLayout.size)
+            {
+                error = "layer '" + load.layered.layers[index].name + "' has no complete committed record";
+                return false;
+            }
+            offset = (offset + 15u) & ~15u;
+            offsets.push_back(offset);
+            offset += static_cast<uint32_t>(snapshot->mBytes.size());
+            offset = (offset + 15u) & ~15u;
+            children.push_back(*snapshot);
+        }
+
+        Json parameters = Json::object();
+        parameters["blendMode"] = TerrainLayerBlendModeValue(load.layered.blend);
+        parameters["heightContrast"] = load.layered.heightContrast;
+        for (std::size_t index = 0; index < offsets.size(); ++index)
+            parameters["layerOffset" + std::to_string(index)] = offsets[index];
+
+        const std::optional<std::vector<std::byte>> header = PackMaterialRecord(layout, parameters.dump(), &error);
+        if (!header)
+            return false;
+
+        std::vector<std::byte> record(offset);
+        std::copy(header->begin(), header->end(), record.begin());
+        for (std::size_t index = 0; index < children.size(); ++index)
+            std::copy(children[index].mBytes.begin(), children[index].mBytes.end(), record.begin() + offsets[index]);
+
+        if (!ValidateRecordForPublication(entry.frontend, layout, record, error))
+            return false;
+
+        SurfaceMaterialBinding binding;
+        for (const TerrainMaterialLayerAsset &layer : load.layered.layers)
+            binding.layers.push_back(layer.name);
+
+        load.candidate = std::move(binding);
+        load.candidateLayout = layout;
+        load.candidateParametersJson = parameters.dump();
+        load.candidateRevision = schema->revision;
+        load.candidateRecord = std::move(record);
+        load.candidateBuilt = true;
+        return true;
+    }
+
     bool SurfaceMaterialLibrary::BuildCandidateData(Entry &entry, Load &load, const MaterialLayout *peerLayout,
         std::span<const std::byte> peerRecord, std::string &error)
     {
+        if (entry.layered)
+            return BuildLayeredCandidateData(entry, load, error);
+
         const SurfaceMaterialRegistration *registration =
             mHost->MaterialCatalog().FindByAsset(entry.logicalPath, entry.frontend);
         if (registration == nullptr)
@@ -1108,6 +1360,7 @@ namespace mir
 
     void SurfaceMaterialLibrary::FailLoad(Entry &entry, Load &load, std::string error)
     {
+        DiscardLayerCandidates(load);
         const bool hadBinding = entry.binding.has_value();
         if (hadBinding)
             MIR_LOG_WARN("Surface material '{}' frontend '{}': replacement rejected, keeping the previous material: {}",
@@ -1133,6 +1386,10 @@ namespace mir
         retired.generation = generation;
         if (entry.binding && !entry.binding->material.IsNull())
             retired.materials.push_back(entry.binding->material);
+        for (const MaterialHandle layer : entry.layerMaterials)
+            if (!layer.IsNull())
+                retired.materials.push_back(layer);
+        entry.layerMaterials.clear();
 
         const auto oldTextures = mBindingTextures.find(key);
         if (oldTextures != mBindingTextures.end())
@@ -1149,6 +1406,7 @@ namespace mir
         entry.parametersJson = load.candidateParametersJson;
         entry.schemaRevision = load.candidateRevision;
         entry.mSchemaEpoch = mSchemaEpoch;
+        entry.layeredDefinition = entry.layered ? load.layered : TerrainMaterialAsset{};
         entry.failed = false;
         entry.error.clear();
         entry.attemptFailed = false;
@@ -1160,6 +1418,16 @@ namespace mir
         claims.reserve(load.textures.size());
         for (auto &[role, claim] : load.textures)
             claims.push_back(std::move(claim));
+        for (std::unique_ptr<Load> &layerLoad : load.layerLoads)
+        {
+            if (layerLoad == nullptr)
+                continue;
+            if (layerLoad->candidateCreated && !layerLoad->candidate.material.IsNull())
+                entry.layerMaterials.push_back(layerLoad->candidate.material);
+            for (auto &[role, claim] : layerLoad->textures)
+                claims.push_back(std::move(claim));
+            layerLoad->candidateCreated = false;
+        }
         mBindingTextures.emplace(key, std::move(claims));
         mLoads.erase(key);
     }
@@ -1184,6 +1452,9 @@ namespace mir
             retired.generation = mGeneration;
             if (entry.binding && !entry.binding->material.IsNull())
                 retired.materials.push_back(entry.binding->material);
+            for (const MaterialHandle layer : entry.layerMaterials)
+                if (!layer.IsNull())
+                    retired.materials.push_back(layer);
             if (const auto textures = mBindingTextures.find(it->first); textures != mBindingTextures.end())
             {
                 for (TextureLoadLease &claim : textures->second)
@@ -1192,6 +1463,8 @@ namespace mir
             }
             if (!retired.materials.empty() || !retired.textures.empty())
                 mRetired.push_back(std::move(retired));
+            if (const auto load = mLoads.find(it->first); load != mLoads.end())
+                DiscardLayerCandidates(load->second);
             mLoads.erase(it->first);
             it = mEntries.erase(it);
         }
@@ -1234,7 +1507,8 @@ namespace mir
                 }
                 if (!load.parsed)
                 {
-                    const AssetLoadState state = load.assetLease.State();
+                    const AssetLoadState state =
+                        entry.layered ? load.sourceLease.State() : load.assetLease.State();
                     if (state == AssetLoadState::Queued)
                     {
                         pending = true;
@@ -1243,8 +1517,9 @@ namespace mir
                     if (state != AssetLoadState::Ready)
                     {
                         load.failed = true;
-                        load.error = state == AssetLoadState::Failed ? load.assetLease.FailureReason()
-                                                                     : "its decoded data is no longer available";
+                        load.error = state == AssetLoadState::Failed
+                            ? (entry.layered ? load.sourceLease.FailureReason() : load.assetLease.FailureReason())
+                            : "its decoded data is no longer available";
                         failure = load.error;
                         continue;
                     }
@@ -1277,6 +1552,23 @@ namespace mir
                         load.error = "the packed texture did not load";
                         failure = load.error;
                         break;
+                    }
+                }
+                if (entry.layered && !load.failed)
+                {
+                    bool layersPending = false;
+                    std::string layerError;
+                    if (!AdvanceLayers(entry, load, layersPending, layerError))
+                    {
+                        load.failed = true;
+                        load.error = std::move(layerError);
+                        failure = load.error;
+                        continue;
+                    }
+                    if (layersPending)
+                    {
+                        pending = true;
+                        continue;
                     }
                 }
             }
@@ -1441,7 +1733,7 @@ namespace mir
             if (found == mEntries.end())
                 continue;
             Entry &entry = found->second;
-            const uint64_t identity = CurrentIdentity(entry.asset);
+                    const uint64_t identity = EntryIdentity(entry);
             if (entry.binding && identity == entry.acceptedContent)
             {
                 mLoads.erase(key);
@@ -1470,6 +1762,8 @@ namespace mir
             resolution.error = "the material library is not bound";
             return resolution;
         }
+        if (IsTerrainMaterialPath(logicalPath))
+            frontend = "terrain";
         Entry &entry = EnsureEntry(logicalPath, asset, frontend);
         const std::string key = MaterialKey(logicalPath, frontend);
 
@@ -1477,11 +1771,19 @@ namespace mir
         {
             if (entry.mSchemaEpoch != mSchemaEpoch)
             {
-                std::string error;
-                if (!AdoptAcceptedRecord(entry, error))
+                if (entry.layered)
                 {
-                    resolution.error = std::move(error);
-                    return resolution;
+                    if (mLoads.find(key) == mLoads.end())
+                        StartLoad(entry);
+                }
+                else
+                {
+                    std::string error;
+                    if (!AdoptAcceptedRecord(entry, error))
+                    {
+                        resolution.error = std::move(error);
+                        return resolution;
+                    }
                 }
             }
             if (mAssets != nullptr)
@@ -1489,7 +1791,7 @@ namespace mir
                 const uint32_t revision = mAssets->Revision();
                 if (entry.acceptedRevision != revision && entry.attemptRevision != revision)
                 {
-                    const uint64_t identity = CurrentIdentity(entry.asset);
+                    const uint64_t identity = EntryIdentity(entry);
                     if (identity == entry.acceptedContent)
                         entry.acceptedRevision = revision;
                     else
@@ -1646,6 +1948,11 @@ namespace mir
         std::string localError;
         std::string &reported = error != nullptr ? *error : localError;
 
+        if (IsTerrainMaterialPath(logicalPath))
+        {
+            SetError(reported, "layered materials are edited through their source recipe");
+            return false;
+        }
         if (mHost == nullptr)
         {
             SetError(reported, "the material library is not bound");

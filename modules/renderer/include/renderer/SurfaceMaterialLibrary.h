@@ -15,6 +15,7 @@
 #include <renderer/Material.h>
 #include <renderer/SurfaceMaterialCatalog.h>
 #include <renderer/SurfaceMaterialTexture.h>
+#include <renderer/TerrainMaterialAsset.h>
 #include <renderer/TextureLoadTracker.h>
 
 #include <cstddef>
@@ -44,6 +45,8 @@ namespace mir
         std::optional<double> tilePeriodMeters;
         std::optional<SurfaceMaterialMacroParameters> macro;
         std::optional<SurfaceMaterialParallaxParameters> parallax;
+        // Ordered layer names for a layered material; empty for a single surface material.
+        std::vector<std::string> layers;
     };
 
     // One cached entry after a committed shader generation migrated its record:
@@ -229,6 +232,9 @@ namespace mir
             uint64_t attemptContent = 0;
             uint64_t acceptedContent = 0;
             uint32_t acceptedRevision = 0;
+            bool layered = false;
+            TerrainMaterialAsset layeredDefinition;
+            std::vector<MaterialHandle> layerMaterials;
         };
 
         struct Load
@@ -236,7 +242,11 @@ namespace mir
             uint64_t identity = 0;
             uint32_t revision = 0;
             AssetLease<SurfaceMaterialAsset> assetLease;
+            AssetLease<TerrainMaterialSource> sourceLease;
             std::shared_ptr<const SurfaceMaterialAsset> materialAsset;
+            TerrainMaterialAsset layered;
+            std::vector<Entry> layerEntries;
+            std::vector<std::unique_ptr<Load>> layerLoads;
             bool parsed = false;
             bool failed = false;
             std::string error;
@@ -260,7 +270,11 @@ namespace mir
         bool TexturesSettled(const Load &load) const;
         void FailLoad(Entry &entry, Load &load, std::string error);
         void PublishLoad(Entry &entry, Load &load, uint64_t generation);
-        uint64_t CurrentIdentity(AssetId asset) const;
+        uint64_t CurrentIdentity(AssetId asset, std::span<const uint32_t> tags) const;
+        uint64_t EntryIdentity(const Entry &entry) const;
+        bool AdvanceLayers(Entry &entry, Load &load, bool &pending, std::string &error);
+        bool BuildLayeredCandidateData(Entry &entry, Load &load, std::string &error);
+        void DiscardLayerCandidates(Load &load);
         void PruneUnused();
 
         // peerLayout and peerRecord carry the live numeric values a later frontend of this asset joins;

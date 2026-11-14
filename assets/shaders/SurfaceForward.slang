@@ -83,6 +83,7 @@ float4 fragmentMain<M : IMaterial>(SurfaceVSOutput input, bool frontFace : SV_Is
     context.footprintMeters = 0.0;
     context.incidence = 1.0;
     context.uvDensity = 0.0;
+    context.recordOffset = record.materialOffset;
 
     const SurfaceInput surfaceInput = MeshFrontend::Build(input.worldPos, normalize(input.normal),
         input.tangent, input.uv, input.localPos, input.color, frontFace);

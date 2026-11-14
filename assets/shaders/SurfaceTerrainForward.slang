@@ -85,6 +85,7 @@ float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_Is
     context.footprintMeters = 0.0;
     context.incidence = 1.0;
     context.uvDensity = 0.0;
+    context.recordOffset = record.materialOffset;
 
     SurfaceInput surfaceInput = TerrainFrontend::Build(input.worldPos, macroNormal, input.uv,
         input.localPos, input.color, frontFace, 0.0);

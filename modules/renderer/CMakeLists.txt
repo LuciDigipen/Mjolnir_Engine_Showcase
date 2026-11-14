@@ -81,6 +81,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/SurfaceMaterialCatalog.cpp
     src/renderer/SurfaceMaterialHost.cpp
     src/renderer/SurfaceMaterialLibrary.cpp
+    src/renderer/TerrainMaterialAsset.cpp
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp
     src/renderer/PostProcessingSettings.cpp

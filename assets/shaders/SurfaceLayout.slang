@@ -30,6 +30,7 @@ void layoutMain<M : IMaterial>(uniform StructuredBuffer<M> layout)
     context.footprintMeters = 0.0;
     context.incidence = 1.0;
     context.uvDensity = 0.0;
+    context.recordOffset = 0;
 
     layoutOutput.Store(0, asuint(layout[0].Evaluate(input, context).roughness));
 }

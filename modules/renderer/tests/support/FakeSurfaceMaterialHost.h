@@ -23,9 +23,11 @@ namespace mir::test
     {
     public:
         const SurfaceMaterialCatalog &MaterialCatalog() const override { return catalog; }
-        std::optional<SurfaceMaterialSchema> LoadSchema(const SurfaceMaterialRegistration &,
+        std::optional<SurfaceMaterialSchema> LoadSchema(const SurfaceMaterialRegistration &registration,
             std::string *error) const override
         {
+            if (const auto found = stemLayouts.find(registration.stem); found != stemLayouts.end())
+                return SurfaceMaterialSchema{ found->second, schemaRevision };
             if (!schemaLayout)
             {
                 if (error != nullptr)
@@ -42,7 +44,10 @@ namespace mir::test
             createdMaterials.push_back(desc);
             MaterialRecordSnapshot snapshot;
             snapshot.mMaterial = handle;
-            snapshot.mLayout = schemaLayout.value_or(MaterialLayout{});
+            if (const auto found = stemLayouts.find(desc.shaderName); found != stemLayouts.end())
+                snapshot.mLayout = found->second;
+            else
+                snapshot.mLayout = schemaLayout.value_or(MaterialLayout{});
             snapshot.mBytes.assign(desc.record.begin(), desc.record.end());
             records[handle.mIndex] = std::move(snapshot);
             return handle;
@@ -93,6 +98,7 @@ namespace mir::test
 
         SurfaceMaterialCatalog catalog;
         std::optional<MaterialLayout> schemaLayout;
+        std::unordered_map<std::string, MaterialLayout> stemLayouts;
         std::string schemaRevision = "layout-1";
         bool rejectMaterials = false;
         bool rejectRecords = false;

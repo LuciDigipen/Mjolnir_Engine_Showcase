@@ -232,6 +232,7 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
 #endif
     context.incidence = cosIncidence;
     context.uvDensity = uvDensity;
+    context.recordOffset = info.materialRecord;
 
     const M material = gSurfaceRecords.Load<M>(info.materialRecord);
     SurfaceInput surfaceInput =

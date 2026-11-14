@@ -29,6 +29,7 @@ engine_add_module_tests(renderer
     MotionBlurEffect.tests.cpp
     RendererCapabilities.tests.cpp
     TerrainDrawData.tests.cpp
+    TerrainMaterial.tests.cpp
     TextureTable.tests.cpp
     PostEffectRegistry.tests.cpp
     PostProcessingSettings.tests.cpp

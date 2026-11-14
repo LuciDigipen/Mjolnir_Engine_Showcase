@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "shader": { "file": "materials/icelandicSand.slang", "type": "IcelandicSandMaterial" },
+  "frontends": ["terrain"],
+  "parameters": {
+    "tileSizeMeters": 2.0,
+    "albedoTint": [0.55, 0.5, 0.42, 1.0],
+    "roughnessScale": 1.0,
+    "normalScale": 1.0,
+    "normalYUp": true,
+    "macroPeriodMeters": 64.0,
+    "macroStrength": 0.35,
+    "macroHueShiftDegrees": 8.0,
+    "macroRoughnessContrast": 0.35,
+    "parallaxEnabled": true,
+    "parallaxRtEnabled": false,
+    "parallaxHeightMeters": 0.057,
+    "parallaxReference": 0.455,
+    "parallaxDistanceMeters": 0.08,
+    "parallaxSteps": 24,
+    "parallaxFadeStartMeters": 40.0,
+    "parallaxFadeEndMeters": 120.0
+  },
+  "textures": {
+    "baseColor": { "path": "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_BaseColor.jpg", "colorSpace": "srgb" },
+    "normal": { "path": "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Normal.jpg", "colorSpace": "linear" },
+    "displacement": { "path": "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Displacement.jpg", "colorSpace": "linear" },
+    "roughness": { "path": "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Roughness.jpg", "colorSpace": "linear" },
+    "specular": { "path": "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Specular.jpg", "colorSpace": "srgb" },
+    "ao": { "path": "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_AO.jpg", "colorSpace": "srgb" }
+  },
+  "resolution": 2048
+}

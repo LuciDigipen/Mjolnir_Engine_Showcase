@@ -180,6 +180,8 @@ struct MaterialContext
     float incidence;
     // UV units per meter for the coordinates the material samples.
     float uvDensity;
+    // Byte offset of the material record a layered material loads its children from.
+    uint recordOffset;
 
     float4 Sample(TextureRef texture, float2 uv)
     {
@@ -387,6 +389,8 @@ struct MeshFrontend
         return input;
     }
 };
+
+#include "SurfaceLayered.slang"
 
 struct TerrainFrontend
 {
