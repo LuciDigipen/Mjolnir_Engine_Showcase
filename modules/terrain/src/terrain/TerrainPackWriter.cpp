@@ -395,6 +395,13 @@ namespace mir
             TerrainWeightRecord record;
             std::vector<std::byte> bytes;
         };
+
+        struct RegionWeightPayload
+        {
+            TerrainRegionWeightRecord record;
+            std::vector<std::byte> bytes;
+        };
+
         std::vector<const TerrainWeightTile *> weightTiles;
         weightTiles.reserve(weights.tiles.size());
         for (const TerrainWeightTile &tile : weights.tiles)
@@ -446,6 +453,60 @@ namespace mir
             }
         }
 
+        std::vector<RegionWeightPayload> regionWeightInputs;
+        if (!weights.regionImages.empty())
+        {
+            if (weightInputs.empty())
+                return Fail<R>(Code::InvalidInput, "{} Region weight images need weight tiles", weights.regionImages.size());
+            if (!regions.grid)
+                return Fail<R>(Code::InvalidInput, "Region weight images need a Region grid");
+            if (weights.regionImages.size() != regions.grid->RegionCount())
+                return Fail<R>(Code::InvalidInput, "{} Region weight images for a grid of {} Regions",
+                               weights.regionImages.size(), regions.grid->RegionCount());
+            std::vector<const TerrainRegionWeightImage *> ordered(regions.grid->RegionCount(), nullptr);
+            for (const TerrainRegionWeightImage &image : weights.regionImages)
+            {
+                if (!regions.grid->Contains(image.region))
+                    return Fail<R>(Code::InvalidInput, "Region weight image names Region L{} ({}, {}) outside the grid",
+                                   image.region.level, image.region.x, image.region.z);
+                const uint64_t ordinal = regions.grid->Ordinal(image.region);
+                if (ordered[size_t(ordinal)])
+                    return Fail<R>(Code::InvalidInput, "Region weight image for L{} ({}, {}) is given twice",
+                                   image.region.level, image.region.x, image.region.z);
+                ordered[size_t(ordinal)] = &image;
+            }
+            regionWeightInputs.reserve(ordered.size());
+            for (const TerrainRegionWeightImage *image : ordered)
+            {
+                const std::string region =
+                    std::format("Region L{} ({}, {})", image->region.level, image->region.x, image->region.z);
+                if (image->side < 2 || image->side > uint32_t(kMaxTerrainTileIntervals) + 1)
+                    return Fail<R>(Code::InvalidInput, "{}: side {} is outside 2 to {}", region, image->side,
+                                   uint32_t(kMaxTerrainTileIntervals) + 1);
+                const std::string what = region + " weight image";
+                size_t used = 0;
+                const TerrainPackError slots =
+                    detail::CheckWeightSlots(image->slots, weights.layers.size(), what, used);
+                if (slots.code != Code::None)
+                    return detail::Failure<R>(slots, "");
+                const TerrainPackError texels =
+                    detail::CheckWeightTexels(image->side, used, image->bytes, what);
+                if (texels.code != Code::None)
+                    return detail::Failure<R>(texels, "");
+                RegionWeightPayload input;
+                input.record.region = image->region;
+                input.record.slots = image->slots;
+                input.record.side = image->side;
+                input.record.length = image->bytes.size();
+                input.record.checksum = Fnv1a64(image->bytes);
+                input.bytes = image->bytes;
+                regionWeightInputs.push_back(std::move(input));
+            }
+        }
+        else if (!weightInputs.empty() && regions.grid)
+            return Fail<R>(Code::InvalidInput, "a weighted release with a Region grid needs {} Region weight images",
+                           regions.grid->RegionCount());
+
         // Regions go with their first map tile; their ids follow the tile payloads'.
         std::map<std::pair<int32_t, int32_t>, std::vector<uint32_t>> chunks;
         for (uint32_t t = 0; t < inputs.size(); ++t)
@@ -460,11 +521,23 @@ namespace mir
             const TerrainChunkCoord chunk = TerrainChunkOf(first, options.chunkTiles);
             chunks[{chunk.z, chunk.x}].push_back(static_cast<uint32_t>(inputs.size()) + t);
         }
-        std::map<std::pair<int32_t, int32_t>, std::vector<uint32_t>> weightChunks;
+
+        struct WeightMember
+        {
+            bool region = false;
+            uint32_t index = 0;
+        };
+        std::map<std::pair<int32_t, int32_t>, std::vector<WeightMember>> weightChunks;
         for (uint32_t t = 0; t < weightInputs.size(); ++t)
         {
             const TerrainChunkCoord chunk = TerrainChunkOf(weightInputs[t].record.tile, options.chunkTiles);
-            weightChunks[{chunk.z, chunk.x}].push_back(t);
+            weightChunks[{chunk.z, chunk.x}].push_back({false, t});
+        }
+        for (uint32_t t = 0; t < regionWeightInputs.size(); ++t)
+        {
+            const TileCoord first = regions.grid->MapTiles(regionWeightInputs[t].record.region).min;
+            const TerrainChunkCoord chunk = TerrainChunkOf(first, options.chunkTiles);
+            weightChunks[{chunk.z, chunk.x}].push_back({true, t});
         }
 
         TerrainEncodedRelease encoded;
@@ -528,13 +601,22 @@ namespace mir
             out.U32(kTerrainWeightsContentVersion);
             MIR_ASSERT(out.Size() == kTerrainPackHeaderSize, "weight pack header layout drifted from the spec");
 
-            for (uint32_t t : members)
+            for (const WeightMember &t : members)
             {
                 out.PadTo(options.payloadAlignment);
-                WeightPayload &input = weightInputs[t];
-                input.record.pack = packIndex;
-                input.record.offset = out.Size();
-                out.Bytes(input.bytes);
+                std::vector<std::byte> &bytes =
+                    t.region ? regionWeightInputs[t.index].bytes : weightInputs[t.index].bytes;
+                if (t.region)
+                {
+                    regionWeightInputs[t.index].record.pack = packIndex;
+                    regionWeightInputs[t.index].record.offset = out.Size();
+                }
+                else
+                {
+                    weightInputs[t.index].record.pack = packIndex;
+                    weightInputs[t.index].record.offset = out.Size();
+                }
+                out.Bytes(bytes);
             }
 
             weightPackRecords.push_back(
@@ -587,6 +669,8 @@ namespace mir
             out.U32(static_cast<uint32_t>(weights.layers.size()));
             out.U32(layerBytes);
             out.U64(weights.fingerprint);
+            out.U32(static_cast<uint32_t>(regionWeightInputs.size()));
+            out.U32(kTerrainRegionWeightRecordSize);
             MIR_ASSERT(out.Size() == kTerrainWeightsIndexHeaderSize, "weight index header layout drifted from the spec");
         }
         else
@@ -663,6 +747,21 @@ namespace mir
                 slotBytes[s] = static_cast<std::byte>(input.record.slots[s]);
             out.Bytes(slotBytes);
             out.U32(0);
+        }
+        for (const RegionWeightPayload &input : regionWeightInputs)
+        {
+            out.U32(input.record.region.level);
+            out.I32(input.record.region.x);
+            out.I32(input.record.region.z);
+            out.U32(input.record.pack);
+            out.U64(input.record.offset);
+            out.U64(input.record.length);
+            out.U64(input.record.checksum);
+            std::array<std::byte, kTerrainWeightSlots> slotBytes{};
+            for (size_t s = 0; s < kTerrainWeightSlots; ++s)
+                slotBytes[s] = static_cast<std::byte>(input.record.slots[s]);
+            out.Bytes(slotBytes);
+            out.U32(input.record.side);
         }
         if (hasWeights)
             for (const std::string &name : weights.layers)

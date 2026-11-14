@@ -291,6 +291,26 @@ namespace mir
         return decoded;
     }
 
+    TerrainResult<TerrainDecodedWeights> TerrainReleaseHandle::ReadRegionWeights(TerrainRegionCoord region) const
+    {
+        using R = TerrainDecodedWeights;
+        const TerrainRegionWeightRecord *record = mIndex->FindRegionWeight(region);
+        if (!record)
+            return Fail<R>(Code::NotFound, "Region L{} ({}, {}) has no weight image in release {}", region.level,
+                           region.x, region.z, Hex(Info().release.value));
+        const std::string pack = TerrainWeightPackFileName(mIndex->weightPacks[record->pack].chunk);
+        const std::string where = std::format("{}/{}: ", mSource->Describe(), pack);
+        const std::optional<std::vector<std::byte>> bytes =
+            mSource->ReadRange(pack, record->offset, static_cast<size_t>(record->length));
+        if (!bytes)
+            return Fail<R>(Code::Io, "{}cannot read Region L{} ({}, {}) weights at [{}, {}) (missing or truncated pack)",
+                           where, region.level, region.x, region.z, record->offset, record->offset + record->length);
+        TerrainResult<R> decoded = DecodeTerrainRegionWeightPayload(*mIndex, *record, *bytes);
+        if (!decoded)
+            return Failure<R>(decoded.error, where);
+        return decoded;
+    }
+
     TerrainPackError TerrainReleaseHandle::VerifyAllPacks() const
     {
         for (size_t p = 0; p < mIndex->packs.size(); ++p)
@@ -406,6 +426,18 @@ namespace mir
                              Describe(tile->tile), tile->offset, headerSize);
             const auto payload = all.subspan(static_cast<size_t>(tile->offset), static_cast<size_t>(tile->length));
             const TerrainPackError error = DecodeTerrainWeightPayload(index, *tile, payload).error;
+            if (error.code != Code::None)
+                return {error.code, where + error.message};
+        }
+        for (const TerrainRegionWeightRecord &region : index.regionWeights)
+        {
+            if (region.pack != p)
+                continue;
+            if (region.offset < headerSize)
+                return Error(Code::Malformed, "{}Region L{} ({}, {}) weight image starts at {}, inside the {}-byte header",
+                             where, region.region.level, region.region.x, region.region.z, region.offset, headerSize);
+            const auto payload = all.subspan(static_cast<size_t>(region.offset), static_cast<size_t>(region.length));
+            const TerrainPackError error = DecodeTerrainRegionWeightPayload(index, region, payload).error;
             if (error.code != Code::None)
                 return {error.code, where + error.message};
         }

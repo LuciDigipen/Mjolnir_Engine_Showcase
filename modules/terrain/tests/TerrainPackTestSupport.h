@@ -421,7 +421,30 @@ namespace mir::test
 
     inline size_t WeightLayerTableAt(const TerrainIndex &index)
     {
-        return WeightPackTableAt(index) + index.weightPacks.size() * kTerrainPackRecordSize +
-               index.weights.size() * kTerrainWeightRecordSize;
+        return WeightRecordAt(index, static_cast<uint32_t>(index.weights.size())) +
+               index.regionWeights.size() * kTerrainRegionWeightRecordSize;
+    }
+
+    inline size_t RegionWeightRecordAt(const TerrainIndex &index, uint32_t record)
+    {
+        return WeightRecordAt(index, static_cast<uint32_t>(index.weights.size())) +
+               size_t(record) * kTerrainRegionWeightRecordSize;
+    }
+
+    inline TerrainEncodedRelease EncodeWithRegionsAndWeights(const TerrainReleaseInfo &info,
+                                                             const TerrainLayout &layout,
+                                                             std::span<const TileHeights> tiles,
+                                                             const TerrainRegionWrites &regions,
+                                                             const TerrainWeightsWrites &weights,
+                                                             TerrainPackWriteOptions options = {})
+    {
+        std::vector<TerrainTileWrite> inputs;
+        for (const TileHeights &tile : tiles)
+            inputs.push_back({&tile});
+        TerrainResult<TerrainEncodedRelease> encoded =
+            EncodeTerrainRelease(info, std::span(&layout, 1), inputs, {}, regions, weights, options);
+        INFO(encoded.error.message);
+        REQUIRE(encoded);
+        return std::move(*encoded.value);
     }
 }

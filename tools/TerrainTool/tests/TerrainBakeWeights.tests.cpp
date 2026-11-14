@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -190,6 +191,53 @@ namespace
                                                      return record.source;
                                                  }));
     }
+
+    struct RegionImage
+    {
+        TerrainRegionCoord region;
+        uint32_t side = 0;
+        std::array<uint8_t, kTerrainWeightSlots> slots{};
+        std::vector<std::byte> bytes;
+
+        bool operator==(const RegionImage &) const = default;
+    };
+
+    std::vector<RegionImage> RegionImagesOf(const TerrainReleaseHandle &handle)
+    {
+        std::vector<RegionImage> images;
+        const TerrainIndex &index = handle.Index();
+        if (!index.regionGrid)
+            return images;
+        for (uint64_t ordinal = 0; ordinal < index.regionGrid->RegionCount(); ++ordinal)
+        {
+            const TerrainRegionCoord region = index.regionGrid->AtOrdinal(ordinal);
+            const TerrainRegionWeightRecord *record = index.FindRegionWeight(region);
+            REQUIRE(record);
+            const TerrainResult<TerrainDecodedWeights> decoded = handle.ReadRegionWeights(region);
+            INFO(decoded.error.message);
+            REQUIRE(decoded);
+            images.push_back({region, record->side, record->slots, decoded.value->bytes});
+        }
+        return images;
+    }
+
+    size_t RegionWeightRecordAt(const TerrainIndex &index, uint32_t ordinal)
+    {
+        const size_t weightTable = kTerrainWeightsIndexHeaderSize + index.packs.size() * kTerrainPackRecordSize +
+                                   index.tiles.size() * kTerrainTileRecordSize +
+                                   index.layers.size() * kTerrainLayerRecordSize +
+                                   index.regions.size() * kTerrainTileRecordSize +
+                                   index.weightPacks.size() * kTerrainPackRecordSize;
+        return weightTable + index.weights.size() * kTerrainWeightRecordSize +
+               size_t(ordinal) * kTerrainRegionWeightRecordSize;
+    }
+
+    size_t WeightPackRecordAt(const TerrainIndex &index, uint32_t pack)
+    {
+        return kTerrainWeightsIndexHeaderSize + index.packs.size() * kTerrainPackRecordSize +
+               index.tiles.size() * kTerrainTileRecordSize + index.layers.size() * kTerrainLayerRecordSize +
+               index.regions.size() * kTerrainTileRecordSize + size_t(pack) * kTerrainPackRecordSize;
+    }
 }
 
 TEST_CASE("A recipe with materials publishes rule weights and edit layers in every source tile",
@@ -213,6 +261,10 @@ TEST_CASE("A recipe with materials publishes rule weights and edit layers in eve
     CHECK(index.weightLayers == Names{"base", "sand"});
     CHECK(index.weightsFingerprint == FingerprintWeights(recipe, FingerprintRecipe(recipe)).value);
     CHECK(index.weights.size() == SourceTileCount(index));
+    REQUIRE(index.regionGrid);
+    CHECK(index.regionWeights.size() == index.regionGrid->RegionCount());
+    for (uint64_t ordinal = 0; ordinal < index.regionGrid->RegionCount(); ++ordinal)
+        CHECK(index.FindRegionWeight(index.regionGrid->AtOrdinal(ordinal)) != nullptr);
     for (const TerrainTileRecord &record : index.tiles)
         if (record.source)
             CHECK(index.FindWeight(record.tile) != nullptr);
@@ -273,6 +325,7 @@ TEST_CASE("A recipe without materials keeps its releases free of weight payloads
     CHECK(index.weightLayers.empty());
     CHECK(index.weightPacks.empty());
     CHECK(index.weightsFingerprint == 0);
+    CHECK(index.regionWeights.empty());
     for (const std::string &name : FileNames(plain))
         CHECK(name.ends_with(".wpack") == false);
 
@@ -323,6 +376,16 @@ TEST_CASE("A weight-only change reuses the height payloads and publishes a new r
     CHECK(h2.value->Index().weightLayers == Names{"base", "sand"});
     CHECK(WeightPayloads(*h2.value) != weightPayloads);
     CHECK(TilePayloads(*h2.value) == heightPayloads);
+
+    const std::vector<RegionImage> syncedRegions = RegionImagesOf(*h2.value);
+    REQUIRE_FALSE(syncedRegions.empty());
+    const fs::path fullDir = tree.scratch.path / "region-full";
+    const TerrainReport full = RunTerrainBake(tree.Bake(fullDir));
+    REQUIRE(full.Ok());
+    const TerrainResult<TerrainReleaseHandle> fullRelease =
+        TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(fullDir));
+    REQUIRE(fullRelease);
+    CHECK(RegionImagesOf(*fullRelease.value) == syncedRegions);
 
     const TerrainReport settled = Sync(tree.Sync());
     REQUIRE(settled.Ok());
@@ -543,5 +606,134 @@ TEST_CASE("Validate and package handle weight packs", "[terraintool][weights][va
         CHECK(opened.value->VerifyAllPacks().code == TerrainPackErrorCode::None);
         CHECK(ValidateRelease(copied, recipe).Ok());
         CHECK(ReadFile(copied / kTerrainIndexFileName) == files.at(std::string(kTerrainIndexFileName)));
+    }
+}
+
+TEST_CASE("Validate rederives every Region weight image and names the Region that differs",
+          "[terraintool][weights][validate]")
+{
+    WeightTree tree("weights_regions");
+    const TerrainReport synced = Sync(tree.Sync());
+    REQUIRE(synced.Ok());
+    REQUIRE(synced.publish->current);
+    const TerrainReleaseId release = *synced.publish->current;
+    const fs::path releaseDir = TerrainReleaseDir(tree.releases, tree.asset, release);
+    const TerrainRecipe recipe = RecipeOf(tree.recipe);
+    const std::map<std::string, std::vector<std::byte>> files = Snapshot(releaseDir);
+
+    const TerrainReport valid = ValidateRelease(releaseDir, recipe);
+    CHECK(valid.Ok());
+    CHECK(valid.Status(check::kRegions) == CheckStatus::Passed);
+    CHECK(valid.checks.end() !=
+          std::find_if(valid.checks.begin(), valid.checks.end(),
+                       [](const TerrainCheck &c)
+                       {
+                           return c.name == check::kRegions &&
+                                  c.detail.find("Region weight images match the tile-weight derivation") !=
+                                      std::string::npos;
+                       }));
+
+    auto copy = [&](std::string_view tag)
+    {
+        const fs::path dir = tree.scratch.path / std::string(tag);
+        fs::create_directories(dir);
+        for (const auto &[name, bytes] : files)
+            WriteFile(dir / name, bytes);
+        return dir;
+    };
+
+    SECTION("an altered image with consistent checksums fails the Region check by name")
+    {
+        const fs::path dir = copy("region-altered");
+        std::vector<std::byte> index = ReadFile(dir / kTerrainIndexFileName);
+        const TerrainResult<TerrainIndex> parsed = ParseTerrainIndex(index);
+        REQUIRE(parsed);
+        const TerrainIndex &read = *parsed.value;
+        REQUIRE_FALSE(read.regionWeights.empty());
+        const TerrainRegionWeightRecord &record = read.regionWeights.front();
+        const std::string pack = TerrainWeightPackFileName(read.weightPacks[record.pack].chunk);
+        std::vector<std::byte> bytes = ReadFile(dir / pack);
+        std::vector<std::byte> payload(bytes.begin() + record.offset, bytes.begin() + record.offset + record.length);
+
+        const size_t texels = size_t(record.side) * size_t(record.side);
+        size_t first = 0, second = 0;
+        bool found = false;
+        for (size_t i = 0; i < texels && !found; ++i)
+            for (size_t j = i + 1; j < texels && !found; ++j)
+                if (!std::equal(payload.begin() + i * kTerrainWeightSlots, payload.begin() + (i + 1) * kTerrainWeightSlots,
+                                payload.begin() + j * kTerrainWeightSlots))
+                {
+                    first = i;
+                    second = j;
+                    found = true;
+                }
+        REQUIRE(found);
+        for (size_t s = 0; s < kTerrainWeightSlots; ++s)
+            std::swap(payload[first * kTerrainWeightSlots + s], payload[second * kTerrainWeightSlots + s]);
+        std::copy(payload.begin(), payload.end(), bytes.begin() + record.offset);
+
+        const uint64_t payloadChecksum = Fnv1a64(payload);
+        StoreU64(index, RegionWeightRecordAt(read, 0) + terrainformat::regionWeightRecord::kChecksum, payloadChecksum);
+        StoreU64(index, WeightPackRecordAt(read, record.pack) + terrainformat::packRecord::kChecksum, Fnv1a64(bytes));
+        Reseal(index);
+        WriteFile(dir / pack, bytes);
+        WriteFile(dir / kTerrainIndexFileName, index);
+
+        const TerrainReport report = ValidateRelease(dir, recipe);
+        CHECK(report.Status(check::kPacks) == CheckStatus::Passed);
+        CHECK(report.Status(check::kRegions) == CheckStatus::Failed);
+        const std::vector<TerrainDiagnostic> diagnostics = DiagnosticsOf(report, check::kRegions);
+        REQUIRE_FALSE(diagnostics.empty());
+        CHECK(diagnostics.front().field == "weights");
+        CHECK(diagnostics.front().message.find("Region L") != std::string::npos);
+    }
+
+    SECTION("a missing Region weight record fails with a Region-naming message")
+    {
+        const fs::path dir = copy("region-missing");
+        std::vector<std::byte> index = ReadFile(dir / kTerrainIndexFileName);
+        const TerrainResult<TerrainIndex> parsed = ParseTerrainIndex(index);
+        REQUIRE(parsed);
+        REQUIRE_FALSE(parsed.value->regionWeights.empty());
+        StoreU32(index, terrainformat::index::kRegionWeightCount,
+                 static_cast<uint32_t>(parsed.value->regionWeights.size() - 1));
+        Reseal(index);
+        WriteFile(dir / kTerrainIndexFileName, index);
+
+        const TerrainReport report = ValidateRelease(dir, recipe);
+        CHECK(report.Status(check::kIndex) == CheckStatus::Failed);
+        const std::vector<TerrainDiagnostic> diagnostics = DiagnosticsOf(report, check::kIndex);
+        REQUIRE_FALSE(diagnostics.empty());
+        CHECK(diagnostics.front().message.find("Region weight records") != std::string::npos);
+        CHECK(diagnostics.front().message.find("missing") != std::string::npos);
+    }
+
+    SECTION("a truncated Region weight payload is missing by name")
+    {
+        const fs::path dir = copy("region-truncated");
+        std::vector<std::byte> index = ReadFile(dir / kTerrainIndexFileName);
+        const TerrainResult<TerrainIndex> parsed = ParseTerrainIndex(index);
+        REQUIRE(parsed);
+        const TerrainIndex &read = *parsed.value;
+        REQUIRE_FALSE(read.regionWeights.empty());
+        const TerrainRegionWeightRecord *last = &read.regionWeights.front();
+        for (const TerrainRegionWeightRecord &record : read.regionWeights)
+            if (record.offset + record.length > last->offset + last->length)
+                last = &record;
+        const std::string pack = TerrainWeightPackFileName(read.weightPacks[last->pack].chunk);
+        std::vector<std::byte> bytes = ReadFile(dir / pack);
+        REQUIRE(last->offset + last->length == bytes.size());
+        bytes.resize(static_cast<size_t>(last->offset));
+        StoreU64(index, WeightPackRecordAt(read, last->pack) + terrainformat::packRecord::kFileSize, bytes.size());
+        Reseal(index);
+        WriteFile(dir / pack, bytes);
+        WriteFile(dir / kTerrainIndexFileName, index);
+
+        const TerrainReport report = ValidateRelease(dir, recipe);
+        CHECK(report.Status(check::kIndex) == CheckStatus::Failed);
+        const std::vector<TerrainDiagnostic> diagnostics = DiagnosticsOf(report, check::kIndex);
+        REQUIRE_FALSE(diagnostics.empty());
+        CHECK(diagnostics.front().message.find("Region L") != std::string::npos);
+        CHECK(diagnostics.front().message.find("ends past") != std::string::npos);
     }
 }

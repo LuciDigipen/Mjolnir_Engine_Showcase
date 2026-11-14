@@ -19,6 +19,7 @@
 #include <core/fs/FileIO.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainPackWriter.h>
+#include <terrain/TerrainRegionWeights.h>
 #include <terrain/TerrainRelease.h>
 
 #include <algorithm>
@@ -30,6 +31,7 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -670,6 +672,77 @@ namespace mir::terrainbake
                 CheckMixedTileContinuity(layout, sources, report);
             }
         }
+
+        void CheckRegionWeights(const TerrainReleaseHandle &handle, TerrainReport &report)
+        {
+            const TerrainIndex &index = handle.Index();
+            if (index.regionWeights.empty() || !index.regionGrid)
+                return;
+            std::vector<TerrainWeightTile> tiles;
+            std::unordered_map<TileCoord, const TerrainWeightTile *> byTile;
+            tiles.reserve(index.weights.size());
+            for (const TerrainWeightRecord &record : index.weights)
+            {
+                TerrainResult<TerrainDecodedWeights> decoded = handle.ReadWeights(record.tile);
+                if (!decoded)
+                {
+                    report.Add({std::string(check::kRegions),
+                                "weights",
+                                {record.tile},
+                                std::nullopt,
+                                decoded.error.message});
+                    return;
+                }
+                tiles.push_back(ExpandTerrainWeights(*decoded.value));
+            }
+            for (const TerrainWeightTile &tile : tiles)
+                byTile.emplace(tile.tile, &tile);
+            const TerrainWeightTileLookup lookup = [&byTile](TileCoord at) -> const TerrainWeightTile *
+            {
+                const auto it = byTile.find(at);
+                return it == byTile.end() ? nullptr : it->second;
+            };
+
+            TerrainResult<std::vector<TerrainRegionWeightImage>> expected = BuildTerrainRegionWeights(
+                *index.regionGrid, index.weightLayers, lookup,
+                {.side = kTerrainRegionWeightSide, .workers = std::max(1u, std::thread::hardware_concurrency())});
+            if (!expected)
+            {
+                report.Add({std::string(check::kRegions), "weights", {}, std::nullopt, expected.error.message});
+                return;
+            }
+            for (size_t i = 0; i < expected.value->size(); ++i)
+            {
+                const TerrainRegionWeightImage &image = (*expected.value)[i];
+                const TerrainRegionWeightRecord &record = index.regionWeights[i];
+                const std::string differs =
+                    std::format("{} weight image differs from the derivation of the release's tile weights",
+                                Describe(record.region));
+                if (image.region != record.region || image.side != record.side || image.slots != record.slots ||
+                    index.FindRegionWeight(record.region) != &record)
+                {
+                    report.Add({std::string(check::kRegions),
+                                "weights",
+                                {{record.region.x, record.region.z}},
+                                std::nullopt,
+                                differs});
+                    return;
+                }
+                TerrainResult<TerrainDecodedWeights> actual = handle.ReadRegionWeights(record.region);
+                if (!actual || actual.value->bytes != image.bytes)
+                {
+                    report.Add({std::string(check::kRegions),
+                                "weights",
+                                {{record.region.x, record.region.z}},
+                                std::nullopt,
+                                actual ? differs : actual.error.message});
+                    return;
+                }
+            }
+            if (report.Status(check::kRegions) == CheckStatus::Passed)
+                report.Ran(check::kRegions, std::format("{} Region weight images match the tile-weight derivation",
+                                                       index.regionWeights.size()));
+        }
     }
 
     void ValidateTerrainCandidate(const std::filesystem::path &dir, const TerrainValidateOptions &options,
@@ -813,7 +886,10 @@ namespace mir::terrainbake
                      check::kRegions},
                     std::string(kIntegrityOnlyReason));
         else
+        {
             CheckContents(handle, packNames, options, mixed, report);
+            CheckRegionWeights(handle, report);
+        }
         const bool requiresSeams = (options.recipe && options.recipe->recipeVersion == 2) || mixed ||
                                    std::any_of(index.tiles.begin(), index.tiles.end(),
                                                [&](const auto &r)

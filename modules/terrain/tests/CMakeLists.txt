@@ -19,6 +19,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainPackIntegrity.tests.cpp
     TerrainPrefab.tests.cpp
     TerrainRegion.tests.cpp
+    TerrainRegionWeight.tests.cpp
     RunGuarded.tests.cpp
     TerrainRelease.tests.cpp
     TerrainReleaseSwitch.tests.cpp

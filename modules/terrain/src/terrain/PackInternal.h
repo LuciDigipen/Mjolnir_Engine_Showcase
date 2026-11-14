@@ -77,4 +77,10 @@ namespace mir::detail
     // Every Region of the grid once, in ordinal order, with lengths and checksums filled.
     TerrainResult<std::vector<TerrainPayloadWrite>> OrderRegionWrites(const TerrainRegionWrites &regions,
                                                                       const TerrainLayout &reference);
+
+    // Slots (used count, table range, repeats, order) and texel bytes of one encoded weight image.
+    TerrainPackError CheckWeightSlots(std::span<const uint8_t, kTerrainWeightSlots> slots, size_t tableSize,
+                                      std::string_view what, size_t &used);
+    TerrainPackError CheckWeightTexels(size_t side, size_t used, std::span<const std::byte> bytes,
+                                       std::string_view what);
 }

@@ -88,6 +88,8 @@ namespace mir
         TerrainResult<TerrainRegionMesh> ReadRegion(TerrainRegionCoord region) const;
         // One range: the tile's weight payload, checked and decoded. NotFound without a weight record.
         TerrainResult<TerrainDecodedWeights> ReadWeights(TileCoord tile) const;
+        // One range: the Region's weight image, checked and decoded. NotFound without a Region weight record.
+        TerrainResult<TerrainDecodedWeights> ReadRegionWeights(TerrainRegionCoord region) const;
 
         // Reads every pack whole and checks it.
         TerrainPackError VerifyAllPacks() const;

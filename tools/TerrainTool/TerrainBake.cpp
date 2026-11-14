@@ -21,6 +21,7 @@
 #include <jobs/JobExecutor.h>
 #include <terrain/TerrainEditLayer.h>
 #include <terrain/TerrainPackFormat.h>
+#include <terrain/TerrainRegionWeights.h>
 #include <terrain/TerrainRelease.h>
 #include <terrain/TerrainSurface.h>
 
@@ -368,6 +369,53 @@ namespace mir::terrainbake
                 weights.push_back(std::move(*slot.weights));
             return weights;
         }
+
+        // From the encoded tile payloads, so a validation that decodes the release derives the same images.
+        std::optional<std::vector<TerrainRegionWeightImage>>
+        BakeRegionWeightImages(const TerrainRegionGrid &grid, std::span<const std::string> table,
+                               std::span<const TerrainWeightTile> tiles, TerrainReport &report)
+        {
+            std::vector<TerrainWeightTile> quantised;
+            quantised.reserve(tiles.size());
+            for (const TerrainWeightTile &tile : tiles)
+            {
+                TerrainResult<TerrainEncodedWeights> encoded = EncodeTerrainWeightPayload(tile, table);
+                if (!encoded)
+                {
+                    report.Add({std::string(check::kEncode), "weights", {}, std::nullopt, encoded.error.message});
+                    return std::nullopt;
+                }
+                TerrainDecodedWeights decoded;
+                decoded.tile = tile.tile;
+                decoded.intervals = tile.intervals;
+                decoded.slots = encoded.value->slots;
+                for (size_t s = 0; s < kTerrainWeightSlots && decoded.slots[s] != 0xFF; ++s)
+                    decoded.layers[s] = table[decoded.slots[s]];
+                decoded.bytes = std::move(encoded.value->bytes);
+                quantised.push_back(ExpandTerrainWeights(decoded));
+            }
+            std::unordered_map<TileCoord, const TerrainWeightTile *> byTile;
+            for (const TerrainWeightTile &tile : quantised)
+                byTile.emplace(tile.tile, &tile);
+            const TerrainWeightTileLookup lookup = [&byTile](TileCoord at) -> const TerrainWeightTile *
+            {
+                const auto it = byTile.find(at);
+                return it == byTile.end() ? nullptr : it->second;
+            };
+
+            TerrainProgressStage("region weights");
+            TerrainResult<std::vector<TerrainRegionWeightImage>> images =
+                BuildTerrainRegionWeights(grid, table, lookup,
+                                          {.side = kTerrainRegionWeightSide,
+                                           .workers = std::max(1u, std::thread::hardware_concurrency())});
+            if (!images)
+            {
+                report.Add({std::string(check::kEncode), "regionWeights", {}, std::nullopt, images.error.message});
+                return std::nullopt;
+            }
+            TerrainProgressStep("region weights: regions", images.value->size(), images.value->size());
+            return std::move(*images.value);
+        }
     }
 
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report)
@@ -537,6 +585,7 @@ namespace mir::terrainbake
                                       MintTerrainReleaseId(asset, source, heightsHash, nonce)};
 
         std::vector<TerrainWeightTile> weightTiles;
+        std::vector<TerrainRegionWeightImage> regionWeightImages;
         TerrainWeightsWrites weights;
         if (recipe.hasMaterialsSection)
         {
@@ -548,6 +597,15 @@ namespace mir::terrainbake
                 weights.layers.push_back(layer.name);
             weights.fingerprint = FingerprintWeights(recipe, source).value;
             weights.tiles = std::span<const TerrainWeightTile>(weightTiles);
+            if (derivatives->regions && derivatives->regions->writes.grid)
+            {
+                std::optional<std::vector<TerrainRegionWeightImage>> images = BakeRegionWeightImages(
+                    *derivatives->regions->writes.grid, weights.layers, weightTiles, report);
+                if (!images)
+                    return std::nullopt;
+                regionWeightImages = std::move(*images);
+                weights.regionImages = regionWeightImages;
+            }
         }
 
         TerrainProgressStage("encode");
@@ -559,10 +617,10 @@ namespace mir::terrainbake
             return std::nullopt;
         }
         report.Ran(check::kEncode, std::format("release {}: {} source tiles, {} sparse layers, {} packs, {} weight "
-                                               "layers over {} tiles; {}",
+                                               "layers over {} tiles, {} Region weight images; {}",
                                                TerrainIdHex(info.release.value), tiles.size(), layers.size(),
                                                encoded.value->packs.size(), weights.layers.size(), weightTiles.size(),
-                                               mode));
+                                               regionWeightImages.size(), mode));
         return TerrainBakedRelease{info,        recipe.layout, nonce, std::move(tiles), std::move(*encoded.value),
                                    report.seams, baseRelease && affected.has_value()};
     }
