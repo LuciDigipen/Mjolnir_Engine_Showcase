@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 namespace mir
@@ -29,12 +30,59 @@ namespace mir
 
         struct ReadResult
         {
+            TerrainWeightUnit unit;
             uint64_t ticket = 0;
             bool ok = false;
             uint32_t side = 0;
             std::array<uint8_t, kTerrainDrawSlots> recordSlots{};
             std::vector<std::byte> bytes;
         };
+
+        // What the index says about one unit's image before it is read.
+        struct WeightSource
+        {
+            uint64_t checksum = 0;
+            std::array<uint8_t, kTerrainDrawSlots> slots{};
+            uint32_t side = 0;
+            float invFootprint = 0.0f;
+        };
+
+        std::optional<WeightSource> FindWeightSource(const TerrainReleaseHandle &release, const TerrainWeightUnit &unit)
+        {
+            const TerrainIndex &index = release.Index();
+            WeightSource source;
+            if (unit.kind == TerrainUnitKind::Region)
+            {
+                if (!index.regionGrid)
+                    return std::nullopt;
+                const TerrainRegionCoord region{unit.level, unit.coord.x, unit.coord.z};
+                const TerrainRegionWeightRecord *record = index.FindRegionWeight(region);
+                if (!record)
+                    return std::nullopt;
+                const TerrainLocalBounds rect = index.regionGrid->Rect(region);
+                const double span = rect.maxX - rect.minX;
+                if (!(span > 0.0))
+                    return std::nullopt;
+                source.checksum = record->checksum;
+                source.slots = record->slots;
+                source.side = record->side;
+                source.invFootprint = static_cast<float>(1.0 / span);
+                return source;
+            }
+            const TerrainWeightRecord *record = index.FindWeight(unit.coord);
+            if (!record)
+                return std::nullopt;
+            source.checksum = record->checksum;
+            source.slots = record->slots;
+            source.side = static_cast<uint32_t>(index.layout.IntervalsPerTile() + 1);
+            source.invFootprint = static_cast<float>(1.0 / index.layout.TileSize());
+            return source;
+        }
+
+        int RankOrder(TerrainUnitKind kind)
+        {
+            return kind == TerrainUnitKind::Region ? 0 : 1;
+        }
     }
 
     struct TerrainWeightResidency::Shared
@@ -98,11 +146,10 @@ namespace mir
 
     void TerrainWeightResidency::Request(const TerrainWeightWant &want)
     {
-        const TileKey key{want.release->Info().asset, want.tile};
-        auto found = mWants.find(key);
+        auto found = mWants.find(want.unit);
         if (found == mWants.end())
         {
-            mWants.emplace(key, want);
+            mWants.emplace(want.unit, want);
             return;
         }
         if (want.distance < found->second.distance)
@@ -128,15 +175,22 @@ namespace mir
         entry.texture = kNullTexture;
     }
 
-    void TerrainWeightResidency::MakeRoom(uint64_t bytes, float distance)
+    void TerrainWeightResidency::MakeRoom(uint64_t bytes, TerrainUnitKind kind, float distance)
     {
+        const int incoming = RankOrder(kind);
         while (HeldBytes() + bytes > mBudgetBytes)
         {
             auto farthest = mEntries.end();
             for (auto it = mEntries.begin(); it != mEntries.end(); ++it)
-                if (it->second.distance > distance &&
-                    (farthest == mEntries.end() || it->second.distance > farthest->second.distance))
+            {
+                const int order = RankOrder(it->first.kind);
+                const bool behind = order > incoming || (order == incoming && it->second.distance > distance);
+                if (!behind)
+                    continue;
+                if (farthest == mEntries.end() || order > RankOrder(farthest->first.kind) ||
+                    (order == RankOrder(farthest->first.kind) && it->second.distance > farthest->second.distance))
                     farthest = it;
+            }
             if (farthest == mEntries.end())
                 return;
             Retire(farthest->second);
@@ -144,29 +198,32 @@ namespace mir
         }
     }
 
-    void TerrainWeightResidency::StartRead(const TileKey &key, const TerrainWeightWant &want,
-                                           const TerrainWeightRecord &record, double now)
+    void TerrainWeightResidency::StartRead(const TerrainWeightWant &want, uint32_t side, uint64_t checksum,
+                                           const std::array<uint8_t, kTerrainDrawSlots> &recordSlots, float invFootprint,
+                                           double now)
     {
-        const int32_t intervals = want.release->Layout().IntervalsPerTile();
-        const uint32_t side = static_cast<uint32_t>(intervals + 1);
         Entry entry;
-        entry.checksum = record.checksum;
+        entry.checksum = checksum;
         entry.ticket = mNextTicket++;
         entry.bytes = uint64_t(side) * side * 4;
-        entry.invFootprint = static_cast<float>(1.0 / want.release->Layout().TileSize());
+        entry.invFootprint = invFootprint;
         entry.distance = want.distance;
         entry.lastRequested = now;
-        entry.recordSlots = record.slots;
+        entry.recordSlots = recordSlots;
         entry.state = WeightState::Reading;
 
         const uint64_t ticket = entry.ticket;
         std::shared_ptr<const TerrainReleaseHandle> release = want.release;
         std::shared_ptr<Shared> shared = mShared;
-        const TileCoord tile = want.tile;
-        mExecutor->Post([shared, release, ticket, tile] {
+        const TerrainWeightUnit unit = want.unit;
+        mExecutor->Post([shared, release, ticket, unit] {
             ReadResult result;
+            result.unit = unit;
             result.ticket = ticket;
-            TerrainResult<TerrainDecodedWeights> decoded = release->ReadWeights(tile);
+            TerrainResult<TerrainDecodedWeights> decoded =
+                unit.kind == TerrainUnitKind::Region
+                    ? release->ReadRegionWeights({unit.level, unit.coord.x, unit.coord.z})
+                    : release->ReadWeights(unit.coord);
             if (decoded)
             {
                 result.ok = true;
@@ -178,7 +235,7 @@ namespace mir
             shared->finished.push_back(std::move(result));
         });
 
-        mEntries.insert_or_assign(key, std::move(entry));
+        mEntries.insert_or_assign(want.unit, std::move(entry));
     }
 
     void TerrainWeightResidency::TakeFinished()
@@ -191,25 +248,24 @@ namespace mir
 
         for (ReadResult &result : finished)
         {
-            auto found = std::find_if(mEntries.begin(), mEntries.end(), [&](const auto &item) {
-                return item.second.ticket == result.ticket && item.second.state == WeightState::Reading;
-            });
-            if (found == mEntries.end())
+            auto found = mEntries.find(result.unit);
+            if (found == mEntries.end() || found->second.ticket != result.ticket ||
+                found->second.state != WeightState::Reading)
                 continue;
-            Entry &entry = found->second;
             if (!result.ok || result.side == 0)
             {
-                entry.state = WeightState::Failed;
+                found->second.state = WeightState::Failed;
                 continue;
             }
 
-            const uint64_t held = HeldBytes() - entry.bytes;
-            const bool fits = held + result.bytes.size() <= mBudgetBytes;
-            if (mSamplerRow == UINT32_MAX || !fits)
+            Entry entry = std::move(found->second);
+            mEntries.erase(found);
+            if (mSamplerRow == UINT32_MAX)
+                continue;
+            MakeRoom(result.bytes.size(), result.unit.kind, entry.distance);
+            if (HeldBytes() + result.bytes.size() > mBudgetBytes)
             {
-                mEntries.erase(found);
-                if (!fits)
-                    ++mSkippedBudget;
+                ++mSkippedBudget;
                 continue;
             }
 
@@ -222,16 +278,13 @@ namespace mir
             TextureHandle handle = source.desc.width != 0 ? mTextures.QueueTexture(std::move(source))
                                                           : kNullTexture;
             if (handle.IsNull())
-            {
-                entry.state = WeightState::Failed;
-                mEntries.erase(found);
                 continue;
-            }
             entry.texture = handle;
             entry.bytes = result.bytes.size();
             entry.recordSlots = result.recordSlots;
             entry.state = WeightState::Uploading;
             ++mQueued;
+            mEntries.emplace(result.unit, std::move(entry));
         }
     }
 
@@ -239,7 +292,7 @@ namespace mir
     {
         TakeFinished();
 
-        std::vector<TileKey> retired;
+        std::vector<TerrainWeightUnit> retired;
         for (auto &[key, entry] : mEntries)
         {
             if (entry.texture.IsNull())
@@ -262,26 +315,30 @@ namespace mir
                 break;
             }
         }
-        for (const TileKey &key : retired)
+        for (const TerrainWeightUnit &key : retired)
             mEntries.erase(key);
 
-        // Nearest first, so the budget goes to what the viewer sees closest.
-        std::vector<std::pair<TileKey, TerrainWeightWant>> wants(mWants.begin(), mWants.end());
+        // Region images go ahead of every tile, then the nearest unit, so budget pressure reaches tiles first.
+        std::vector<std::pair<TerrainWeightUnit, TerrainWeightWant>> wants(mWants.begin(), mWants.end());
         std::sort(wants.begin(), wants.end(), [](const auto &a, const auto &b) {
+            if (a.first.kind != b.first.kind)
+                return RankOrder(a.first.kind) < RankOrder(b.first.kind);
             if (a.second.distance != b.second.distance)
                 return a.second.distance < b.second.distance;
             if (a.first.asset != b.first.asset)
                 return a.first.asset.value < b.first.asset.value;
+            if (a.first.level != b.first.level)
+                return a.first.level < b.first.level;
             if (a.first.coord.z != b.first.coord.z)
                 return a.first.coord.z < b.first.coord.z;
             return a.first.coord.x < b.first.coord.x;
         });
-        std::vector<std::pair<TileKey, TerrainWeightWant>> reads;
+        std::vector<std::pair<TerrainWeightUnit, TerrainWeightWant>> reads;
         for (const auto &[key, want] : wants)
         {
-            const TerrainWeightRecord *record = want.release->Index().FindWeight(want.tile);
+            const std::optional<WeightSource> source = FindWeightSource(*want.release, key);
             auto found = mEntries.find(key);
-            if (!record)
+            if (!source)
             {
                 if (found != mEntries.end())
                 {
@@ -292,10 +349,10 @@ namespace mir
             }
             if (found != mEntries.end())
             {
-                if (found->second.checksum == record->checksum)
+                if (found->second.checksum == source->checksum)
                 {
-                    found->second.recordSlots = record->slots;
-                    found->second.invFootprint = static_cast<float>(1.0 / want.release->Layout().TileSize());
+                    found->second.recordSlots = source->slots;
+                    found->second.invFootprint = source->invFootprint;
                     found->second.distance = want.distance;
                     found->second.lastRequested = now;
                     continue;
@@ -306,13 +363,13 @@ namespace mir
             reads.push_back({key, want});
         }
 
-        // A texture outlives the last frame that drew its tile by the mesh retain time, so turning the camera
+        // A texture outlives the last frame that drew its unit by the mesh retain time, so turning the camera
         // does not re-read and re-upload it.
-        std::vector<TileKey> expired;
+        std::vector<TerrainWeightUnit> expired;
         for (const auto &[key, entry] : mEntries)
             if (!mWants.contains(key) && now - entry.lastRequested > mRetainSeconds)
                 expired.push_back(key);
-        for (const TileKey &key : expired)
+        for (const TerrainWeightUnit &key : expired)
         {
             Retire(mEntries.at(key));
             mEntries.erase(key);
@@ -320,32 +377,31 @@ namespace mir
 
         for (const auto &[key, want] : reads)
         {
-            const TerrainWeightRecord *record = want.release->Index().FindWeight(want.tile);
-            if (!record)
+            const std::optional<WeightSource> source = FindWeightSource(*want.release, key);
+            if (!source)
                 continue;
-            const uint32_t side = static_cast<uint32_t>(want.release->Layout().IntervalsPerTile() + 1);
-            const uint64_t bytes = uint64_t(side) * side * 4;
+            const uint64_t bytes = uint64_t(source->side) * source->side * 4;
             if (mSamplerRow == UINT32_MAX)
             {
                 ++mSkippedBudget;
                 continue;
             }
-            MakeRoom(bytes, want.distance);
+            MakeRoom(bytes, key.kind, want.distance);
             if (HeldBytes() + bytes > mBudgetBytes)
             {
                 ++mSkippedBudget;
                 continue;
             }
-            StartRead(key, want, *record, now);
+            StartRead(want, source->side, source->checksum, source->slots, source->invFootprint, now);
         }
     }
 
-    std::array<uint32_t, kTerrainDrawWords> TerrainWeightResidency::Words(TerrainUnitKind kind, const TileKey &key,
+    std::array<uint32_t, kTerrainDrawWords> TerrainWeightResidency::Words(const TerrainWeightUnit &unit,
                                                                          const TerrainSlotTable &slotTable) const
     {
-        if (kind != TerrainUnitKind::Tile || mSamplerRow == UINT32_MAX)
+        if (mSamplerRow == UINT32_MAX)
             return kNoTerrainDrawWords;
-        const auto found = mEntries.find(key);
+        const auto found = mEntries.find(unit);
         if (found == mEntries.end() || found->second.state != WeightState::Ready ||
             found->second.texture.IsNull())
             return kNoTerrainDrawWords;
@@ -375,6 +431,8 @@ namespace mir
         stats.skippedBudget = mSkippedBudget;
         for (const auto &[key, entry] : mEntries)
         {
+            if (key.kind == TerrainUnitKind::Region && entry.state != WeightState::Failed)
+                ++stats.residentRegions;
             switch (entry.state)
             {
             case WeightState::Reading:

@@ -1,7 +1,7 @@
 /**
  * @file TerrainWeightResidency.tests.cpp
  * @author Jackey Cen
- * @brief Tests for terrain_runtime/TerrainWeightResidency: weight textures of drawn tiles.
+ * @brief Tests for terrain_runtime/TerrainWeightResidency: weight textures of drawn tiles and Regions.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -12,6 +12,7 @@
 #include <terrain_runtime/TerrainWeightResidency.h>
 
 #include <renderer/TerrainDrawData.h>
+#include <terrain/TerrainRegionWeights.h>
 
 #include "support/FakeTextureUploader.h"
 
@@ -24,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -40,6 +42,22 @@ namespace
         gpu.weightBudgetBytes = budgetBytes;
         gpu.meshRetainSeconds = 4.0;
         return gpu;
+    }
+
+    TerrainWeightUnit TileUnit(AssetId asset, TileCoord tile)
+    {
+        return {asset, TerrainUnitKind::Tile, 0, tile};
+    }
+
+    TerrainWeightUnit RegionUnit(AssetId asset, TerrainRegionCoord region)
+    {
+        return {asset, TerrainUnitKind::Region, region.level, {region.x, region.z}};
+    }
+
+    uint32_t SlotWord(const std::array<uint8_t, kTerrainDrawSlots> &slots)
+    {
+        return uint32_t(slots[0]) | (uint32_t(slots[1]) << 8) | (uint32_t(slots[2]) << 16) |
+               (uint32_t(slots[3]) << 24);
     }
 
     std::vector<TerrainWeightTile> ConstantWeights(const TerrainLayout &layout, const std::vector<std::string> &layers,
@@ -88,10 +106,54 @@ namespace
             source = opened.source;
             handle = std::make_shared<const TerrainReleaseHandle>(std::move(opened.handle));
         }
+    };
 
-        TileKey Key(TileCoord tile) const
+    struct RegionWeightedRelease
+    {
+        TerrainLayout layout = EdgeLayout();
+        std::vector<TileHeights> tiles = BuildTiles(layout);
+        std::vector<std::string> table{"dirt", "sand"};
+        AssetId asset = TerrainAsset("terrain/region-weighted.terrain.json");
+        std::vector<TerrainWeightTile> weights;
+        TerrainRegionWrites regions = BuildTestRegions(layout, tiles, 2, 2);
+        std::vector<TerrainRegionWeightImage> images;
+        TerrainEncodedRelease encoded;
+        std::shared_ptr<TerrainMemorySource> source;
+        std::shared_ptr<const TerrainReleaseHandle> handle;
+
+        RegionWeightedRelease(uint64_t release, std::vector<float> split)
         {
-            return {asset, tile};
+            weights = ConstantWeights(layout, table, split);
+            REQUIRE(regions.grid);
+            std::unordered_map<TileCoord, const TerrainWeightTile *> byTile;
+            for (const TerrainWeightTile &tile : weights)
+                byTile[tile.tile] = &tile;
+            TerrainResult<std::vector<TerrainRegionWeightImage>> built = BuildTerrainRegionWeights(
+                *regions.grid, table,
+                [&](TileCoord tile) {
+                    const auto found = byTile.find(tile);
+                    return found == byTile.end() ? nullptr : found->second;
+                },
+                {.side = 3});
+            INFO(built.error.message);
+            REQUIRE(built);
+            images = std::move(*built.value);
+
+            TerrainWeightsWrites writes;
+            writes.layers = table;
+            writes.fingerprint = 0x2B2B;
+            writes.tiles = weights;
+            writes.regionImages = images;
+            encoded = EncodeWithRegionsAndWeights(Info(asset, release), layout, tiles, regions, writes,
+                                                  {.chunkTiles = 2});
+            OpenedRelease opened = OpenInMemory(encoded);
+            source = opened.source;
+            handle = std::make_shared<const TerrainReleaseHandle>(std::move(opened.handle));
+        }
+
+        TerrainRegionCoord Region() const
+        {
+            return regions.grid->AtOrdinal(0);
         }
     };
 
@@ -108,11 +170,6 @@ namespace
             OpenedRelease opened = OpenInMemory(Encode(Info(asset, release), layout, tiles, {.chunkTiles = 2}));
             source = opened.source;
             handle = std::make_shared<const TerrainReleaseHandle>(std::move(opened.handle));
-        }
-
-        TileKey Key(TileCoord tile) const
-        {
-            return {asset, tile};
         }
     };
 
@@ -142,8 +199,14 @@ namespace
 
         void Draw(const std::shared_ptr<const TerrainReleaseHandle> &release, TileCoord tile, float distance)
         {
+            DrawUnit(release, TileUnit(release->Info().asset, tile), distance);
+        }
+
+        void DrawUnit(const std::shared_ptr<const TerrainReleaseHandle> &release, const TerrainWeightUnit &unit,
+                      float distance)
+        {
             Begin();
-            residency.Request({release, tile, distance});
+            residency.Request({release, unit, distance});
             Install();
         }
 
@@ -175,12 +238,12 @@ TEST_CASE("A drawn tile queues one weight texture and draws with its words", "[t
     CHECK(std::equal(decoded.value->bytes.begin(), decoded.value->bytes.end(), entry.mSource.desc.pixels.begin()));
 
     const TerrainSlotTable defaults;
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), defaults) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {0, 0}), defaults) == kNoTerrainDrawWords);
 
     rig.textures.Complete(TextureHandle{0, 1});
     rig.Install();
 
-    const std::array<uint32_t, 4> words = rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), defaults);
+    const std::array<uint32_t, 4> words = rig.residency.Words(TileUnit(release.asset, {0, 0}), defaults);
     CHECK(words[0] == 1);
     CHECK(words[1] == kSamplerRow);
     CHECK(words[2] == 0xFFFF0000u);
@@ -189,7 +252,7 @@ TEST_CASE("A drawn tile queues one weight texture and draws with its words", "[t
     TerrainSlotTable custom;
     const uint8_t table[2] = {3, 2};
     custom.Set(table);
-    const std::array<uint32_t, 4> mapped = rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), custom);
+    const std::array<uint32_t, 4> mapped = rig.residency.Words(TileUnit(release.asset, {0, 0}), custom);
     CHECK(mapped[2] == 0xFFFF0203u);
 
     const std::optional<WorldDrawItem> draw =
@@ -203,54 +266,166 @@ TEST_CASE("A drawn tile queues one weight texture and draws with its words", "[t
     CHECK(rig.textures.mQueued == 1);
 }
 
+TEST_CASE("A drawn Region queues its weight image and draws with its words", "[terrain_runtime][weights]")
+{
+    RegionWeightedRelease release(0xE3, {0.5f, 0.5f});
+    Rig rig(uint64_t(1) << 24);
+    const TerrainRegionCoord region = release.Region();
+    const TerrainWeightUnit unit = RegionUnit(release.asset, region);
+
+    rig.DrawUnit(release.handle, unit, 1.0f);
+    CHECK(rig.textures.mQueued == 0);
+    rig.FinishReads();
+    REQUIRE(rig.textures.mQueued == 1);
+
+    const TerrainResult<TerrainDecodedWeights> decoded = release.handle->ReadRegionWeights(region);
+    REQUIRE(decoded);
+    const uint32_t side = decoded.value->intervals + 1;
+    const FakeTextureUploader::Entry &entry = rig.textures.mEntries.at(0);
+    CHECK(entry.mSource.desc.width == side);
+    CHECK(entry.mSource.desc.height == side);
+    CHECK(entry.mSource.desc.pixels.size_bytes() == size_t(side) * size_t(side) * 4);
+    CHECK(std::equal(decoded.value->bytes.begin(), decoded.value->bytes.end(), entry.mSource.desc.pixels.begin()));
+
+    const TerrainSlotTable defaults;
+    CHECK(rig.residency.Words(unit, defaults) == kNoTerrainDrawWords);
+
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.Install();
+
+    const std::array<uint32_t, 4> words = rig.residency.Words(unit, defaults);
+    const TerrainLocalBounds rect = release.handle->Index().regionGrid->Rect(region);
+    CHECK(words[0] == 1);
+    CHECK(words[1] == kSamplerRow);
+    CHECK(words[2] == SlotWord(defaults.Map(decoded.value->slots)));
+    CHECK(std::bit_cast<float>(words[3]) == float(1.0 / (rect.maxX - rect.minX)));
+    CHECK(rig.residency.Stats().residentRegions == 1);
+
+    TerrainSlotTable custom;
+    const uint8_t table[2] = {3, 2};
+    custom.Set(table);
+    const std::array<uint32_t, 4> mapped = rig.residency.Words(unit, custom);
+    CHECK(mapped[2] == SlotWord(custom.Map(decoded.value->slots)));
+}
+
+TEST_CASE("A tile and a Region with the same coordinates keep separate images", "[terrain_runtime][weights]")
+{
+    RegionWeightedRelease release(0xE4, {0.5f, 0.5f});
+    Rig rig(uint64_t(1) << 24);
+    const TerrainRegionCoord region = release.Region();
+    const TerrainWeightUnit tileUnit = TileUnit(release.asset, {0, 0});
+    const TerrainWeightUnit regionUnit = RegionUnit(release.asset, region);
+
+    rig.Begin();
+    rig.residency.Request({release.handle, tileUnit, 1.0f});
+    rig.residency.Request({release.handle, regionUnit, 1.0f});
+    rig.Install();
+    rig.FinishReads();
+    REQUIRE(rig.textures.mQueued == 2);
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.textures.Complete(TextureHandle{1, 1});
+    rig.Install();
+
+    const TerrainSlotTable slots;
+    const std::array<uint32_t, 4> tile = rig.residency.Words(tileUnit, slots);
+    const std::array<uint32_t, 4> drawnRegion = rig.residency.Words(regionUnit, slots);
+    CHECK(tile != kNoTerrainDrawWords);
+    CHECK(drawnRegion != kNoTerrainDrawWords);
+    CHECK(tile[0] != drawnRegion[0]);
+    CHECK(rig.residency.Stats().ready == 2);
+    CHECK(rig.residency.Stats().residentRegions == 1);
+}
+
 TEST_CASE("Leaving the draw set and a changed release payload retire the texture", "[terrain_runtime][weights]")
 {
-    WeightedRelease first(0xE3, {0.5f, 0.5f});
-    WeightedRelease sameWeights(0xE4, {0.5f, 0.5f});
-    WeightedRelease changed(0xE5, {0.25f, 0.75f});
+    WeightedRelease first(0xE5, {0.5f, 0.5f});
+    WeightedRelease sameWeights(0xE6, {0.5f, 0.5f});
+    WeightedRelease changed(0xE7, {0.25f, 0.75f});
     Rig rig(uint64_t(1) << 24);
     const TerrainSlotTable slots;
+    const TerrainWeightUnit unit = TileUnit(first.asset, {0, 0});
 
     rig.Draw(first.handle, {0, 0}, 1.0f);
     rig.FinishReads();
     rig.textures.Complete(TextureHandle{0, 1});
     rig.Install();
-    REQUIRE(rig.residency.Words(TerrainUnitKind::Tile, first.Key({0, 0}), slots) != kNoTerrainDrawWords);
+    REQUIRE(rig.residency.Words(unit, slots) != kNoTerrainDrawWords);
 
     rig.Draw(sameWeights.handle, {0, 0}, 1.0f);
     rig.FinishReads();
     CHECK(rig.textures.mQueued == 1);
     CHECK(rig.textures.mRetired.empty());
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, first.Key({0, 0}), slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(unit, slots) != kNoTerrainDrawWords);
 
     rig.Draw(changed.handle, {0, 0}, 1.0f);
     CHECK(rig.textures.mRetired.size() == 1);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, first.Key({0, 0}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
     rig.FinishReads();
     CHECK(rig.textures.mQueued == 2);
     rig.textures.Complete(TextureHandle{1, 1});
     rig.Install();
-    const std::array<uint32_t, 4> words = rig.residency.Words(TerrainUnitKind::Tile, first.Key({0, 0}), slots);
+    const std::array<uint32_t, 4> words = rig.residency.Words(unit, slots);
     CHECK(words[0] == 2);
 
     rig.Advance(5.0);
     rig.Begin();
     rig.Install();
     CHECK(rig.textures.mRetired.size() == 2);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, first.Key({0, 0}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
+}
+
+TEST_CASE("A Region image rereads only when its release carries a different Region checksum",
+          "[terrain_runtime][weights]")
+{
+    RegionWeightedRelease first(0xE8, {0.5f, 0.5f});
+    RegionWeightedRelease sameWeights(0xE9, {0.5f, 0.5f});
+    RegionWeightedRelease changed(0xEA, {0.25f, 0.75f});
+    Rig rig(uint64_t(1) << 24);
+    const TerrainSlotTable slots;
+    const TerrainWeightUnit unit = RegionUnit(first.asset, first.Region());
+
+    rig.DrawUnit(first.handle, unit, 1.0f);
+    rig.FinishReads();
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.Install();
+    REQUIRE(rig.residency.Words(unit, slots) != kNoTerrainDrawWords);
+
+    rig.DrawUnit(sameWeights.handle, unit, 1.0f);
+    rig.FinishReads();
+    CHECK(rig.textures.mQueued == 1);
+    CHECK(rig.textures.mRetired.empty());
+    CHECK(rig.residency.Words(unit, slots) != kNoTerrainDrawWords);
+
+    rig.DrawUnit(changed.handle, unit, 1.0f);
+    CHECK(rig.textures.mRetired.size() == 1);
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
+    rig.FinishReads();
+    CHECK(rig.textures.mQueued == 2);
+    rig.textures.Complete(TextureHandle{1, 1});
+    rig.Install();
+    const std::array<uint32_t, 4> words = rig.residency.Words(unit, slots);
+    CHECK(words[0] == 2);
+
+    rig.Advance(5.0);
+    rig.Begin();
+    rig.Install();
+    CHECK(rig.textures.mRetired.size() == 2);
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Stats().residentRegions == 0);
 }
 
 TEST_CASE("A tile keeps its texture while its mesh would still be resident", "[terrain_runtime][weights]")
 {
-    WeightedRelease release(0xE9, {0.5f, 0.5f});
+    WeightedRelease release(0xEB, {0.5f, 0.5f});
     Rig rig(uint64_t(1) << 24);
     const TerrainSlotTable slots;
+    const TerrainWeightUnit unit = TileUnit(release.asset, {0, 0});
 
     rig.Draw(release.handle, {0, 0}, 1.0f);
     rig.FinishReads();
     rig.textures.Complete(TextureHandle{0, 1});
     rig.Install();
-    REQUIRE(rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), slots) != kNoTerrainDrawWords);
+    REQUIRE(rig.residency.Words(unit, slots) != kNoTerrainDrawWords);
 
     rig.Advance(1.0);
     rig.Begin();
@@ -258,18 +433,18 @@ TEST_CASE("A tile keeps its texture while its mesh would still be resident", "[t
     CHECK(rig.textures.mQueued == 1);
     CHECK(rig.textures.mRetired.empty());
     CHECK(rig.executor->RunAll() == 0);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(unit, slots) != kNoTerrainDrawWords);
 
     rig.Advance(4.0);
     rig.Begin();
     rig.Install();
     CHECK(rig.textures.mRetired.size() == 1);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(unit, slots) == kNoTerrainDrawWords);
 }
 
 TEST_CASE("Budget pressure retires the farthest texture before a nearer tile starts", "[terrain_runtime][weights]")
 {
-    WeightedRelease release(0xEA, {0.5f, 0.5f});
+    WeightedRelease release(0xEC, {0.5f, 0.5f});
     const uint64_t side = uint64_t(release.layout.IntervalsPerTile() + 1);
     Rig rig(side * side * 4);
     const TerrainSlotTable slots;
@@ -278,30 +453,30 @@ TEST_CASE("Budget pressure retires the farthest texture before a nearer tile sta
     rig.FinishReads();
     rig.textures.Complete(TextureHandle{0, 1});
     rig.Install();
-    REQUIRE(rig.residency.Words(TerrainUnitKind::Tile, release.Key({-2, -1}), slots) != kNoTerrainDrawWords);
+    REQUIRE(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) != kNoTerrainDrawWords);
 
     rig.Draw(release.handle, {0, 0}, 1.0f);
     CHECK(rig.textures.mRetired.size() == 1);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({-2, -1}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
     rig.FinishReads();
     rig.textures.Complete(TextureHandle{1, 1});
     rig.Install();
 
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), slots) != kNoTerrainDrawWords);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({-2, -1}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {0, 0}), slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
 }
 
 TEST_CASE("The weight budget goes to the nearest tiles and the rest draw without weights",
           "[terrain_runtime][weights]")
 {
-    WeightedRelease release(0xE6, {0.5f, 0.5f});
+    WeightedRelease release(0xED, {0.5f, 0.5f});
     const uint64_t side = uint64_t(release.layout.IntervalsPerTile() + 1);
     Rig rig(side * side * 4);
     const TerrainSlotTable slots;
 
     rig.Begin();
-    rig.residency.Request({release.handle, {-2, -1}, 100.0f});
-    rig.residency.Request({release.handle, {0, 0}, 1.0f});
+    rig.residency.Request({release.handle, TileUnit(release.asset, {-2, -1}), 100.0f});
+    rig.residency.Request({release.handle, TileUnit(release.asset, {0, 0}), 1.0f});
     rig.Install();
 
     CHECK(rig.residency.Stats().reading == 1);
@@ -312,14 +487,67 @@ TEST_CASE("The weight budget goes to the nearest tiles and the rest draw without
     rig.textures.Complete(TextureHandle{0, 1});
     rig.Install();
 
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({0, 0}), slots) != kNoTerrainDrawWords);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, release.Key({-2, -1}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {0, 0}), slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
 }
 
-TEST_CASE("A release without weights queues nothing and Regions carry no words", "[terrain_runtime][weights]")
+TEST_CASE("Region images outrank tiles in the weight budget", "[terrain_runtime][weights]")
 {
-    PlainRelease plain(0xE7);
-    WeightedRelease weighted(0xE8, {0.5f, 0.5f});
+    RegionWeightedRelease release(0xEE, {0.5f, 0.5f});
+    const uint64_t tileBytes = uint64_t(release.layout.IntervalsPerTile() + 1) *
+                               uint64_t(release.layout.IntervalsPerTile() + 1) * 4;
+    Rig rig(tileBytes);
+    const TerrainSlotTable slots;
+    const TerrainWeightUnit regionUnit = RegionUnit(release.asset, release.Region());
+
+    rig.Draw(release.handle, {-2, -1}, 1.0f);
+    rig.FinishReads();
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.Install();
+    REQUIRE(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) != kNoTerrainDrawWords);
+
+    rig.DrawUnit(release.handle, regionUnit, 1000.0f);
+    CHECK(rig.textures.mRetired.size() == 1);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
+    rig.FinishReads();
+    REQUIRE(rig.textures.mQueued == 2);
+    rig.textures.Complete(TextureHandle{1, 1});
+    rig.Install();
+
+    CHECK(rig.residency.Words(regionUnit, slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
+}
+
+TEST_CASE("A wanted Region image is read while a nearer tile is skipped", "[terrain_runtime][weights]")
+{
+    RegionWeightedRelease release(0xEF, {0.5f, 0.5f});
+    const uint64_t tileBytes = uint64_t(release.layout.IntervalsPerTile() + 1) *
+                               uint64_t(release.layout.IntervalsPerTile() + 1) * 4;
+    Rig rig(tileBytes);
+    const TerrainSlotTable slots;
+    const TerrainWeightUnit regionUnit = RegionUnit(release.asset, release.Region());
+
+    rig.Begin();
+    rig.residency.Request({release.handle, TileUnit(release.asset, {-2, -1}), 1.0f});
+    rig.residency.Request({release.handle, regionUnit, 1000.0f});
+    rig.Install();
+
+    CHECK(rig.residency.Stats().reading == 1);
+    CHECK(rig.residency.Stats().skippedBudget == 1);
+    rig.executor->RunAll();
+    rig.Install();
+    REQUIRE(rig.textures.mQueued == 1);
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.Install();
+
+    CHECK(rig.residency.Words(regionUnit, slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
+}
+
+TEST_CASE("A release without weights queues nothing for tiles or Regions", "[terrain_runtime][weights]")
+{
+    PlainRelease plain(0xF0);
+    WeightedRelease weighted(0xF1, {0.5f, 0.5f});
     Rig rig(uint64_t(1) << 24);
     const TerrainSlotTable slots;
 
@@ -327,13 +555,20 @@ TEST_CASE("A release without weights queues nothing and Regions carry no words",
     CHECK(rig.executor->RunAll() == 0);
     rig.Install();
     CHECK(rig.textures.mQueued == 0);
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, plain.Key({0, 0}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(plain.asset, {0, 0}), slots) == kNoTerrainDrawWords);
+
+    const TerrainWeightUnit plainRegion{plain.asset, TerrainUnitKind::Region, 0, {0, 0}};
+    rig.DrawUnit(plain.handle, plainRegion, 1.0f);
+    CHECK(rig.executor->RunAll() == 0);
+    rig.Install();
+    CHECK(rig.textures.mQueued == 0);
+    CHECK(rig.residency.Words(plainRegion, slots) == kNoTerrainDrawWords);
 
     rig.Draw(weighted.handle, {0, 0}, 1.0f);
     rig.FinishReads();
     rig.textures.Complete(TextureHandle{0, 1});
     rig.Install();
 
-    CHECK(rig.residency.Words(TerrainUnitKind::Tile, weighted.Key({0, 0}), slots) != kNoTerrainDrawWords);
-    CHECK(rig.residency.Words(TerrainUnitKind::Region, weighted.Key({0, 0}), slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(TileUnit(weighted.asset, {0, 0}), slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words({weighted.asset, TerrainUnitKind::Region, 0, {0, 0}}, slots) == kNoTerrainDrawWords);
 }

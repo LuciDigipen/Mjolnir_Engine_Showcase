@@ -90,7 +90,7 @@ namespace
         void Prepare(const std::shared_ptr<const TerrainReleaseHandle> &release, TileCoord tile)
         {
             residency.BeginRequest();
-            residency.Request({release, tile, 1.0f});
+            residency.Request({release, {release->Info().asset, TerrainUnitKind::Tile, 0, tile}, 1.0f});
             residency.Install(now);
             executor->RunAll();
             residency.Install(now);
@@ -104,8 +104,8 @@ namespace
     {
         WeightRig rig;
         rig.Prepare(release, {0, 0});
-        return TerrainDrawData::Unpack(rig.residency.Words(TerrainUnitKind::Tile, {release->Info().asset, {0, 0}},
-                                                          table))
+        return TerrainDrawData::Unpack(
+                   rig.residency.Words({release->Info().asset, TerrainUnitKind::Tile, 0, {0, 0}}, table))
             .slots;
     }
 }

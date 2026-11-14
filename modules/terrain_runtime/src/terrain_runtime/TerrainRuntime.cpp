@@ -1309,15 +1309,17 @@ namespace mir
             const TerrainInstanceState &instance = instances[unit.instance];
             const TerrainSlotTable *slots =
                 unit.instance < mResources.size() ? &mResources[unit.instance].slotTable : nullptr;
-            const TileKey key{instance.release->Info().asset, unit.geometry.coord};
-            // Ray-traced draws carry no weights, and their tiles are not requested here.
+            const TerrainWeightUnit key{instance.release->Info().asset, unit.kind,
+                                         unit.kind == TerrainUnitKind::Region ? unit.geometry.level : 0u,
+                                         unit.geometry.coord};
+            // Ray-traced draws read what the retained path requested.
             std::array<uint32_t, 4> terrain{};
             if (mWeights && slots)
             {
-                if (retain && unit.kind == TerrainUnitKind::Tile)
-                    mWeights->Request({instance.release->SharedHandle(), unit.geometry.coord,
+                if (retain)
+                    mWeights->Request({instance.release->SharedHandle(), key,
                                        static_cast<float>(unit.distance)});
-                terrain = mWeights->Words(unit.kind, key, *slots);
+                terrain = mWeights->Words(key, *slots);
             }
             const MaterialHandle material =
                 unit.instance < mResources.size() ? mResources[unit.instance].material : kNullMaterial;
@@ -1364,6 +1366,8 @@ namespace mir
             "uploading, {} building or built",
             s.drawnTiles, s.drawnRegions, levels, s.coarserFallbacks, s.otherFallbacks, s.missing, s.visibleWants,
             s.prefetchWants, MiB(s.prefetchBytes), s.prefetchDropped, m.ready, m.uploading, m.building + m.built);
+        if (mWeights)
+            summary += std::format("; {} Region weight images resident", mWeights->Stats().residentRegions);
         if (summary == view.logged)
             return;
         view.logged = std::move(summary);
