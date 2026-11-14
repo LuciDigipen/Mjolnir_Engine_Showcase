@@ -1,7 +1,7 @@
 {
   "guid": "67501228a414ffec",
   "importer": {
-    "next": 436,
+    "next": 437,
     "objects": {
       "animation:name/Gear_Retract_Extend": "435",
       "image:name/caps_carbon_base_color": "39",
@@ -130,6 +130,7 @@
       "material:name/SF50_Cargo_Paint_And_Floor_NonPainted": "170",
       "material:name/SF50_Cargo_Stitches": "174",
       "material:name/SF50_Cockpit_Ribbons": "153",
+      "material:name/SF50_Common_Machinery_Metal": "436",
       "material:name/SF50_Detail_Decals_Normals_Only": "178",
       "material:name/SF50_Door01": "135",
       "material:name/SF50_Door02": "161",
