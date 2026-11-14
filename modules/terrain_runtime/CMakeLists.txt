@@ -6,6 +6,7 @@ target_sources(engine_terrain_runtime PRIVATE
     src/terrain_runtime/TerrainRender.cpp
     src/terrain_runtime/TerrainRuntime.cpp
     src/terrain_runtime/TerrainRuntimeModule.cpp
+    src/terrain_runtime/TerrainWeightResidency.cpp
 )
 target_link_libraries(engine_terrain_runtime PRIVATE mir::jobs)
 

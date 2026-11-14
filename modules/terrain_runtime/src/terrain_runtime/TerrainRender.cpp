@@ -85,7 +85,8 @@ namespace mir
     }
 
     std::optional<WorldDrawItem> MakeTerrainDraw(const TerrainResidentMesh &mesh, const TerrainPlacement &placement,
-                                                 MaterialHandle material, const glm::vec4 &diagnosticTint)
+                                                 MaterialHandle material, const glm::vec4 &diagnosticTint,
+                                                 const std::array<uint32_t, 4> &terrain)
     {
         const std::optional<WorldPosition> origin = TryTerrainLocalToWorld(mesh.origin, placement.translation);
         if (!origin)
@@ -97,6 +98,7 @@ namespace mir
         draw.material = material;
         draw.tint = material.IsNull() ? diagnosticTint : glm::vec4(1.0f);
         draw.translationGrid = kTerrainTranslationGrid;
+        draw.terrain = terrain;
         return draw;
     }
 }

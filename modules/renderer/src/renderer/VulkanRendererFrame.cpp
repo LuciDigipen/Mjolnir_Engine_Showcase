@@ -121,12 +121,7 @@ namespace mir
                     const std::optional<uint32_t> recordIndex = mDrawRecords->Acquire(frame);
                     if (!recordIndex) continue;
                     const MaterialRecordRef ref = mMaterialStore->RecordRef(*material);
-                    mDrawRecords->Write(frame, *recordIndex, DrawRecord{
-                        .materialOffset = ref.mOffset,
-                        .materialSize = ref.mSize,
-                        .flags = ref.mFlags,
-                        .reserved = ref.mReserved,
-                        .terrain = {} });
+                    mDrawRecords->Write(frame, *recordIndex, MakeDrawRecord(ref, item.terrain));
                     baseInstance = *recordIndex;
                 }
 

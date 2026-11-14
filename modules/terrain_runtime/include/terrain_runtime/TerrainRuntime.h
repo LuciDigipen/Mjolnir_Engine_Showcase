@@ -11,6 +11,7 @@
 #include <terrain_runtime/TerrainGroundBridge.h>
 #include <terrain_runtime/TerrainRender.h>
 #include <terrain_runtime/TerrainJobExecutor.h>
+#include <terrain_runtime/TerrainWeightResidency.h>
 
 #include <project/GameProject.h>
 #include <core/ecs/Entity.h>
@@ -88,6 +89,10 @@ namespace mir
         // Edit's snapshots, handed over before Play's PlayBegin; BeginPlay applies the ones whose releases loaded.
         void OfferPlayOverlays(const TerrainWorld &source);
 
+        // Which material layer each release weight layer becomes on one instance, named from the layered
+        // material. False when no loaded instance has that entity.
+        bool SetInstanceMaterialLayers(Entity entity, std::span<const uint8_t> layers);
+
         // Retires every GPU mesh the terrain holds and forgets its builds; the next frame builds what it draws again.
         void ForgetMeshes();
 
@@ -122,6 +127,7 @@ namespace mir
             std::vector<TerrainMaterialLayer> materialLayers;
             MaterialHandle material;
             uint64_t materialGeneration = 0;
+            TerrainSlotTable slotTable;
         };
 
         struct ViewState
@@ -228,6 +234,8 @@ namespace mir
         std::unique_ptr<TerrainGpuUploader> mUploader;
         // Null without valid settings or renderer mesh streaming.
         std::unique_ptr<TerrainMeshResidency> mMeshes;
+        // Resident weight textures of the tiles the views draw.
+        std::unique_ptr<TerrainWeightResidency> mWeights;
         std::shared_ptr<Colliders> mColliders;
         // Null without valid settings.
         std::unique_ptr<TerrainCollisionResidency> mCollision;

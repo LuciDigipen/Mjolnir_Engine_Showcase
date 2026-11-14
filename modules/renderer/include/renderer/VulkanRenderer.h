@@ -130,6 +130,10 @@ namespace mir
         // Previous morph/skin sample of this primitive. Empty means no
         // compatible history; use the current deformation instead.
         std::span<const glm::vec4> previousDeformation;
+
+        // The four terrain words of a tile draw - see renderer/TerrainDrawData.h.
+        // All zero for anything without weights.
+        std::array<uint32_t, 4> terrain{};
     };
 
     // One draw call's worth of data for one viewport. Temporary: it lives only
@@ -159,6 +163,8 @@ namespace mir
         glm::mat4 previousModel{ 1.0f };
 
         std::span<const glm::vec4> previousDeformation;
+
+        std::array<uint32_t, 4> terrain{};
     };
 
     // Draw items produced outside the MeshRenderer query (by ModelSystem),

@@ -19,6 +19,7 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -70,8 +71,9 @@ namespace mir
     };
 
     // A ready mesh drawn at an instance's placement; nullopt when its origin does not fit the world.
-    // A valid material replaces the diagnostic tint.
+    // A valid material replaces the diagnostic tint; terrain carries the draw's four terrain words.
     std::optional<WorldDrawItem> MakeTerrainDraw(const TerrainResidentMesh &mesh, const TerrainPlacement &placement,
                                                  MaterialHandle material = kNullMaterial,
-                                                 const glm::vec4 &diagnosticTint = kTerrainDiagnosticTint);
+                                                 const glm::vec4 &diagnosticTint = kTerrainDiagnosticTint,
+                                                 const std::array<uint32_t, 4> &terrain = {});
 }

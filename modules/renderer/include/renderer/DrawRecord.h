@@ -8,6 +8,9 @@
  */
 #pragma once
 
+#include <renderer/MaterialRecordTable.h>
+
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -35,4 +38,17 @@ namespace mir
     static_assert(offsetof(DrawRecord, reserved) == 12);
     static_assert(offsetof(DrawRecord, terrain) == 16);
     static_assert(offsetof(DrawRecord, terrain) + 4 * sizeof(uint32_t) == sizeof(DrawRecord));
+
+    // A draw's record: its material's accepted table row plus its terrain words, all zero without weights.
+    inline DrawRecord MakeDrawRecord(const MaterialRecordRef &ref, const std::array<uint32_t, 4> &terrain = {})
+    {
+        DrawRecord record{};
+        record.materialOffset = ref.mOffset;
+        record.materialSize = ref.mSize;
+        record.flags = ref.mFlags;
+        record.reserved = ref.mReserved;
+        for (size_t i = 0; i < terrain.size(); ++i)
+            record.terrain[i] = terrain[i];
+        return record;
+    }
 }

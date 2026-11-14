@@ -271,6 +271,26 @@ namespace mir
         return mesh;
     }
 
+    TerrainResult<TerrainDecodedWeights> TerrainReleaseHandle::ReadWeights(TileCoord tile) const
+    {
+        using R = TerrainDecodedWeights;
+        const TerrainWeightRecord *record = mIndex->FindWeight(tile);
+        if (!record)
+            return Fail<R>(Code::NotFound, "tile {} has no weights in release {}", Describe(tile),
+                           Hex(Info().release.value));
+        const std::string pack = TerrainWeightPackFileName(mIndex->weightPacks[record->pack].chunk);
+        const std::string where = std::format("{}/{}: ", mSource->Describe(), pack);
+        const std::optional<std::vector<std::byte>> bytes =
+            mSource->ReadRange(pack, record->offset, static_cast<size_t>(record->length));
+        if (!bytes)
+            return Fail<R>(Code::Io, "{}cannot read weight tile {} at [{}, {}) (missing or truncated pack)", where,
+                           Describe(tile), record->offset, record->offset + record->length);
+        TerrainResult<R> decoded = DecodeTerrainWeightPayload(*mIndex, *record, *bytes);
+        if (!decoded)
+            return Failure<R>(decoded.error, where);
+        return decoded;
+    }
+
     TerrainPackError TerrainReleaseHandle::VerifyAllPacks() const
     {
         for (size_t p = 0; p < mIndex->packs.size(); ++p)

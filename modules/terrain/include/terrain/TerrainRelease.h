@@ -86,6 +86,8 @@ namespace mir
         TerrainResult<TerrainLodNormals> ReadNormals(const TileKey &key, uint32_t layer) const;
         // One range: the Region's payload, with no tile payload.
         TerrainResult<TerrainRegionMesh> ReadRegion(TerrainRegionCoord region) const;
+        // One range: the tile's weight payload, checked and decoded. NotFound without a weight record.
+        TerrainResult<TerrainDecodedWeights> ReadWeights(TileCoord tile) const;
 
         // Reads every pack whole and checks it.
         TerrainPackError VerifyAllPacks() const;

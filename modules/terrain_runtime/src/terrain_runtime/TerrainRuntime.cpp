@@ -282,10 +282,18 @@ namespace mir
                          MiB(gpu.stagingBytes));
         mUploader = std::make_unique<TerrainGpuUploader>(renderer);
         mMeshes = std::make_unique<TerrainMeshResidency>(gpu, mPool, *mUploader);
+        const SamplerDesc weightSampler{.magFilter = VK_FILTER_LINEAR,
+                                        .minFilter = VK_FILTER_LINEAR,
+                                        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE};
+        mWeights = std::make_unique<TerrainWeightResidency>(gpu, mPool, renderer,
+                                                            renderer.MaterialSamplerRow(weightSampler));
         MIR_LOG_INFO("Terrain GPU meshes: {:.0f} MiB budget, {:.1f} MiB uploaded a frame through a {:.1f} MiB staging "
-                     "ring, kept {} s after their last want or draw",
+                     "ring, kept {} s after their last want or draw; {:.0f} MiB of weight textures",
                      MiB(gpu.budgetBytes), MiB(renderer.UploadFrameBudget()),
-                     MiB(renderer.MeshStreaming().desc.stagingBytes), gpu.meshRetainSeconds);
+                     MiB(renderer.MeshStreaming().desc.stagingBytes), gpu.meshRetainSeconds,
+                     MiB(gpu.weightBudgetBytes));
     }
 
     TerrainStreamer *TerrainRuntime::Streamer() const
@@ -335,6 +343,8 @@ namespace mir
         }
         if (mMeshes)
             mMeshes->ApplySettings(next.gpu);
+        if (mWeights)
+            mWeights->ApplySettings(next.gpu);
         if (mCollision)
             mCollision->ApplySettings(next.collision);
         mSeenSettings = next;
@@ -362,6 +372,8 @@ namespace mir
         }
         if (mMeshes)
             mMeshes->Install();
+        if (mWeights)
+            mWeights->Install(Now());
         if (mCollision && streamer)
         {
             // No step runs between frames, so colliders may change here.
@@ -465,6 +477,17 @@ namespace mir
                 mPlayOverlays.Offer(asset.asset, asset.logicalPath, asset.overlay);
     }
 
+    bool TerrainRuntime::SetInstanceMaterialLayers(Entity entity, std::span<const uint8_t> layers)
+    {
+        for (InstanceResources &resources : mResources)
+            if (resources.entity == entity)
+            {
+                resources.slotTable.Set(layers);
+                return true;
+            }
+        return false;
+    }
+
     void TerrainRuntime::ForgetMeshes()
     {
         if (!Bound())
@@ -476,6 +499,8 @@ namespace mir
             mMeshes->RetireAll();
             mMeshes->Forget();
         }
+        if (mWeights)
+            mWeights->RetireAll();
         for (ViewState &view : mViews)
             view.draws.clear();
     }
@@ -1115,6 +1140,8 @@ namespace mir
         }
         const TerrainUnitReady ready = Ready();
         mFrameWants.clear();
+        if (mWeights)
+            mWeights->BeginRequest();
 
         // A staged release in place of each loaded one of its asset, selected but never drawn.
         std::map<uint64_t, std::vector<TerrainSelectionInstance>> staged;
@@ -1259,10 +1286,23 @@ namespace mir
                 : mMeshes->FindReady(unit.geometry);
             if (!mesh)
                 continue;
+            const TerrainInstanceState &instance = instances[unit.instance];
+            const TerrainSlotTable *slots =
+                unit.instance < mResources.size() ? &mResources[unit.instance].slotTable : nullptr;
+            const TileKey key{instance.release->Info().asset, unit.geometry.coord};
+            // Ray-traced draws carry no weights, and their tiles are not requested here.
+            std::array<uint32_t, 4> terrain{};
+            if (mWeights && slots)
+            {
+                if (retain && unit.kind == TerrainUnitKind::Tile)
+                    mWeights->Request({instance.release->SharedHandle(), unit.geometry.coord,
+                                       static_cast<float>(unit.distance)});
+                terrain = mWeights->Words(unit.kind, key, *slots);
+            }
             const MaterialHandle material =
                 unit.instance < mResources.size() ? mResources[unit.instance].material : kNullMaterial;
             if (std::optional<WorldDrawItem> draw =
-                    MakeTerrainDraw(*mesh, instances[unit.instance].placement, material))
+                    MakeTerrainDraw(*mesh, instance.placement, material, kTerrainDiagnosticTint, terrain))
                 out.push_back(*draw);
         }
     }

@@ -64,6 +64,44 @@ struct DrawRecord
     uint terrain[4];
 };
 
+// Mirrors mir::TerrainWeightUv and mir::AccumulateTerrainLayerWeights in
+// modules/renderer/include/renderer/TerrainDrawData.h.
+float2 TerrainWeightUv(float3 localPos, float invFootprint, uint side)
+{
+    const float span = float(side - 1);
+    return (localPos.xz * invFootprint * span + 0.5) / float(side);
+}
+
+// Word 0 is the weight image row plus one, 1 the sampler row, 2 the material
+// layer of each R..A channel (0xFF unused) and 3 the reciprocal tile size.
+float4 TerrainLayerWeights(DrawRecord record, float3 localPos)
+{
+    if (record.terrain[0] == 0)
+        return float4(1.0, 0.0, 0.0, 0.0);
+    const uint image = record.terrain[0] - 1;
+    const uint sampler = record.terrain[1];
+    const float invFootprint = asfloat(record.terrain[3]);
+    uint width, height;
+    gSurfaceImages[NonUniformResourceIndex(image)].GetDimensions(width, height);
+    if (width == 0 || !(invFootprint > 0.0) || !isfinite(invFootprint))
+        return float4(1.0, 0.0, 0.0, 0.0);
+    const float2 uv = TerrainWeightUv(localPos, invFootprint, width);
+    const float4 channels = gSurfaceImages[NonUniformResourceIndex(image)].SampleLevel(
+        gSurfaceSamplers[NonUniformResourceIndex(sampler)], uv, 0.0);
+    const float channelWeights[4] = { channels.x, channels.y, channels.z, channels.w };
+    float layers[4] = { 0.0, 0.0, 0.0, 0.0 };
+    for (uint channel = 0; channel < 4; ++channel)
+    {
+        const uint layer = (record.terrain[2] >> (8 * channel)) & 0xFFu;
+        if (layer != 0xFFu && layer < 4u)
+            layers[layer] += channelWeights[channel];
+    }
+    const float sum = layers[0] + layers[1] + layers[2] + layers[3];
+    if (!(sum > 0.0))
+        return float4(1.0, 0.0, 0.0, 0.0);
+    return float4(layers[0], layers[1], layers[2], layers[3]) / sum;
+}
+
 // World-space UV gradients on a triangle. The maximum singular value of the
 // 2x3 Jacobian is the largest UV change per meter, including rank-one UVs.
 float3 SurfaceUvGradient(float3 e1, float3 e2, float du1, float du2)
@@ -108,6 +146,9 @@ struct SurfaceInput
     bool frontFace;
     // UV units per meter at this point; ray tracing uses it for the mip level.
     float uvDensity;
+    // Weights of material layers 0..3, always summing to one. A material that
+    // does not read it keeps drawing as a single layer.
+    float4 layerWeights;
 };
 
 // Every field lerps, and height lets layered materials blend by height later.
@@ -342,6 +383,7 @@ struct MeshFrontend
         input.vertexColor = vertexColor;
         input.frontFace = frontFace;
         input.uvDensity = 0.0;
+        input.layerWeights = float4(1.0, 0.0, 0.0, 0.0);
         return input;
     }
 };
@@ -364,6 +406,7 @@ struct TerrainFrontend
         input.vertexColor = vertexColor;
         input.frontFace = frontFace;
         input.uvDensity = uvDensity;
+        input.layerWeights = float4(1.0, 0.0, 0.0, 0.0);
         return input;
     }
 };
