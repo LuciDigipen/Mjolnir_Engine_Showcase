@@ -24,6 +24,7 @@ struct RtInstanceInfo
     float4 modelCol0;   // model linear transform, for tangents under non-uniform scale
     float4 modelCol1;
     float4 modelCol2;
+    uint4 terrain;      // the draw record's terrain words
 };
 
 [[vk::binding(2, 0)]]

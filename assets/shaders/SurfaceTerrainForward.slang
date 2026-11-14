@@ -89,7 +89,7 @@ float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_Is
 
     SurfaceInput surfaceInput = TerrainFrontend::Build(input.worldPos, macroNormal, input.uv,
         input.localPos, input.color, frontFace, 0.0);
-    surfaceInput.layerWeights = TerrainLayerWeights(record, input.localPos);
+    surfaceInput.layerWeights = TerrainLayerWeights(record.terrain, input.localPos);
     const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), pushData.tint);
 
     ShadowMapVisibility visibility;

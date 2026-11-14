@@ -47,6 +47,7 @@ struct RtInstanceInfo
     float4 modelCol0;
     float4 modelCol1;
     float4 modelCol2;
+    uint4 terrain;
 };
 
 struct ShadowPayload
@@ -222,8 +223,9 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
     context.recordOffset = info.materialRecord;
 
     const M material = gSurfaceRecords.Load<M>(info.materialRecord);
-    const SurfaceInput surfaceInput = TerrainFrontend::Build(hitWorldPos, macroNormal, uv, objectPos,
+    SurfaceInput surfaceInput = TerrainFrontend::Build(hitWorldPos, macroNormal, uv, objectPos,
         vertexColor, frontFace, uvDensity);
+    surfaceInput.layerWeights = TerrainLayerWeights(info.terrain, objectPos);
     const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), info.tint);
 
     TerrainRayVisibility visibility;

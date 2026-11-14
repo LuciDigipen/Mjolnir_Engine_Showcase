@@ -1312,13 +1312,11 @@ namespace mir
             const TerrainWeightUnit key{instance.release->Info().asset, unit.kind,
                                          unit.kind == TerrainUnitKind::Region ? unit.geometry.level : 0u,
                                          unit.geometry.coord};
-            // Ray-traced draws read what the retained path requested.
             std::array<uint32_t, 4> terrain{};
             if (mWeights && slots)
             {
-                if (retain)
-                    mWeights->Request({instance.release->SharedHandle(), key,
-                                       static_cast<float>(unit.distance)});
+                mWeights->Request({instance.release->SharedHandle(), key,
+                                   static_cast<float>(unit.distance)});
                 terrain = mWeights->Words(key, *slots);
             }
             const MaterialHandle material =

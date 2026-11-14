@@ -61,7 +61,7 @@ struct DrawRecord
     uint materialSize;
     uint flags;
     uint reserved;
-    uint terrain[4];
+    uint4 terrain;
 };
 
 // Mirrors mir::TerrainWeightUv and mir::AccumulateTerrainLayerWeights in
@@ -74,13 +74,13 @@ float2 TerrainWeightUv(float3 localPos, float invFootprint, uint side)
 
 // Word 0 is the weight image row plus one, 1 the sampler row, 2 the material
 // layer of each R..A channel (0xFF unused) and 3 the reciprocal tile size.
-float4 TerrainLayerWeights(DrawRecord record, float3 localPos)
+float4 TerrainLayerWeights(uint4 terrain, float3 localPos)
 {
-    if (record.terrain[0] == 0)
+    if (terrain.x == 0)
         return float4(1.0, 0.0, 0.0, 0.0);
-    const uint image = record.terrain[0] - 1;
-    const uint sampler = record.terrain[1];
-    const float invFootprint = asfloat(record.terrain[3]);
+    const uint image = terrain.x - 1;
+    const uint sampler = terrain.y;
+    const float invFootprint = asfloat(terrain.w);
     uint width, height;
     gSurfaceImages[NonUniformResourceIndex(image)].GetDimensions(width, height);
     if (width == 0 || !(invFootprint > 0.0) || !isfinite(invFootprint))
@@ -92,7 +92,7 @@ float4 TerrainLayerWeights(DrawRecord record, float3 localPos)
     float layers[4] = { 0.0, 0.0, 0.0, 0.0 };
     for (uint channel = 0; channel < 4; ++channel)
     {
-        const uint layer = (record.terrain[2] >> (8 * channel)) & 0xFFu;
+        const uint layer = (terrain.z >> (8 * channel)) & 0xFFu;
         if (layer != 0xFFu && layer < 4u)
             layers[layer] += channelWeights[channel];
     }

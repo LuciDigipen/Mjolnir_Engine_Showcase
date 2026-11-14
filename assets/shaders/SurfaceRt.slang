@@ -40,6 +40,7 @@ struct RtInstanceInfo
     float4 modelCol0;
     float4 modelCol1;
     float4 modelCol2;
+    uint4 terrain;
 };
 
 struct ShadowPayload
