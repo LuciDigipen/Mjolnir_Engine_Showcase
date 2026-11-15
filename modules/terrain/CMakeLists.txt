@@ -25,6 +25,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainOverlayMesh.cpp
     src/terrain/TerrainPackFormat.cpp
     src/terrain/TerrainPackWriter.cpp
+    src/terrain/TerrainRecipeMaterials.cpp
     src/terrain/TerrainRegion.cpp
     src/terrain/TerrainRegionGrid.cpp
     src/terrain/TerrainRegionWeights.cpp

@@ -13,6 +13,7 @@
 #include <terrain/TerrainEditLayer.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
+#include <terrain/TerrainRecipeMaterials.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -34,7 +35,7 @@ namespace mir::terrainbake
     // Bump when anything changes the samples.
     inline constexpr uint32_t kHeightmapGeneratorVersion = 1;
     // float32 still resolves ~1 mm here.
-    inline constexpr double kMaxHeightMagnitude = 10000.0;
+    inline constexpr double kMaxHeightMagnitude = mir::kMaxTerrainHeightMagnitude;
 
     class TerrainHeightSource;
 

@@ -80,11 +80,6 @@ namespace mir::terrainbake
         return MixBits(recipeSeed ^ Fnv1a64(layerName));
     }
 
-    std::vector<TerrainMaterialLayer> DefaultTerrainMaterialLayers()
-    {
-        return {TerrainMaterialLayer{std::string("base"), {}}};
-    }
-
     std::optional<TerrainWeightTile> EvaluateTerrainWeights(const TerrainRecipe &recipe,
                                                             const TerrainFinalSurface &surface, TileCoord tile)
     {

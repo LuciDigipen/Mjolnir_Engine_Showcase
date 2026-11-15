@@ -9,6 +9,8 @@
 #include <TerrainMaterial.h>
 #include <TerrainRecipe.h>
 
+#include <terrain/TerrainRecipeMaterials.h>
+
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
@@ -437,4 +439,27 @@ TEST_CASE("The weight fingerprint follows material fields, order and heights", "
         CHECK(FingerprintWeights(withHeightEdit, heights).value == dressedHash);
         CHECK(FingerprintRecipe(withHeightEdit) != heights);
     }
+}
+
+TEST_CASE("A rewritten recipe keeps its recipe and weight identity", "[terraintool][recipe][material]")
+{
+    const std::string text = RecipeText("games/TerrainCheck/assets/terrain/relief-2x2.terrain.json");
+    const RecipeParseResult original = ParseTerrainRecipe(text);
+    for (const RecipeIssue &issue : original.issues)
+        UNSCOPED_INFO(issue.field << ": " << issue.message);
+    REQUIRE(original.recipe);
+
+    const TerrainRecipeMaterialsWriteResult rewritten =
+        ReplaceTerrainRecipeMaterials(text, original.recipe->materials);
+    REQUIRE(rewritten.text);
+    const RecipeParseResult reparsed = ParseTerrainRecipe(*rewritten.text);
+    for (const RecipeIssue &issue : reparsed.issues)
+        UNSCOPED_INFO(issue.field << ": " << issue.message);
+    REQUIRE(reparsed.recipe);
+
+    CHECK(reparsed.recipe->materials == original.recipe->materials);
+    CHECK(CanonicalRecipeText(*reparsed.recipe) == CanonicalRecipeText(*original.recipe));
+    CHECK(FingerprintRecipe(*reparsed.recipe) == FingerprintRecipe(*original.recipe));
+    CHECK(FingerprintWeights(*reparsed.recipe, FingerprintRecipe(*reparsed.recipe)) ==
+          FingerprintWeights(*original.recipe, FingerprintRecipe(*original.recipe)));
 }

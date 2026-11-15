@@ -20,6 +20,7 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainPackFormat.tests.cpp
     TerrainPackIntegrity.tests.cpp
     TerrainPrefab.tests.cpp
+    TerrainRecipeMaterials.tests.cpp
     TerrainRegion.tests.cpp
     TerrainRegionWeight.tests.cpp
     RunGuarded.tests.cpp
@@ -42,7 +43,8 @@ engine_add_module_tests(terrain NO_SYSTEM_TIES
 # real Jolt bodies; terrain itself never links scene or physics.
 target_link_libraries(engine_terrain_tests PRIVATE mir::scene mir::physics mir::prefab terrain_bake)
 target_compile_definitions(engine_terrain_tests PRIVATE
-    TERRAIN_COLLISION_RECIPE="${PROJECT_SOURCE_DIR}/tools/TerrainTool/tests/fixtures/mixed-2x2.terrain.json")
+    TERRAIN_COLLISION_RECIPE="${PROJECT_SOURCE_DIR}/tools/TerrainTool/tests/fixtures/mixed-2x2.terrain.json"
+    TERRAIN_MATERIAL_RECIPE="${PROJECT_SOURCE_DIR}/games/TerrainCheck/assets/terrain/relief-2x2.terrain.json")
 
 # the crash runs in a child process, so the test run survives it
 if(WIN32 AND BUILD_TESTING)

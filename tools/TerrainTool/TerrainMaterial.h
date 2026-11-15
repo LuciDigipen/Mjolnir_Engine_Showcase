@@ -9,8 +9,10 @@
 #pragma once
 
 #include <terrain/TerrainIdentity.h>
+#include <terrain/TerrainRecipeMaterials.h>
 #include <terrain/TerrainWeights.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -21,52 +23,14 @@ namespace mir::terrainbake
 {
     // Bumping it changes every weight fingerprint.
     inline constexpr uint32_t kMaterialCanonicalVersion = 1;
-    inline constexpr size_t kMaxMaterialNameLength = 32;
+    inline constexpr size_t kMaxMaterialNameLength = mir::kMaxMaterialNameLength;
 
-    struct TerrainMaterialHeightRule
-    {
-        double min = 0.0;   // m
-        double max = 0.0;   // m
-        double blend = 0.0; // m; 0 is a hard edge
-
-        bool operator==(const TerrainMaterialHeightRule &) const = default;
-    };
-
-    struct TerrainMaterialSlopeRule
-    {
-        double min = 0.0;   // degrees
-        double max = 0.0;   // degrees
-        double blend = 0.0; // degrees; 0 is a hard edge
-
-        bool operator==(const TerrainMaterialSlopeRule &) const = default;
-    };
-
-    struct TerrainMaterialNoiseRule
-    {
-        double wavelength = 1.0; // m
-        int32_t octaves = 1;
-        double strength = 0.0; // [0, 1]
-
-        bool operator==(const TerrainMaterialNoiseRule &) const = default;
-    };
-
-    struct TerrainMaterialRules
-    {
-        std::optional<TerrainMaterialHeightRule> height;
-        std::optional<TerrainMaterialSlopeRule> slope;
-        std::optional<TerrainMaterialNoiseRule> noise;
-
-        bool operator==(const TerrainMaterialRules &) const = default;
-    };
-
-    // Layers composite in order; the first is the fallback and takes no rules.
-    struct TerrainMaterialLayer
-    {
-        std::string name;
-        TerrainMaterialRules rules;
-
-        bool operator==(const TerrainMaterialLayer &) const = default;
-    };
+    using TerrainMaterialHeightRule = mir::TerrainMaterialHeightRule;
+    using TerrainMaterialSlopeRule = mir::TerrainMaterialSlopeRule;
+    using TerrainMaterialNoiseRule = mir::TerrainMaterialNoiseRule;
+    using TerrainMaterialRules = mir::TerrainMaterialRules;
+    using TerrainMaterialLayer = mir::TerrainRecipeMaterialLayer;
+    using mir::DefaultTerrainMaterialLayers;
 
     struct TerrainRecipe;
     struct TerrainFinalSurface;
@@ -75,9 +39,6 @@ namespace mir::terrainbake
     double TerrainMaterialRamp(double value, double min, double max, double blend);
     double TerrainMaterialNoiseFactor(double strength, double fbm);
     uint64_t TerrainMaterialLayerSeed(uint64_t recipeSeed, std::string_view layerName);
-
-    // One layer named "base"; a recipe without materials behaves as it.
-    std::vector<TerrainMaterialLayer> DefaultTerrainMaterialLayers();
 
     // Reference-layout weights of one tile, from its final surface heights and normals.
     std::optional<TerrainWeightTile> EvaluateTerrainWeights(const TerrainRecipe &recipe,
