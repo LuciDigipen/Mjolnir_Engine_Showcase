@@ -166,6 +166,13 @@ cmake --build --preset windows-msvc-debug
 Configure with `-DCMAKE_DISABLE_PRECOMPILE_HEADERS=OFF` to enable them again.
 Keep normal includes in source files so both configurations build independently.
 
+**Offline asset cooking.** MSVC Debug builds optimize `AssetCooker` and its
+`gltf_importer` library, including image decoding and mip generation. They retain
+Debug symbols and the Debug runtime, engine modules and test sources retain their
+usual Debug settings. To step through unoptimized cooker code, configure with
+`-DMIR_OPTIMIZE_ASSET_COOKER=OFF` and rebuild the tool. Release builds keep their
+normal settings.
+
 **Reconfigure** every time a `CMakeLists.txt` or `vcpkg.json` changes.
 
 Ninja does it for you at build time, and cmake-tools can do it on save — see
