@@ -127,7 +127,10 @@ namespace mir
         }
 
         const std::filesystem::path pointer = TerrainBaseWeightsPointerPath(releasesRoot, asset);
-        const std::optional<std::string> text = ReadText(pointer);
+        // A recipe without material layers has no cache, and ReadText logs a missing file as an error.
+        std::error_code ec;
+        const std::optional<std::string> text =
+            std::filesystem::exists(pointer, ec) ? ReadText(pointer) : std::nullopt;
         if (!text)
         {
             result.error = {Code::MissingPointer, std::format("{}: no base weights cache (run TerrainTool sync)",
