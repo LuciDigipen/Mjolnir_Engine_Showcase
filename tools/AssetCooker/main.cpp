@@ -109,6 +109,13 @@ namespace
         return value;
     }
     bool IsMaterialPath(const std::filesystem::path &path) { return LowerFilename(path).ends_with(".material.json"); }
+    std::optional<std::vector<std::byte>> ReadExistingCookedBytes(const std::filesystem::path &path)
+    {
+        // A clean cook and a missing cache entry have no previous output to read.
+        if (!std::filesystem::exists(path))
+            return std::nullopt;
+        return mir::ReadBytes(path);
+    }
     void Publish(const std::filesystem::path &path, std::span<const std::byte> bytes)
     {
         std::filesystem::create_directories(path.parent_path());
@@ -407,7 +414,7 @@ namespace
         for (const auto &encoded : record.at("outputs"))
         {
             const Output value = OutputFromJson(encoded);
-            auto bytes = mir::ReadBytes(out / value.file);
+            auto bytes = ReadExistingCookedBytes(out / value.file);
             auto blob = bytes ? mir::ParseAssetBlob(*bytes) : std::nullopt;
             if (!blob || blob->header.typeTag != value.tag || blob->header.contentVersion != value.version)
                 return false;
@@ -661,7 +668,9 @@ namespace
                               !options.removals.empty() || !options.materialRemovals.empty() || !options.moves.empty());
         std::unordered_map<uint64_t, Output> outputs;
         std::unordered_map<uint64_t, Output> previousOutputs;
-        if (auto previous = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName))
+        const auto manifestPath = options.out / mir::kAssetManifestFileName;
+        const auto previousManifestBytes = ReadExistingCookedBytes(manifestPath);
+        if (auto previous = previousManifestBytes ? mir::AssetManifest::Parse(*previousManifestBytes) : std::nullopt)
             for (const auto &entry : previous->Entries())
             {
                 const auto deps = previous->Dependencies(entry);
@@ -741,7 +750,7 @@ namespace
             const std::string file = Hex(id.value) + "-" + Hex(mir::Fnv1a64(bytes)) + ".blob";
             const auto path = options.out / file;
             bool same = false;
-            if (auto previous = mir::ReadBytes(path))
+            if (auto previous = ReadExistingCookedBytes(path))
                 same = *previous == bytes;
             if (!same)
                 Publish(path, bytes);
@@ -1236,12 +1245,10 @@ namespace
         std::vector<mir::AssetManifestSourceEntry> entries;
         for (const auto &output : ordered)
             entries.push_back({{output.id, output.tag, output.version}, output.file, output.logicalPath, output.deps});
-        const auto manifestPath = options.out / mir::kAssetManifestFileName;
         const auto manifestBytes = mir::BuildAssetManifestBlob(entries);
-        const auto previousManifestBytes = mir::ReadBytes(manifestPath);
         const bool manifestChanged = !previousManifestBytes || *previousManifestBytes != manifestBytes;
-        if (auto bytes = mir::ReadBytes(manifestPath))
-            Publish(options.out / kPreviousManifestFileName, *bytes);
+        if (previousManifestBytes)
+            Publish(options.out / kPreviousManifestFileName, *previousManifestBytes);
         Publish(manifestPath, manifestBytes);
         cache.erase("requiresFullCook");
         PublishText(cachePath, cache.dump(2) + "\n");
