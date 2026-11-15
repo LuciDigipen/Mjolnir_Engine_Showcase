@@ -129,6 +129,8 @@ namespace mir
         // Previous morph/skin sample of this primitive. Empty means no
         // compatible history; use the current deformation instead.
         std::span<const glm::vec4> previousDeformation;
+        // The producer expects this local deformation to remain unchanged.
+        bool settledDeformation = false;
     };
 
     // One draw call's worth of data for one viewport. Temporary: it lives only
@@ -158,11 +160,19 @@ namespace mir
         glm::mat4 previousModel{ 1.0f };
 
         std::span<const glm::vec4> previousDeformation;
+        bool settledDeformation = false;
     };
 
     // Draw items produced outside the MeshRenderer query (by ModelSystem),
     // picked up by RenderSystem as a World resource.
     struct ModelDrawItems { std::vector<WorldDrawItem> items; };
+
+    struct RtDeformationStats
+    {
+        uint64_t blasBuilds = 0;
+        uint64_t settledHits = 0;
+        uint64_t settledBuilds = 0;
+    };
 
     // A Point/Spot/Area light in world space; the renderer narrows it against
     // each view's camera, as it does draw items.
@@ -322,6 +332,7 @@ namespace mir
         uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
             const MeshUploadOptions &options) const override;
         MeshStreamingStats MeshStreaming() const override;
+        RtDeformationStats RayTracingDeformations() const;
 
         VkExtent2D SwapchainExtent() const;
 

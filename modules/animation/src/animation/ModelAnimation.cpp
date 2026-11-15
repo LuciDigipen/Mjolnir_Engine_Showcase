@@ -25,7 +25,7 @@ namespace mir
             auto decoded = std::make_shared<DecodedMesh>();
             decoded->vertices.reserve(primitive.vertices.size());
             for (const auto &v : primitive.vertices)
-                decoded->vertices.push_back({ v.position, glm::vec3(v.color), v.normal, v.uv, v.color.a, v.tangent });
+                decoded->vertices.push_back({v.position, glm::vec3(v.color), v.normal, v.uv, v.color.a, v.tangent});
             decoded->indices = primitive.indices;
             decoded->bounds = ComputeMeshBounds(decoded->vertices);
             return decoded;
@@ -39,7 +39,10 @@ namespace mir
             const bool inline_ = value.data() >= object && value.data() < object + sizeof(value);
             return inline_ ? 0 : value.capacity() + 1;
         }
-        template <class T> uint64_t VectorBytes(const std::vector<T> &values) { return values.capacity() * sizeof(T); }
+        template <class T> uint64_t VectorBytes(const std::vector<T> &values)
+        {
+            return values.capacity() * sizeof(T);
+        }
 
         uint64_t NodeBytes(const ModelNode &node)
         {
@@ -49,7 +52,7 @@ namespace mir
         uint64_t PrimitiveBytes(const MeshPrimitive &p)
         {
             uint64_t bytes = VectorBytes(p.vertices) + VectorBytes(p.indices) + VectorBytes(p.influenceRanges) +
-                VectorBytes(p.influences) + VectorBytes(p.morphTargets);
+                             VectorBytes(p.influences) + VectorBytes(p.morphTargets);
             for (const MorphTarget &target : p.morphTargets)
                 bytes += VectorBytes(target.positions) + VectorBytes(target.normals) + VectorBytes(target.tangents);
             return bytes;
@@ -58,7 +61,7 @@ namespace mir
         uint64_t ModelBytes(const ModelAsset &model)
         {
             uint64_t bytes = sizeof(model) + VectorBytes(model.nodes) + VectorBytes(model.scenes) +
-                VectorBytes(model.skins) + VectorBytes(model.animations);
+                             VectorBytes(model.skins) + VectorBytes(model.animations);
             for (const ModelNode &node : model.nodes)
                 bytes += NodeBytes(node);
             for (const ModelScene &scene : model.scenes)
@@ -75,7 +78,7 @@ namespace mir
         uint64_t SkeletonBytes(const SkeletonAsset &skeleton)
         {
             uint64_t bytes = sizeof(skeleton) + StringBytes(skeleton.name) + VectorBytes(skeleton.nodes) +
-                VectorBytes(skeleton.joints);
+                             VectorBytes(skeleton.joints);
             for (const ModelNode &node : skeleton.nodes)
                 bytes += NodeBytes(node);
             return bytes;
@@ -92,7 +95,7 @@ namespace mir
         uint64_t MeshRecordBytes(const MeshRecord &record)
         {
             uint64_t bytes = sizeof(record) + StringBytes(record.asset.name) + VectorBytes(record.asset.weights) +
-                VectorBytes(record.asset.primitives) + VectorBytes(record.uploads);
+                             VectorBytes(record.asset.primitives) + VectorBytes(record.uploads);
             for (const MeshPrimitive &primitive : record.asset.primitives)
                 bytes += PrimitiveBytes(primitive);
             for (const auto &upload : record.uploads)
@@ -101,7 +104,10 @@ namespace mir
             return bytes;
         }
 
-        uint64_t MaterialBytes(const MaterialAsset &material) { return sizeof(material); }
+        uint64_t MaterialBytes(const MaterialAsset &material)
+        {
+            return sizeof(material);
+        }
 
         template <class T>
         bool DecodeTyped(const AssetBlobView &root, const AssetDependencies &, T &out, std::string &error)
@@ -122,35 +128,34 @@ namespace mir
 
     const AssetDecoder<ModelAsset> &ModelRecordDecoder()
     {
-        static constexpr AssetDecoder<ModelAsset> kDecoder{ DecodeTyped<ModelAsset>, {}, ModelBytes };
+        static constexpr AssetDecoder<ModelAsset> kDecoder{DecodeTyped<ModelAsset>, {}, ModelBytes};
         return kDecoder;
     }
     const AssetDecoder<MeshRecord> &MeshRecordDecoder()
     {
-        static constexpr AssetDecoder<MeshRecord> kDecoder{ DecodeMeshRecord, {}, MeshRecordBytes };
+        static constexpr AssetDecoder<MeshRecord> kDecoder{DecodeMeshRecord, {}, MeshRecordBytes};
         return kDecoder;
     }
     const AssetDecoder<SkeletonAsset> &SkeletonRecordDecoder()
     {
-        static constexpr AssetDecoder<SkeletonAsset> kDecoder{ DecodeTyped<SkeletonAsset>, {}, SkeletonBytes };
+        static constexpr AssetDecoder<SkeletonAsset> kDecoder{DecodeTyped<SkeletonAsset>, {}, SkeletonBytes};
         return kDecoder;
     }
     const AssetDecoder<AnimationClipAsset> &ClipRecordDecoder()
     {
-        static constexpr AssetDecoder<AnimationClipAsset> kDecoder{ DecodeTyped<AnimationClipAsset>, {}, ClipBytes };
+        static constexpr AssetDecoder<AnimationClipAsset> kDecoder{DecodeTyped<AnimationClipAsset>, {}, ClipBytes};
         return kDecoder;
     }
     const AssetDecoder<MaterialAsset> &MaterialRecordDecoder()
     {
-        static constexpr AssetDecoder<MaterialAsset> kDecoder{ DecodeTyped<MaterialAsset>, {}, MaterialBytes };
+        static constexpr AssetDecoder<MaterialAsset> kDecoder{DecodeTyped<MaterialAsset>, {}, MaterialBytes};
         return kDecoder;
     }
 
     ModelDependencies DependenciesOf(const ModelAsset &model)
     {
         ModelDependencies out;
-        const auto add = [](std::vector<AssetId> &ids, AssetId id)
-        {
+        const auto add = [](std::vector<AssetId> &ids, AssetId id) {
             if (!id.IsNull() && std::find(ids.begin(), ids.end(), id) == ids.end())
                 ids.push_back(id);
         };
@@ -254,8 +259,7 @@ namespace mir
         if (!ReadTypedAsset(root, *modelRecord, error))
             return false;
         data.model = std::move(modelRecord);
-        const auto read = [&](AssetId key, auto &out, std::string &problem)
-        {
+        const auto read = [&](AssetId key, auto &out, std::string &problem) {
             const AssetBlobView *blob = dependencies.Find(key);
             if (blob == nullptr)
             {
@@ -491,6 +495,8 @@ namespace mir
                 if (std::abs(glm::determinant(glm::mat3(m))) > 1e-10f)
                     v.normal = glm::inverseTranspose(glm::mat3(m)) * v.normal;
                 tangent = glm::mat3(m) * tangent;
+                if (glm::determinant(glm::mat3(m)) < 0)
+                    v.tangent.w = -v.tangent.w;
             }
             if (glm::dot(v.normal, v.normal) > 1e-20f)
                 v.normal = glm::normalize(v.normal);

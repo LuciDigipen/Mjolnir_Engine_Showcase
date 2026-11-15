@@ -8,11 +8,94 @@
  */
 #include <animation/ModelAnimation.h>
 #include <animation/ModelPlayer.h>
+#include <animation/ModelEvaluation.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
 #include <unordered_map>
 using namespace mir;
+TEST_CASE("Settled model poses retain two samples independently of entity placement", "[animation][pose-cache]")
+{
+    auto resources = std::make_shared<ModelResources>();
+    auto model = std::make_shared<ModelAsset>();
+    model->nodes.resize(1);
+    model->nodes[0].key = "gear";
+    model->nodes[0].translation = {2, 0, 0};
+    model->nodes[0].mesh = MakeAssetId("gear-mesh");
+    model->nodes[0].weights = {0};
+    model->scenes.resize(1);
+    model->scenes[0].roots = {0};
+    model->defaultScene = 0;
+    auto mesh = std::make_shared<MeshRecord>();
+    mesh->asset.primitives.resize(1);
+    auto &primitive = mesh->asset.primitives[0];
+    primitive.vertices.resize(1);
+    primitive.morphTargets.resize(1);
+    primitive.morphTargets[0].positions = {{0, 1, 0}};
+    primitive.morphTargets[0].normals = {{0, 0, 0}};
+    primitive.morphTargets[0].tangents = {{0, 0, 0}};
+    resources->model = model;
+    resources->meshes[model->nodes[0].mesh.value] = mesh;
+    ModelPoseCache cache;
+    ModelEvaluationInput input;
+    input.loop = false;
+    auto down = cache.Evaluate(input, resources, true);
+    REQUIRE(down->nodes.size() == 1);
+    CHECK(down->nodes[0].world.position.Meters().x == 2);
+    input.world.position = *WorldPosition::FromDoubleMeters({10000, 0, 0});
+    input.world.linear[0][0] = -2;
+    CHECK(cache.Evaluate(input, resources, true) == down);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    auto up = cache.Evaluate(input, resources, true);
+    CHECK(up != down);
+    CHECK(up->nodes[0].deformations != down->nodes[0].deformations);
+    // Animated evaluations must not evict either endpoint.
+    input.time = .5f;
+    CHECK(cache.Evaluate(input, resources, false) != up);
+    input.time = 0;
+    input.overrides.clear();
+    CHECK(cache.Evaluate(input, resources, true) == down);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    CHECK(cache.Evaluate(input, resources, true) == up);
+    input.time = .25f;
+    input.overrides["gear"] = {.25f};
+    auto partial = cache.Evaluate(input, resources, true);
+    CHECK(partial != up);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    CHECK(cache.Evaluate(input, resources, true) == up);
+    input.time = 0;
+    input.overrides.clear();
+    CHECK(cache.Evaluate(input, resources, true) != down);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    // A new resource generation cannot hit even with identical sample inputs.
+    auto reloaded = std::make_shared<ModelResources>(*resources);
+    CHECK(cache.Evaluate(input, reloaded, true) != up);
+}
+
+TEST_CASE("Mirrored skinning preserves the normal-map tangent handedness", "[animation][pbr]")
+{
+    MeshPrimitive mesh;
+    mesh.vertices.resize(1);
+    mesh.vertices[0].position = {1, 0, 0};
+    mesh.vertices[0].normal = {0, 0, 1};
+    mesh.vertices[0].tangent = {1, 0, 0, 1};
+    mesh.influenceRanges = {{0, 1}};
+    mesh.influences = {{0, 1}};
+    glm::mat4 joint(1);
+    joint[0][0] = -2;
+    joint[1][1] = 3;
+    const auto result = DeformPrimitive(mesh, {}, std::span(&joint, 1));
+    REQUIRE(result.size() == 1);
+    CHECK(result[0].position.x == Catch::Approx(-2));
+    CHECK(result[0].normal.z == Catch::Approx(1));
+    CHECK(result[0].tangent.x == Catch::Approx(-1));
+    CHECK(result[0].tangent.w == -1);
+}
+
 TEST_CASE("ModelPlayer scene fields omit transient preview state", "[animation]")
 {
     RegisterModelPlayer();
@@ -138,7 +221,7 @@ TEST_CASE("Model seek loop and hierarchy evaluation are deterministic", "[animat
     AnimationClipAsset clip;
     clip.duration = 2;
     clip.tracks = {t};
-    r.clips = { std::make_shared<AnimationClipAsset>(clip) };
+    r.clips = {std::make_shared<AnimationClipAsset>(clip)};
     auto a = EvaluateModel(r, 0, 1, false), b = EvaluateModel(r, 0, 3, true), c = EvaluateModel(r, 0, 0, false);
     CHECK(a[1].world[3].x == 4);
     CHECK(a[1].world[3].y == 2);
@@ -195,11 +278,10 @@ namespace
         }
         AssetDependencies Lookup() const
         {
-            return AssetDependencies([this](AssetId id) -> const AssetBlobView *
-                {
-                    const auto found = views.find(id.value);
-                    return found == views.end() ? nullptr : &found->second;
-                });
+            return AssetDependencies([this](AssetId id) -> const AssetBlobView * {
+                const auto found = views.find(id.value);
+                return found == views.end() ? nullptr : &found->second;
+            });
         }
     };
 
@@ -300,25 +382,25 @@ TEST_CASE("A model names each record once, and its materials come from its meshe
     ModelAsset model;
     model.nodes.resize(3);
     const AssetId meshA = MakeAssetId("mesh-a"), meshB = MakeAssetId("mesh-b"), skeleton = MakeAssetId("skeleton"),
-        clip = MakeAssetId("clip");
+                  clip = MakeAssetId("clip");
     model.nodes[0].mesh = meshA;
     model.nodes[1].mesh = meshA;
     model.nodes[2].mesh = meshB;
     model.skins.resize(2);
     model.skins[0].skeleton = skeleton;
     model.skins[1].skeleton = skeleton;
-    model.animations = { clip, clip };
+    model.animations = {clip, clip};
     const ModelDependencies needed = DependenciesOf(model);
-    CHECK(needed.meshes == std::vector<AssetId>{ meshA, meshB });
-    CHECK(needed.skeletons == std::vector<AssetId>{ skeleton });
-    CHECK(needed.clips == std::vector<AssetId>{ clip });
+    CHECK(needed.meshes == std::vector<AssetId>{meshA, meshB});
+    CHECK(needed.skeletons == std::vector<AssetId>{skeleton});
+    CHECK(needed.clips == std::vector<AssetId>{clip});
 
     MeshAsset mesh;
     mesh.primitives.resize(3);
     const AssetId material = MakeAssetId("material");
     mesh.primitives[0].material = material;
     mesh.primitives[2].material = material;
-    CHECK(MaterialsOf(mesh) == std::vector<AssetId>{ material });
+    CHECK(MaterialsOf(mesh) == std::vector<AssetId>{material});
 }
 
 TEST_CASE("A record reports every dynamic allocation it owns", "[animation][assets]")
@@ -363,8 +445,7 @@ TEST_CASE("A record reports every dynamic allocation it owns", "[animation][asse
     model.skins[0].jointKeys.assign(10, std::string(200, 'j'));
     model.skins[0].inverseBindMatrices.assign(10, glm::mat4(1));
     model.nodes[0].key = std::string(300, 'x');
-    CHECK(ModelRecordDecoder().sizeBytes(model) - modelBefore >=
-        10 * 200 + 10 * sizeof(glm::mat4) + 300);
+    CHECK(ModelRecordDecoder().sizeBytes(model) - modelBefore >= 10 * 200 + 10 * sizeof(glm::mat4) + 300);
 
     AnimationClipAsset clip;
     clip.tracks.resize(1);

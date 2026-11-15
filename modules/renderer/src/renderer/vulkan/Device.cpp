@@ -480,6 +480,7 @@ namespace mir::vk
             return false;
         }
 
+        MIR_LOG_INFO("Vulkan validation: {}", mValidationEnabled ? "enabled (including synchronization validation)" : "disabled");
         return true;
     }
     bool Device::CreateDebugMessenger()

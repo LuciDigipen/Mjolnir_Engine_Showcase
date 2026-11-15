@@ -24,7 +24,8 @@ static const float kOceanSurfWavelength = 22.0; // meters
 static const float kOceanSurfPeriod = 8.0;      // seconds per band
 static const float kOceanSurfReach = 42.0;      // meters from shore
 static const float3 kOceanFoamColor = float3(0.86, 0.90, 0.90);
-static const float3 kOceanHaze = float3(0.56, 0.52, 0.42); // the sky's color at the horizon, so the far surface meets it
+static const float3 kOceanHaze =
+    float3(0.56, 0.52, 0.42); // the sky's color at the horizon, so the far surface meets it
 
 float OceanHash(float2 p)
 {
@@ -50,8 +51,8 @@ float OceanNoise2(float2 p)
 
 struct OceanWaves
 {
-    float2 slope;      // d(height)/dx, d(height)/dz of the resolved octaves
-    float crest;       // 0..1, resolved crest height
+    float2 slope;       // d(height)/dx, d(height)/dz of the resolved octaves
+    float crest;        // 0..1, resolved crest height
     float lostVariance; // slope variance of the octaves too small for this pixel
 };
 
@@ -59,7 +60,7 @@ struct OceanWaves
 // slope, which bunches the crests of the next, smaller one. The sharpening keeps
 // crests narrow and troughs wide, which a plain sine sum does not.
 OceanWaves EvaluateOceanWaves(float2 position, float time, float windAngle, float spread, float longest,
-    float wavelengthRatio, float steepness, float steepnessRatio, float drag, float footprint)
+                              float wavelengthRatio, float steepness, float steepnessRatio, float drag, float footprint)
 {
     OceanWaves waves;
     waves.slope = float2(0.0, 0.0);
@@ -70,7 +71,8 @@ OceanWaves EvaluateOceanWaves(float2 position, float time, float windAngle, floa
     float slopeScale = steepness;
     float crestWeight = 0.0;
     // Meander the whole field, or the long waves read as straight parallel lines from altitude.
-    float2 warped = position + 70.0 * (float2(OceanNoise2(position / 340.0), OceanNoise2(position / 340.0 + 41.7)) - 0.5);
+    float2 warped =
+        position + 70.0 * (float2(OceanNoise2(position / 340.0), OceanNoise2(position / 340.0 + 41.7)) - 0.5);
     for (int i = 0; i < kOceanOctaves; ++i)
     {
         // Slope peaks in the middle of the spectrum: long swell is gentle, and strong swell shows as bands.
@@ -147,7 +149,7 @@ struct OceanWaterMaterial : IMaterial
         const float calm = lerp(1.0 - kOceanShelterDamping, 1.0, shelter);
 
         const OceanWaves waves = EvaluateOceanWaves(position, time, wind.x, wind.y, waveShape.x, waveShape.y,
-            waveShape.z * windy * calm, waveShape.w, kOceanDrag, footprint);
+                                                    waveShape.z * windy * calm, waveShape.w, kOceanDrag, footprint);
 
         float3 N = normalize(float3(-waves.slope.x, 1.0, -waves.slope.y));
         const float variance = waves.lostVariance * windy * windy * calm * calm;
@@ -166,11 +168,13 @@ struct OceanWaterMaterial : IMaterial
         const float surfFoam = lerp(0.18, band * surfMask, foamDetail) * surfReach * scatterColor.a;
 
         const float lap = 0.5 + 0.5 * sin(time * 0.6 + foamNoise * 9.0);
-        const float edgeFoam = (1.0 - smoothstep(0.0, 2.5 + lap * 4.0, shore)) * lerp(0.5, smoothstep(0.25, 0.6, fineNoise), foamDetail);
+        const float edgeFoam =
+            (1.0 - smoothstep(0.0, 2.5 + lap * 4.0, shore)) * lerp(0.5, smoothstep(0.25, 0.6, fineNoise), foamDetail);
 
         const float capShape = smoothstep(0.62, 0.86, waves.crest + (gust - 0.5) * 0.25);
         const float capMask = smoothstep(0.45, 0.8, fineNoise);
-        const float whitecaps = lerp(smoothstep(0.55, 0.85, gust) * 0.05, capShape * capMask, foamDetail) * sandColor.a * shelter;
+        const float whitecaps =
+            lerp(smoothstep(0.55, 0.85, gust) * 0.05, capShape * capMask, foamDetail) * sandColor.a * shelter;
 
         const float foam = saturate(surfFoam + edgeFoam + whitecaps);
 
@@ -194,7 +198,8 @@ struct OceanWaterMaterial : IMaterial
         const float2 refracted = position + waves.slope * clearDepth * 1.5;
         const float seabedDetail = 1.0 - smoothstep(0.5, 4.0, footprint);
         const float ripples = lerp(0.5, OceanNoise(refracted * 0.45), seabedDetail);
-        const float caustics = OceanCaustics(refracted, time) * seabedDetail * (1.0 - smoothstep(0.0, deepColor.a, clearDepth));
+        const float caustics =
+            OceanCaustics(refracted, time) * seabedDetail * (1.0 - smoothstep(0.0, deepColor.a, clearDepth));
         const float3 seabed = sandColor.rgb * (0.82 + ripples * 0.28 + caustics * 0.3);
         const float3 body = lerp(deepColor.rgb, seabed, transmitted);
 
@@ -202,11 +207,14 @@ struct OceanWaterMaterial : IMaterial
         const float backlit = pow(saturate(dot(V, normalize(N * 0.4 - L))), 4.0);
         const float3 scatter = scatterColor.rgb * absorption.a * backlit * saturate(waves.crest * 1.5) * lightColor.rgb;
 
-        SurfaceOutput output;
+        SurfaceOutput output = (SurfaceOutput)0;
+        output.f90 = float3(1);
+        output.dielectricF90 = 1;
         output.albedo = lerp(body * (1.0 - effectiveFresnel), kOceanFoamColor, foam);
         output.normalWS = N;
         output.roughness = saturate(roughness);
-        output.f0 = lerp(0.012, 0.04, foam); // only the sun reads this; the sky uses its own Fresnel
+        output.dielectricF0 = lerp(0.012, 0.04, foam);
+        output.f0 = output.dielectricF0; // only the sun reads this; the sky uses its own Fresnel
         output.ao = 1.0;
         output.height = 0.0;
         output.emissive = (sky * effectiveFresnel + scatter) * (1.0 - foam);

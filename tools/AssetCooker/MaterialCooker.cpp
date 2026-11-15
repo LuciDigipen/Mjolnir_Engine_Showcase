@@ -26,9 +26,18 @@ namespace mir::cook
         constexpr int64_t kMaxResolution = 16384;
         constexpr std::string_view kLfsPrefix = "version https://git-lfs.github.com/spec/v1";
 
-        float ToLinear(float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); }
-        float ToSrgb(float v) { return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f; }
-        uint8_t Byte(float v) { return static_cast<uint8_t>(std::clamp<long>(std::lround(v * 255.0f), 0, 255)); }
+        float ToLinear(float v)
+        {
+            return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+        }
+        float ToSrgb(float v)
+        {
+            return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
+        }
+        uint8_t Byte(float v)
+        {
+            return static_cast<uint8_t>(std::clamp<long>(std::lround(v * 255.0f), 0, 255));
+        }
 
         bool IsLfsPointer(const std::filesystem::path &path)
         {
@@ -58,8 +67,9 @@ namespace mir::cook
             for (const auto &root : approvedRoots)
             {
                 const auto canonical = std::filesystem::weakly_canonical(root);
-                if (std::none_of(roots.begin(), roots.end(),
-                                 [&](const auto &known) { return std::filesystem::weakly_canonical(known) == canonical; }))
+                if (std::none_of(roots.begin(), roots.end(), [&](const auto &known) {
+                        return std::filesystem::weakly_canonical(known) == canonical;
+                    }))
                     roots.push_back(root);
             }
             for (const auto &root : roots)
@@ -78,8 +88,7 @@ namespace mir::cook
             }
             throw std::runtime_error("missing " + kind + " '" + reference + "' under " + ownerRoot.string());
         }
-        void RejectUnknown(const Json &object, std::initializer_list<std::string_view> allowed,
-                           const std::string &what)
+        void RejectUnknown(const Json &object, std::initializer_list<std::string_view> allowed, const std::string &what)
         {
             if (!object.is_object())
                 throw std::runtime_error(what + " must be an object");
@@ -184,8 +193,8 @@ namespace mir::cook
             {
                 if (!textures->is_object())
                     throw std::runtime_error(assetPath + ": textures must be an object");
-                static const std::set<std::string> roles{"baseColor",  "normal",     "displacement",
-                                                         "roughness", "specular",   "ao"};
+                static const std::set<std::string> roles{"baseColor", "normal", "displacement", "roughness",
+                                                         "specular",  "ao",     "metallic"};
                 for (const auto &[role, value] : textures->items())
                 {
                     if (!roles.contains(role))
@@ -236,7 +245,8 @@ namespace mir::cook
         {
             if (!source.present)
                 return 0;
-            const float value = source.texture.rgba[(static_cast<size_t>(y) * source.texture.width + x) * 4 + channel] / 255.0f;
+            const float value =
+                source.texture.rgba[(static_cast<size_t>(y) * source.texture.width + x) * 4 + channel] / 255.0f;
             return linearize && source.texture.colorSpace == TextureColorSpace::Srgb ? ToLinear(value) : value;
         }
         TextureAsset MakeOutput(uint32_t resolution, TextureFormat format, TextureColorSpace colorSpace)
@@ -248,8 +258,7 @@ namespace mir::cook
             texture.rgba.assign(static_cast<size_t>(resolution) * resolution * 4, 0);
             return texture;
         }
-        void EachTexel(const Source &source, uint32_t width, uint32_t height, uint32_t x, uint32_t y,
-                       auto &&sample)
+        void EachTexel(const Source &source, uint32_t width, uint32_t height, uint32_t x, uint32_t y, auto &&sample)
         {
             if (!source.present)
                 return;
@@ -266,8 +275,7 @@ namespace mir::cook
         {
             const Source base = LoadSource(material, "baseColor", ownerRoot, approvedRoots);
             const Source ao = LoadSource(material, "ao", ownerRoot, approvedRoots);
-            TextureAsset out = MakeOutput(material.asset.resolution, TextureFormat::Rgba8Srgb,
-                                          TextureColorSpace::Srgb);
+            TextureAsset out = MakeOutput(material.asset.resolution, TextureFormat::Rgba8Srgb, TextureColorSpace::Srgb);
             for (uint32_t y = 0; y < out.height; ++y)
                 for (uint32_t x = 0; x < out.width; ++x)
                 {
@@ -321,52 +329,12 @@ namespace mir::cook
             pixel[2] = Byte(normal.z * 0.5f + 0.5f);
             pixel[3] = 255;
         }
-        void BuildNormalMipChain(TextureAsset &texture)
-        {
-            for (size_t i = 0; i < texture.rgba.size(); i += 4)
-            {
-                const glm::vec3 normal = DecodeNormal(texture.rgba.data() + i);
-                EncodeNormal(normal, texture.rgba.data() + i);
-            }
-            std::vector<uint8_t> level = texture.rgba;
-            uint32_t width = texture.width, height = texture.height;
-            while (width > 1 || height > 1)
-            {
-                const uint32_t nextWidth = std::max(width / 2, 1u);
-                const uint32_t nextHeight = std::max(height / 2, 1u);
-                std::vector<uint8_t> next(static_cast<size_t>(nextWidth) * nextHeight * 4);
-                for (uint32_t y = 0; y < nextHeight; ++y)
-                    for (uint32_t x = 0; x < nextWidth; ++x)
-                    {
-                        glm::vec3 sum(0);
-                        uint32_t samples = 0;
-                        for (uint32_t sy = y * height / nextHeight; sy < (y + 1) * height / nextHeight; ++sy)
-                            for (uint32_t sx = x * width / nextWidth; sx < (x + 1) * width / nextWidth; ++sx)
-                            {
-                                sum += DecodeNormal(level.data() + (static_cast<size_t>(sy) * width + sx) * 4);
-                                ++samples;
-                            }
-                        EncodeNormal(sum / static_cast<float>(std::max(samples, 1u)),
-                                     next.data() + (static_cast<size_t>(y) * nextWidth + x) * 4);
-                    }
-                TextureMip mip;
-                mip.width = nextWidth;
-                mip.height = nextHeight;
-                mip.offset = static_cast<uint32_t>(texture.mipData.size());
-                mip.length = static_cast<uint32_t>(next.size());
-                texture.mips.push_back(mip);
-                texture.mipData.insert(texture.mipData.end(), next.begin(), next.end());
-                level = std::move(next);
-                width = nextWidth;
-                height = nextHeight;
-            }
-        }
         TextureAsset PackNormal(const ParsedMaterial &material, const std::filesystem::path &ownerRoot,
                                 const std::vector<std::filesystem::path> &approvedRoots)
         {
             const Source source = LoadSource(material, "normal", ownerRoot, approvedRoots);
-            TextureAsset out = MakeOutput(material.asset.resolution, TextureFormat::Rgba8Unorm,
-                                          TextureColorSpace::Linear);
+            TextureAsset out =
+                MakeOutput(material.asset.resolution, TextureFormat::Rgba8Unorm, TextureColorSpace::Linear);
             for (uint32_t y = 0; y < out.height; ++y)
                 for (uint32_t x = 0; x < out.width; ++x)
                 {
@@ -395,18 +363,19 @@ namespace mir::cook
             const Source roughness = LoadSource(material, "roughness", ownerRoot, approvedRoots);
             const Source displacement = LoadSource(material, "displacement", ownerRoot, approvedRoots);
             const Source specular = LoadSource(material, "specular", ownerRoot, approvedRoots);
-            TextureAsset out = MakeOutput(material.asset.resolution, TextureFormat::Rgba8Unorm,
-                                          TextureColorSpace::Linear);
+            const Source metallic = LoadSource(material, "metallic", ownerRoot, approvedRoots);
+            TextureAsset out =
+                MakeOutput(material.asset.resolution, TextureFormat::Rgba8Unorm, TextureColorSpace::Linear);
             for (uint32_t y = 0; y < out.height; ++y)
                 for (uint32_t x = 0; x < out.width; ++x)
                 {
-                    auto channel = [&](const Source &source, float fallback) {
+                    auto channel = [&](const Source &source, float fallback, bool linearize = true) {
                         if (!source.present)
                             return fallback;
                         float sum = 0;
                         uint32_t samples = 0;
                         EachTexel(source, out.width, out.height, x, y, [&](uint32_t sx, uint32_t sy) {
-                            sum += Sample(source, sx, sy, 0, true);
+                            sum += Sample(source, sx, sy, 0, linearize);
                             ++samples;
                         });
                         return sum / static_cast<float>(std::max(samples, 1u));
@@ -415,7 +384,7 @@ namespace mir::cook
                     pixel[0] = Byte(channel(roughness, 1.0f));
                     pixel[1] = Byte(channel(displacement, 0.5f));
                     pixel[2] = Byte(channel(specular, 0.04f));
-                    pixel[3] = 255;
+                    pixel[3] = Byte(channel(metallic, 0.0f, false));
                 }
             BuildTextureMipChain(out);
             return out;

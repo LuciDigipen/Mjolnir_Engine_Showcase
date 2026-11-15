@@ -1,4 +1,6 @@
 #include "RaySceneCommon.slang"
+#include "ModelRayMaterial.slang"
+#include "PbrCommon.slang"
 #include "DdgiSampling.slang"
 #include "ddgi/include/ProbeRayCommon.hlsl"
 
@@ -10,9 +12,7 @@
 #error "ProbePayload.slang fixed ray count must match RTXGI_DDGI_NUM_FIXED_RAYS"
 #endif
 
-[shader("raygeneration")]
-void probeRayGen()
-{
+[shader("raygeneration")] void probeRayGen() {
     DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
     uint4 budget = gBudget[0];
     uint probeIndex = (budget.x + DispatchRaysIndex().y) % budget.z;
@@ -40,7 +40,7 @@ void probeRayGen()
         const float3 position = ray.Origin + payload.distance * ray.Direction;
         const float3 irradiance = SampleProbeIrradiance(position, payload.geometricNormal, ray.Direction, volume);
         payload.radiance += payload.diffuseReflectance * (1.0 / 3.14159265359) * irradiance *
-            DDGIGetVolumeBlendWeight(position, volume);
+                            DDGIGetVolumeBlendWeight(position, volume);
     }
     if (payload.kind == 0)
         DDGIStoreProbeRayMiss(gRayData, coords, volume, payload.radiance);
@@ -50,8 +50,7 @@ void probeRayGen()
         DDGIStoreProbeRayFrontfaceHit(gRayData, coords, volume, payload.radiance, payload.distance);
 }
 
-[shader("miss")]
-void probeMiss(inout ProbePayload payload)
+    [shader("miss")] void probeMiss(inout ProbePayload payload)
 {
     AtmosphereParams params;
     params.rayleighCoeff = atmosphereScattering.xyz;
@@ -63,23 +62,21 @@ void probeMiss(inout ProbePayload payload)
     params.mieG = atmosphereMisc.x;
     params.sunIntensity = atmosphereMisc.y;
     float3 absolute = cameraWorldPos.xyz + WorldRayOrigin();
-    payload.radiance = Atmosphere(WorldRayDirection(),
-        float3(absolute.x, params.planetRadius + absolute.y, absolute.z), normalize(lightDirWS.xyz), params);
+    payload.radiance = Atmosphere(WorldRayDirection(), float3(absolute.x, params.planetRadius + absolute.y, absolute.z),
+                                  normalize(lightDirWS.xyz), params);
 }
 
-[shader("miss")]
-void shadowMissMain(inout ShadowPayload payload) { payload.visibility = 1.0; }
+[shader("miss")] void shadowMissMain(inout ShadowPayload payload) { payload.visibility = 1.0; }
 
-[shader("anyhit")]
-void probeAnyHit(inout ProbePayload payload, BuiltInTriangleIntersectionAttributes attribs)
+    [shader("anyhit")] void probeAnyHit(inout ProbePayload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
-    if (!OpaqueOrMaskedHit(attribs)) IgnoreHit();
+    if (!OpaqueOrMaskedHit(attribs))
+        IgnoreHit();
 }
 
-[shader("anyhit")]
-void shadowAnyHitMain(inout ShadowPayload payload, BuiltInTriangleIntersectionAttributes attribs)
-{
-    if (!OpaqueOrMaskedHit(attribs)) IgnoreHit();
+[shader("anyhit")] void shadowAnyHitMain(inout ShadowPayload payload, BuiltInTriangleIntersectionAttributes attribs) {
+    if (!OpaqueOrMaskedHit(attribs))
+        IgnoreHit();
 }
 
 // Diffuse direct lighting excludes ambient to avoid feeding it into probe history.
@@ -103,17 +100,19 @@ float3 ProbeDirectDiffuse(RayVisibility visibility, float3 albedo, float3 normal
     return result;
 }
 
-[shader("closesthit")]
-void probeClosestHit(inout ProbePayload payload, BuiltInTriangleIntersectionAttributes attribs)
-{
+[shader("closesthit")] void probeClosestHit(inout ProbePayload payload, BuiltInTriangleIntersectionAttributes attribs) {
     payload.distance = RayTCurrent();
     payload.kind = HitKind();
+    RtInstanceInfo info = gInstances[InstanceID()];
+    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
+        payload.kind =
+            payload.kind == HIT_KIND_TRIANGLE_FRONT_FACE ? HIT_KIND_TRIANGLE_BACK_FACE : HIT_KIND_TRIANGLE_FRONT_FACE;
     if (payload.kind == HIT_KIND_TRIANGLE_BACK_FACE || DispatchRaysIndex().x < RTXGI_DDGI_NUM_FIXED_RAYS)
         return;
-    RtInstanceInfo info = gInstances[InstanceID()];
     uint3 indices = TriangleIndices(info);
     float3 barycentrics = Barycentrics(attribs);
-    if ((info.flags & kInstanceError) != 0) return;
+    if ((info.flags & kInstanceError) != 0)
+        return;
     if ((info.flags & kInstanceUnlit) != 0)
     {
         payload.radiance = InterpolateFloat3(info, indices, barycentrics, kColorOffset) * info.tint.rgb;
@@ -121,17 +120,26 @@ void probeClosestHit(inout ProbePayload payload, BuiltInTriangleIntersectionAttr
     }
     float3 position = WorldRayOrigin() + RayTCurrent() * WorldRayDirection();
     float3 normal = FaceNormal(info, LoadFloat3(info, indices.x, 0), LoadFloat3(info, indices.y, 0),
-        LoadFloat3(info, indices.z, 0));
+                               LoadFloat3(info, indices.z, 0));
     float3 albedo = (info.flags & kInstanceTextured) != 0 ? ModelBaseColor(info, indices, barycentrics).rgb
-        : kDefaultAlbedo * info.tint.rgb;
+                                                          : kDefaultAlbedo * info.tint.rgb;
     RayVisibility visibility;
     visibility.origin = position + normal * max(kShadowNormalBias, length(position) * kShadowNormalBiasPerDistance);
-    payload.radiance = ProbeDirectDiffuse(visibility, albedo, normal, position);
+    if ((info.flags & kInstanceTextured) != 0)
+    {
+        const SurfaceOutput surface =
+            EvaluateRayModel(info, indices, barycentrics, float4(albedo, 1), RayTCurrent() * .01);
+        const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, position, -WorldRayDirection());
+        payload.radiance = lighting.diffuseDirect + lighting.emissive;
+        albedo = PbrDiffuseReflectance(surface);
+    }
+    else
+        payload.radiance = ProbeDirectDiffuse(visibility, albedo, normal, position);
     if (gBudget[0].w != 0)
     {
         DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
         float3 irradiance = SampleProbeIrradiance(position, normal, WorldRayDirection(), volume);
-        payload.radiance += min(albedo, float3(0.9)) * (1.0 / 3.14159265359) * irradiance *
-            DDGIGetVolumeBlendWeight(position, volume);
+        payload.radiance +=
+            min(albedo, float3(0.9)) * (1.0 / 3.14159265359) * irradiance * DDGIGetVolumeBlendWeight(position, volume);
     }
 }

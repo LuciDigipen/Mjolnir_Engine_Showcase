@@ -22,10 +22,59 @@
 
 namespace mir::cook
 {
+    void BuildNormalMipChain(TextureAsset &texture)
+    {
+        texture.mips.clear();
+        texture.mipData.clear();
+        texture.format = TextureFormat::Rgba8Unorm;
+        texture.colorSpace = TextureColorSpace::Linear;
+        auto normalize = [](std::array<float, 3> n) {
+            const float length = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+            return length > 1e-5f ? std::array<float, 3>{n[0] / length, n[1] / length, n[2] / length}
+                                  : std::array<float, 3>{0, 0, 1};
+        };
+        auto encode = [&](uint8_t *p, std::array<float, 3> n) {
+            n = normalize(n);
+            for (int k = 0; k < 3; ++k)
+                p[k] = uint8_t(std::clamp(std::lround((n[k] * .5f + .5f) * 255), 0l, 255l));
+            p[3] = 255;
+        };
+        for (size_t i = 0; i < texture.rgba.size(); i += 4)
+            encode(texture.rgba.data() + i,
+                   {texture.rgba[i] / 127.5f - 1, texture.rgba[i + 1] / 127.5f - 1, texture.rgba[i + 2] / 127.5f - 1});
+        auto level = texture.rgba;
+        uint32_t width = texture.width, height = texture.height;
+        while (width > 1 || height > 1)
+        {
+            const uint32_t w = std::max(width / 2, 1u), h = std::max(height / 2, 1u);
+            std::vector<uint8_t> next(size_t(w) * h * 4);
+            for (uint32_t y = 0; y < h; ++y)
+                for (uint32_t x = 0; x < w; ++x)
+                {
+                    std::array<float, 3> sum{};
+                    for (uint32_t sy = y * height / h; sy < (y + 1) * height / h; ++sy)
+                        for (uint32_t sx = x * width / w; sx < (x + 1) * width / w; ++sx)
+                            for (int k = 0; k < 3; ++k)
+                                sum[k] += level[(size_t(sy) * width + sx) * 4 + k] / 127.5f - 1;
+                    encode(next.data() + (size_t(y) * w + x) * 4, sum);
+                }
+            texture.mips.push_back({w, h, uint32_t(texture.mipData.size()), uint32_t(next.size())});
+            texture.mipData.insert(texture.mipData.end(), next.begin(), next.end());
+            level = std::move(next);
+            width = w;
+            height = h;
+        }
+    }
     namespace
     {
-        float ToLinear(float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); }
-        float ToSrgb(float v) { return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f; }
+        float ToLinear(float v)
+        {
+            return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+        }
+        float ToSrgb(float v)
+        {
+            return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
+        }
     } // namespace
 
     TextureAsset DecodeImage(std::span<const std::byte> bytes, TextureColorSpace colorSpace, bool generateMips)

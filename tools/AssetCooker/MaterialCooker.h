@@ -26,7 +26,7 @@ namespace mir::cook
         std::vector<ImportedBlob> blobs;
         std::vector<ImportedAsset> contents;
         std::vector<std::filesystem::path> dependencies;
-        // The six source images, which the full cook must not also cook standalone.
+        // Source images consumed by the pack, which the full cook must not also cook standalone.
         std::vector<std::filesystem::path> sourceImages;
         std::vector<MaterialTextureSize> textureSizes;
     };

@@ -32,11 +32,15 @@ namespace
     {
         fs::path root;
         // the .meta of flag.gltf and flag.glb, whose guid is the model's id
-        AssetMeta meta = [] { AssetMeta m; m.guid = AssetId{ 0x1234ABCD5678EF01ull }; return m; }();
+        AssetMeta meta = [] {
+            AssetMeta m;
+            m.guid = AssetId{0x1234ABCD5678EF01ull};
+            return m;
+        }();
         Fixture()
         {
             root = fs::current_path() /
-                ("gltf-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                   ("gltf-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
             fs::create_directories(root);
             for (const auto &p : fs::directory_iterator(GLTF_FIXTURE_DIR))
                 if (p.is_regular_file() && !IsAssetToolingFile(p.path()))
@@ -49,13 +53,19 @@ namespace
             in >> j;
             return j;
         }
-        void Write(const Json &j) { std::ofstream(root / "flag.gltf") << j.dump(2); }
+        void Write(const Json &j)
+        {
+            std::ofstream(root / "flag.gltf") << j.dump(2);
+        }
         cook::GltfImport Import(const char *file = "flag.gltf")
         {
-            return cook::ImportGltf(root / file, std::string("assets/") + file, { root }, meta);
+            return cook::ImportGltf(root / file, std::string("assets/") + file, {root}, meta);
         }
         // keeps the part keys an import handed out, as the cooker does in the .meta
-        void Keep(const cook::GltfImport &imported) { meta.importer = imported.importer; }
+        void Keep(const cook::GltfImport &imported)
+        {
+            meta.importer = imported.importer;
+        }
     };
     template <class T> T Find(const cook::GltfImport &result, uint32_t tag, size_t index = 0)
     {
@@ -76,11 +86,141 @@ namespace
         return {};
     }
 } // namespace
+TEST_CASE("PBR glTF imports independent data roles, extensions and tangent seams", "[gltf][pbr]")
+{
+    Fixture f;
+    auto j = f.Read();
+    auto &m = j["materials"][0];
+    m["pbrMetallicRoughness"]["metallicFactor"] = .8;
+    m["pbrMetallicRoughness"]["roughnessFactor"] = .3;
+    m["pbrMetallicRoughness"]["metallicRoughnessTexture"] = {{"index", 0}};
+    m["normalTexture"] = {{"index", 0}, {"scale", .6}};
+    m["occlusionTexture"] = {{"index", 0}, {"strength", .4}};
+    m["emissiveTexture"] = {{"index", 0}};
+    m["emissiveFactor"] = {.2, .3, .4};
+    m["extensions"]["KHR_materials_specular"] = {{"specularFactor", .7},
+                                                 {"specularColorFactor", {.8, .9, 1}},
+                                                 {"specularTexture", {{"index", 0}}},
+                                                 {"specularColorTexture", {{"index", 0}}}};
+    m["extensions"]["KHR_materials_ior"] = {{"ior", 1.7}};
+    m["extensions"]["KHR_materials_clearcoat"] = {{"clearcoatFactor", .5},
+                                                  {"clearcoatRoughnessFactor", .2},
+                                                  {"clearcoatTexture", {{"index", 0}}},
+                                                  {"clearcoatRoughnessTexture", {{"index", 0}}},
+                                                  {"clearcoatNormalTexture", {{"index", 0}, {"scale", .8}}}};
+    j["extensionsUsed"] = {"KHR_materials_specular", "KHR_materials_ior", "KHR_materials_clearcoat"};
+    j["extensionsRequired"] = j["extensionsUsed"];
+    for (auto &mesh : j["meshes"])
+        for (auto &primitive : mesh["primitives"])
+            primitive["attributes"].erase("TANGENT");
+    f.Write(j);
+    const auto out = f.Import();
+    const auto material = Find<MaterialAsset>(out, kMaterialAssetTypeTag);
+    CHECK(material.metallic == Catch::Approx(.8));
+    CHECK(material.roughness == Catch::Approx(.3));
+    CHECK(material.normalScale == Catch::Approx(.6));
+    CHECK(material.occlusionStrength == Catch::Approx(.4));
+    CHECK(material.specular == Catch::Approx(.7));
+    CHECK(material.ior == Catch::Approx(1.7));
+    CHECK(material.clearcoat == Catch::Approx(.5));
+    CHECK(material.clearcoatNormalScale == Catch::Approx(.8));
+    for (const auto &binding : material.textures)
+        CHECK_FALSE(binding.texture.IsNull());
+    CHECK(material.textures[0].texture != material.baseColorTexture);
+    CHECK(material.textures[0].texture != material.textures[1].texture);
+    CHECK(material.textures[0].texture == material.textures[8].texture);
+    CHECK(material.textures[3].texture == material.baseColorTexture);
+    for (const auto &blob : out.blobs)
+        if (blob.id == material.textures[0].texture)
+        {
+            const auto view = ParseAssetBlob(blob.bytes);
+            REQUIRE(view);
+            TextureAsset normal;
+            std::string error;
+            REQUIRE(ReadTypedAsset(*view, normal, error));
+            CHECK(normal.format == TextureFormat::Rgba8Unorm);
+            CHECK(normal.colorSpace == TextureColorSpace::Linear);
+            CHECK_FALSE(normal.mips.empty());
+        }
+    const auto mesh = Find<MeshAsset>(out, kMeshAssetTypeTag);
+    for (const auto &p : mesh.primitives)
+    {
+        CHECK(p.vertices.size() == p.influenceRanges.size());
+        for (const auto &target : p.morphTargets)
+            CHECK(target.positions.size() == p.vertices.size());
+        for (const auto &v : p.vertices)
+        {
+            CHECK(std::isfinite(v.tangent.x));
+            CHECK(std::abs(v.tangent.w) == 1);
+        }
+    }
+    f.Keep(out);
+    const auto again = f.Import();
+    CHECK(again.importer == out.importer);
+}
+
+TEST_CASE("PBR glTF refuses incompatible normal UV selection", "[gltf][pbr]")
+{
+    Fixture f;
+    auto j = f.Read();
+    j["materials"][0]["normalTexture"] = {{"index", 0}, {"texCoord", 1}};
+    f.Write(j);
+    CHECK_THROWS_WITH(f.Import(), Catch::Matchers::ContainsSubstring("incompatible texture UV"));
+}
+
+TEST_CASE("Anonymous duplicate images share one normal processing identity", "[gltf][pbr]")
+{
+    Fixture f;
+    auto j = f.Read();
+    j["images"][0].erase("name");
+    j["images"].push_back(j["images"][0]);
+    auto texture = j["textures"][0];
+    texture["source"] = j["images"].size() - 1;
+    j["textures"].push_back(texture);
+    j["materials"][0]["normalTexture"] = {{"index", 0}};
+    j["materials"][0]["extensions"]["KHR_materials_clearcoat"]["clearcoatNormalTexture"] = {
+        {"index", j["textures"].size() - 1}};
+    j["extensionsUsed"] = {"KHR_materials_clearcoat"};
+    f.Write(j);
+    const auto material = Find<MaterialAsset>(f.Import(), kMaterialAssetTypeTag);
+    CHECK(material.textures[0].texture == material.textures[8].texture);
+}
+
+TEST_CASE("glTF accepts zero IOR and extended specular color factors", "[gltf][pbr]")
+{
+    Fixture f;
+    auto j = f.Read();
+    j["materials"][0]["extensions"]["KHR_materials_ior"] = {{"ior", 0}};
+    j["materials"][0]["extensions"]["KHR_materials_specular"] = {{"specularColorFactor", {2, 3, 4}}};
+    j["extensionsUsed"] = {"KHR_materials_ior", "KHR_materials_specular"};
+    f.Write(j);
+    const auto m = Find<MaterialAsset>(f.Import(), kMaterialAssetTypeTag);
+    CHECK(m.ior == 0);
+    CHECK(m.specularColor == glm::vec3(2, 3, 4));
+}
+
+TEST_CASE("Normal mips average vectors and rebuild rectangular chains", "[gltf][pbr]")
+{
+    TextureAsset tex;
+    tex.width = 3;
+    tex.height = 1;
+    tex.rgba = {255, 128, 128, 255, 0, 128, 128, 255, 128, 128, 255, 255};
+    cook::BuildNormalMipChain(tex);
+    REQUIRE(tex.mips.size() == 1);
+    CHECK(tex.mips[0].width == 1);
+    CHECK(tex.mips[0].height == 1);
+    CHECK(tex.mipData[2] > 250);
+    const auto mip = tex.mipData;
+    cook::BuildNormalMipChain(tex);
+    CHECK(tex.mips.size() == 1);
+    CHECK(tex.mipData == mip);
+}
+
 TEST_CASE("glTF and GLB cook geometry texture skeleton and morph animation", "[gltf]")
 {
     Fixture f;
     auto external = f.Import(), embedded = f.Import("flag.glb");
-    for (const auto *out :{ &external, &embedded })
+    for (const auto *out : {&external, &embedded})
     {
         const auto mesh = Find<MeshAsset>(*out, kMeshAssetTypeTag);
         REQUIRE(mesh.primitives.size() == 1);
@@ -102,7 +242,8 @@ TEST_CASE("glTF and GLB cook geometry texture skeleton and morph animation", "[g
         CHECK(skeleton.joints == std::vector<uint32_t>{1, 2});
         ModelResources data;
         data.model = std::make_shared<ModelAsset>(Find<ModelAsset>(*out, kModelAssetTypeTag));
-        data.clips.push_back(std::make_shared<AnimationClipAsset>(Find<AnimationClipAsset>(*out, kAnimationAssetTypeTag)));
+        data.clips.push_back(
+            std::make_shared<AnimationClipAsset>(Find<AnimationClipAsset>(*out, kAnimationAssetTypeTag)));
         auto pose = EvaluateModel(data, 0, 1, false);
         CHECK(pose[0].weights[0] == 1);
         auto joints = SkinMatrices(*data.model, pose, 0);
@@ -113,17 +254,15 @@ TEST_CASE("glTF and GLB cook geometry texture skeleton and morph animation", "[g
     }
 }
 
-TEST_CASE("A model keeps its id and the ids of its parts when it is imported from another path",
-    "[gltf][identity]")
+TEST_CASE("A model keeps its id and the ids of its parts when it is imported from another path", "[gltf][identity]")
 {
     Fixture f;
     auto before = f.Import();
     f.Keep(before);
-    auto moved = cook::ImportGltf(f.root / "flag.gltf", "assets/models/renamed/flag.gltf", { f.root }, f.meta);
+    auto moved = cook::ImportGltf(f.root / "flag.gltf", "assets/models/renamed/flag.gltf", {f.root}, f.meta);
     CHECK(before.modelId == f.meta.guid);
     CHECK(moved.modelId == before.modelId);
-    auto ids = [](const cook::GltfImport &imported)
-    {
+    auto ids = [](const cook::GltfImport &imported) {
         std::set<uint64_t> out;
         for (const auto &blob : imported.blobs)
             out.insert(blob.id.value);
@@ -133,21 +272,21 @@ TEST_CASE("A model keeps its id and the ids of its parts when it is imported fro
 
     // the parts take their ids from the guid, so another guid gives other ids
     AssetMeta other = f.meta;
-    other.guid = AssetId{ 0x0F0F0F0F0F0F0F0Full };
-    const auto copy = cook::ImportGltf(f.root / "flag.gltf", "assets/flag.gltf", { f.root }, other);
+    other.guid = AssetId{0x0F0F0F0F0F0F0F0Full};
+    const auto copy = cook::ImportGltf(f.root / "flag.gltf", "assets/flag.gltf", {f.root}, other);
     for (const uint64_t id : ids(copy))
         CHECK_FALSE(ids(before).contains(id));
 }
 
 TEST_CASE("Cooker incremental batches preserve unrelated entries and repair "
-    "missing blobs",
-    "[gltf][cooker][incremental]")
+          "missing blobs",
+          "[gltf][cooker][incremental]")
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-incremental-cooked");
     const auto result = out / "result.json";
-    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets",
-                                  "--out",        out.string(),    "--result",  result.string() };
+    std::vector<std::string> full{"--source-dir", f.root.string(), "--id-root", "assets",
+                                  "--out",        out.string(),    "--result",  result.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
     auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
@@ -156,8 +295,8 @@ TEST_CASE("Cooker incremental batches preserve unrelated entries and repair "
     REQUIRE(model);
     const auto modelBlob = out / manifest->PathOf(*model);
 
-    std::vector<std::string> partial{ "--source-dir", f.root.string(), "--id-root",        "assets",   "--out",
-                                     out.string(),   "--model",       "assets/flag.gltf", "--result", result.string() };
+    std::vector<std::string> partial{"--source-dir", f.root.string(), "--id-root",        "assets",   "--out",
+                                     out.string(),   "--model",       "assets/flag.gltf", "--result", result.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
     CHECK(Json::parse(std::ifstream(result)).at("status") == "unchanged");
     REQUIRE(AssetManifest::LoadFile(out / "manifest.blob")->Count() == originalCount);
@@ -170,8 +309,8 @@ TEST_CASE("Cooker incremental batches preserve unrelated entries and repair "
 }
 
 TEST_CASE("External import copies only the glTF entry and referenced package "
-    "dependencies",
-    "[gltf][cooker][import]")
+          "dependencies",
+          "[gltf][cooker][import]")
 {
     Fixture package;
     const auto project = fs::path(package.root.string() + "-project");
@@ -180,7 +319,7 @@ TEST_CASE("External import copies only the glTF entry and referenced package "
     std::vector<std::string> args{
         "--source-dir",   project.string(),      "--id-root",     "games/Test/assets",
         "--out",          out.string(),          "--import",      (package.root / "flag.gltf").string(),
-        "--package-root", package.root.string(), "--destination", "models/flag" };
+        "--package-root", package.root.string(), "--destination", "models/flag"};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
     CHECK(fs::exists(project / "models/flag/flag.gltf"));
     CHECK(fs::exists(project / "models/flag/flag.bin"));
@@ -195,14 +334,14 @@ TEST_CASE("Cooker move keeps stable identity and relocates private dependencies"
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-move-cooked");
-    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> full{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
     const auto firstManifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(firstManifest);
     const auto oldId = test::PathId(*firstManifest, "assets/flag.gltf");
     REQUIRE_FALSE(oldId.IsNull());
     std::vector<std::string> move = full;
-    move.insert(move.end(), { "--move-model", "assets/flag.gltf", "--move-to", "models/Flag" });
+    move.insert(move.end(), {"--move-model", "assets/flag.gltf", "--move-to", "models/Flag"});
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, move, true) == 0);
     CHECK_FALSE(fs::exists(f.root / "flag.gltf"));
     CHECK(fs::exists(f.root / "models/Flag/flag.gltf"));
@@ -216,19 +355,19 @@ TEST_CASE("Cooker move keeps stable identity and relocates private dependencies"
 }
 
 TEST_CASE("Explicit removal drops a missing model while preserving the rest of "
-    "the manifest",
-    "[gltf][cooker][remove]")
+          "the manifest",
+          "[gltf][cooker][remove]")
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-remove-cooked");
-    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> full{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
     const auto before = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(before);
     fs::remove(f.root / "flag.glb");
     fs::remove(f.root / "flag.glb.meta");
     std::vector<std::string> remove = full;
-    remove.insert(remove.end(), { "--remove-model", "assets/flag.glb" });
+    remove.insert(remove.end(), {"--remove-model", "assets/flag.glb"});
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, remove, true) == 0);
     const auto after = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(after);
@@ -240,12 +379,12 @@ TEST_CASE("A copied .meta is rejected as a duplicate guid", "[gltf][cooker][iden
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-identity-cooked");
-    std::vector<std::string> args{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> args{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
     const auto manifestBefore = ReadBytes(out / "manifest.blob");
     REQUIRE(manifestBefore);
     fs::create_directories(f.root / "copy");
-    for (const char *name :{ "flag.gltf", "flag.bin", "checker.png", "flag.gltf.meta" })
+    for (const char *name : {"flag.gltf", "flag.bin", "checker.png", "flag.gltf.meta"})
         fs::copy_file(f.root / name, f.root / "copy" / name);
     CHECK(LaunchProcess(GLTF_COOKER_EXE, args, true) != 0);
     CHECK(ReadBytes(out / "manifest.blob") == manifestBefore);
@@ -256,8 +395,8 @@ TEST_CASE("Unnamed byte-identical images and materials share one cooked asset", 
     fs::copy_file(f.root / "checker.png", f.root / "checker_copy.png");
     auto j = f.Read();
     j["images"][0].erase("name");
-    j["images"].push_back({ { "uri", "checker_copy.png" } });
-    j["textures"].push_back({ { "source", 1 },{ "sampler", 0 } });
+    j["images"].push_back({{"uri", "checker_copy.png"}});
+    j["textures"].push_back({{"source", 1}, {"sampler", 0}});
     j["materials"][0].erase("name");
     auto copy = j["materials"][0];
     copy["pbrMetallicRoughness"]["baseColorTexture"]["index"] = 1;
@@ -327,11 +466,11 @@ TEST_CASE("Reordering named glTF nodes preserves stable keys and animation targe
     CHECK(a.nodes[2].key == b.nodes[0].key);
     CHECK(a.animations == b.animations);
     CHECK(Find<AnimationClipAsset>(before, kAnimationAssetTypeTag).tracks[0].target ==
-        Find<AnimationClipAsset>(after, kAnimationAssetTypeTag).tracks[0].target);
+          Find<AnimationClipAsset>(after, kAnimationAssetTypeTag).tracks[0].target);
 }
 TEST_CASE("glTF import rejects missing dependencies and unsupported required "
-    "extensions",
-    "[gltf]")
+          "extensions",
+          "[gltf]")
 {
     Fixture f;
     auto j = f.Read();
@@ -342,8 +481,8 @@ TEST_CASE("glTF import rejects missing dependencies and unsupported required "
     f.Write(j);
     CHECK_THROWS(f.Import());
     j["buffers"][0]["uri"] = "flag.bin";
-    j["extensionsUsed"] = { "KHR_draco_mesh_compression" };
-    j["extensionsRequired"] = { "KHR_draco_mesh_compression" };
+    j["extensionsUsed"] = {"KHR_draco_mesh_compression"};
+    j["extensionsRequired"] = {"KHR_draco_mesh_compression"};
     f.Write(j);
     CHECK_THROWS(f.Import());
 }
@@ -360,7 +499,7 @@ TEST_CASE("glTF strips fans lines points and nonindexed geometry are normalized"
         auto out = f.Import();
         auto mesh = Find<MeshAsset>(out, kMeshAssetTypeTag);
         const auto &q = mesh.primitives[0];
-        const size_t expected[]{ 6, 6, 12, 10, 6, 12, 12 };
+        const size_t expected[]{6, 6, 12, 10, 6, 12, 12};
         CHECK(q.indices.size() == expected[mode]);
         if (mode == 5)
             CHECK(q.indices == std::vector<uint32_t>{0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5});
@@ -371,8 +510,8 @@ TEST_CASE("glTF strips fans lines points and nonindexed geometry are normalized"
     }
 }
 TEST_CASE("Editing an external buffer changes mesh payload without changing "
-    "mesh identity",
-    "[gltf]")
+          "mesh identity",
+          "[gltf]")
 {
     Fixture f;
     auto before = f.Import();
@@ -393,34 +532,33 @@ TEST_CASE("glTF reads sparse morph data and normalized interleaved UVs", "[gltf]
     auto j = f.Read();
     auto bytes = ReadBytes(f.root / "flag.bin");
     REQUIRE(bytes);
-    auto addView = [&](std::span<const std::byte> content)
-        {
-            while (bytes->size() % 4)
-                bytes->push_back(std::byte{ 0 });
-            size_t offset = bytes->size();
-            bytes->insert(bytes->end(), content.begin(), content.end());
-            auto index = j["bufferViews"].size();
-            j["bufferViews"].push_back({ { "buffer", 0 },{ "byteOffset", offset },{ "byteLength", content.size() } });
-            return index;
-        };
+    auto addView = [&](std::span<const std::byte> content) {
+        while (bytes->size() % 4)
+            bytes->push_back(std::byte{0});
+        size_t offset = bytes->size();
+        bytes->insert(bytes->end(), content.begin(), content.end());
+        auto index = j["bufferViews"].size();
+        j["bufferViews"].push_back({{"buffer", 0}, {"byteOffset", offset}, {"byteLength", content.size()}});
+        return index;
+    };
     const uint8_t sparseIndex = 5;
     const glm::vec3 sparseValue(.75f, 0, .25f);
     auto iv = addView(std::as_bytes(std::span(&sparseIndex, 1))),
-        vv = addView(std::as_bytes(std::span(&sparseValue, 1)));
+         vv = addView(std::as_bytes(std::span(&sparseValue, 1)));
     const auto morph = j["meshes"][0]["primitives"][0]["targets"][0]["POSITION"].get<size_t>();
     auto &ac = j["accessors"][morph];
     ac.erase("bufferView");
-    ac["min"] = { 0, 0, 0 };
-    ac["max"] = { .75, 0, .25 };
+    ac["min"] = {0, 0, 0};
+    ac["max"] = {.75, 0, .25};
     ac["sparse"] = {
-        { "count", 1 },{ "indices",{ { "bufferView", iv },{ "componentType", 5121 } } },{ "values",{ { "bufferView", vv } } } };
-    std::vector<uint16_t> uv{ 0,     0,     77, 88, 65535, 0,     77, 88, 0,     32768, 77, 88,
-                             65535, 32768, 77, 88, 0,     65535, 77, 88, 65535, 65535, 77, 88 };
+        {"count", 1}, {"indices", {{"bufferView", iv}, {"componentType", 5121}}}, {"values", {{"bufferView", vv}}}};
+    std::vector<uint16_t> uv{0,     0,     77, 88, 65535, 0,     77, 88, 0,     32768, 77, 88,
+                             65535, 32768, 77, 88, 0,     65535, 77, 88, 65535, 65535, 77, 88};
     auto uvView = addView(std::as_bytes(std::span(uv)));
     j["bufferViews"][uvView]["byteStride"] = 8;
     auto uvIndex = j["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"].get<size_t>();
     j["accessors"][uvIndex] = {
-        { "bufferView", uvView },{ "componentType", 5123 },{ "normalized", true },{ "count", 6 },{ "type", "VEC2" } };
+        {"bufferView", uvView}, {"componentType", 5123}, {"normalized", true}, {"count", 6}, {"type", "VEC2"}};
     j["buffers"][0]["byteLength"] = bytes->size();
     REQUIRE(WriteBytes(f.root / "flag.bin", *bytes));
     f.Write(j);
@@ -431,7 +569,7 @@ TEST_CASE("glTF reads sparse morph data and normalized interleaved UVs", "[gltf]
     CHECK(p.morphTargets[0].positions[0].x == 0);
     CHECK(p.morphTargets[0].positions[5].x == Catch::Approx(.75));
     auto invalid = *bytes;
-    invalid[j["bufferViews"][iv]["byteOffset"].get<size_t>()] = std::byte{ 9 };
+    invalid[j["bufferViews"][iv]["byteOffset"].get<size_t>()] = std::byte{9};
     REQUIRE(WriteBytes(f.root / "flag.bin", invalid));
     CHECK_THROWS(f.Import());
 }
@@ -481,7 +619,7 @@ TEST_CASE("Cooker publishes atomically and retains one fallback manifest generat
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-cooked");
-    std::vector<std::string> args{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> args{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
     auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
@@ -519,8 +657,8 @@ TEST_CASE("An explicit clean deletes what the manifest no longer names and nothi
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-clean-cooked");
-    std::vector<std::string> args{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
-    const std::vector<std::string> cleanArgs{ "--clean", "--out", out.string() };
+    std::vector<std::string> args{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
+    const std::vector<std::string> cleanArgs{"--clean", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
     auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
@@ -543,7 +681,7 @@ TEST_CASE("An explicit clean deletes what the manifest no longer names and nothi
     const auto bytesOfManifest = ReadBytes(out / "manifest.blob");
 
     // another file the clean has no business with
-    REQUIRE(WriteBytes(out / "keep.txt", std::vector<std::byte>(4, std::byte{ 1 })));
+    REQUIRE(WriteBytes(out / "keep.txt", std::vector<std::byte>(4, std::byte{1})));
 
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, cleanArgs, true) == 0);
     CHECK_FALSE(fs::exists(out / oldPath));
@@ -566,8 +704,8 @@ TEST_CASE("An explicit clean refuses a directory without a valid manifest and de
     Fixture f;
     const auto out = fs::path(f.root.string() + "-clean-wrong");
     fs::create_directories(out);
-    const std::vector<std::string> cleanArgs{ "--clean", "--out", out.string() };
-    const std::vector<std::byte> bytes(16, std::byte{ 7 });
+    const std::vector<std::string> cleanArgs{"--clean", "--out", out.string()};
+    const std::vector<std::byte> bytes(16, std::byte{7});
     REQUIRE(WriteBytes(out / "0123456789abcdef-0123456789abcdef.blob", bytes));
     CHECK(LaunchProcess(GLTF_COOKER_EXE, cleanArgs, true) != 0);
     CHECK(fs::exists(out / "0123456789abcdef-0123456789abcdef.blob"));
@@ -576,21 +714,21 @@ TEST_CASE("An explicit clean refuses a directory without a valid manifest and de
     REQUIRE(WriteBytes(out / "manifest.blob", bytes));
     CHECK(LaunchProcess(GLTF_COOKER_EXE, cleanArgs, true) != 0);
     CHECK(fs::exists(out / "0123456789abcdef-0123456789abcdef.blob"));
-    CHECK(LaunchProcess(GLTF_COOKER_EXE, std::vector<std::string>{ "--clean" }, true) != 0);
+    CHECK(LaunchProcess(GLTF_COOKER_EXE, std::vector<std::string>{"--clean"}, true) != 0);
 }
 
 TEST_CASE("Cooker ids match the engine's logical paths for any root spelling", "[cooker][identity]")
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-spelling-cooked");
-    std::vector<std::string> args{ "--source-dir", f.root.string(), "--id-root", "games\\Test\\.\\assets\\",
-                                  "--out",        out.string() };
+    std::vector<std::string> args{"--source-dir", f.root.string(), "--id-root", "games\\Test\\.\\assets\\",
+                                  "--out",        out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
     const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
 
     // What the engine computes from game.json's root and a scene-relative name
-    for (const char *relative :{ "checker.png", "flag.bin", "flag.gltf" })
+    for (const char *relative : {"checker.png", "flag.bin", "flag.gltf"})
     {
         INFO(relative);
         const AssetPathResult logical = MakeLogicalAssetPath("games/Test/assets", relative);
@@ -599,11 +737,11 @@ TEST_CASE("Cooker ids match the engine's logical paths for any root spelling", "
     }
 
     const auto rejected = fs::path(f.root.string() + "-rejected-cooked");
-    const std::vector<std::string> escaping{ "--source-dir", f.root.string(), "--id-root", "../outside",
-                                            "--out",        rejected.string() };
+    const std::vector<std::string> escaping{"--source-dir", f.root.string(), "--id-root",
+                                            "../outside",   "--out",         rejected.string()};
     CHECK(LaunchProcess(GLTF_COOKER_EXE, escaping, true) != 0);
     // An absolute --source would bake this machine's path into every id
-    const std::vector<std::string> absolute{ "--source", f.root.string(), "--out", rejected.string() };
+    const std::vector<std::string> absolute{"--source", f.root.string(), "--out", rejected.string()};
     CHECK(LaunchProcess(GLTF_COOKER_EXE, absolute, true) != 0);
     CHECK_FALSE(fs::exists(rejected / "manifest.blob"));
 }
@@ -612,14 +750,13 @@ TEST_CASE("Import lists what the package holds, with the model's own animation i
 {
     Fixture f;
     const auto out = f.Import();
-    auto of = [&](const char *kind)
-        {
-            std::vector<cook::ImportedAsset> entries;
-            for (const auto &entry : out.contents)
-                if (entry.kind == kind)
-                    entries.push_back(entry);
-            return entries;
-        };
+    auto of = [&](const char *kind) {
+        std::vector<cook::ImportedAsset> entries;
+        for (const auto &entry : out.contents)
+            if (entry.kind == kind)
+                entries.push_back(entry);
+        return entries;
+    };
     REQUIRE(of("model").size() == 1);
     CHECK(of("model").front().id == out.modelId);
     CHECK_FALSE(of("mesh").empty());
@@ -644,7 +781,7 @@ TEST_CASE("Cooked package contents reach the import cache", "[gltf][cooker][cont
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-contents-cooked");
-    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> full{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
     const Json cache = Json::parse(std::ifstream(out / "import-cache.json"));
     const Json contents = cache.at("models").at("assets/flag.gltf").at("contents");
@@ -664,7 +801,7 @@ TEST_CASE("Cooked package contents reach the import cache", "[gltf][cooker][cont
 TEST_CASE("A full cook leaves terrain recipes and release files to TerrainTool", "[cooker][terrain]")
 {
     const auto root = fs::current_path() /
-        ("terrain-cook-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                      ("terrain-cook-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     const auto source = root / "assets";
     const auto out = root / "cooked";
     const std::vector<std::string> terrainFiles{
@@ -684,8 +821,8 @@ TEST_CASE("A full cook leaves terrain recipes and release files to TerrainTool",
     fs::create_directories(source / "data");
     REQUIRE(WriteText(source / "data" / "a.txt", "raw"));
 
-    const std::vector<std::string> args{ "--source-dir", source.string(), "--id-root", "games/T/assets",
-                                        "--out",        out.string() };
+    const std::vector<std::string> args{"--source-dir",   source.string(), "--id-root",
+                                        "games/T/assets", "--out",         out.string()};
     for (int run = 0; run < 2; ++run)
     {
         INFO("run " << run);
@@ -711,13 +848,13 @@ TEST_CASE("A full cook leaves terrain recipes and release files to TerrainTool",
 }
 
 TEST_CASE("A standalone image cooks to a texture, and an image a glTF references stays its import's",
-    "[cooker][texture]")
+          "[cooker][texture]")
 {
     Fixture f;
     fs::create_directories(f.root / "ui");
     fs::copy_file(f.root / "checker.png", f.root / "ui" / "frame.png");
     const auto out = fs::path(f.root.string() + "-texture-cooked");
-    std::vector<std::string> args{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> args{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
     auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
@@ -754,8 +891,8 @@ TEST_CASE("A cooked model lists its dependencies and keeps them through a partia
     Fixture f;
     const auto out = fs::path(f.root.string() + "-graph-cooked");
     const auto result = out / "result.json";
-    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets",
-                                  "--out",        out.string(),    "--result",  result.string() };
+    std::vector<std::string> full{"--source-dir", f.root.string(), "--id-root", "assets",
+                                  "--out",        out.string(),    "--result",  result.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
     auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
@@ -770,7 +907,7 @@ TEST_CASE("A cooked model lists its dependencies and keeps them through a partia
     std::set<uint32_t> direct;
     for (const AssetId dependency : manifest->Dependencies(*model))
         direct.insert(manifest->Find(dependency)->typeTag);
-    CHECK(direct == std::set<uint32_t>{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag });
+    CHECK(direct == std::set<uint32_t>{kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag});
 
     std::set<uint32_t> reached;
     for (const AssetId id : manifest->Closure(modelId))
@@ -779,7 +916,7 @@ TEST_CASE("A cooked model lists its dependencies and keeps them through a partia
     CHECK(reached.contains(kTextureAssetTypeTag));
 
     // asking for the geometry types alone stops before the material
-    const uint32_t wanted[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag };
+    const uint32_t wanted[]{kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag};
     for (const AssetId id : manifest->Closure(modelId, wanted))
     {
         const uint32_t tag = manifest->Find(id)->typeTag;
@@ -788,8 +925,8 @@ TEST_CASE("A cooked model lists its dependencies and keeps them through a partia
 
     // an unchanged model is restored from the cache record, edges and name included
     const std::vector<AssetId> before(manifest->Dependencies(*model).begin(), manifest->Dependencies(*model).end());
-    std::vector<std::string> partial{ "--source-dir", f.root.string(), "--id-root",        "assets",   "--out",
-                                     out.string(),   "--model",       "assets/flag.gltf", "--result", result.string() };
+    std::vector<std::string> partial{"--source-dir", f.root.string(), "--id-root",        "assets",   "--out",
+                                     out.string(),   "--model",       "assets/flag.gltf", "--result", result.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
     const auto after = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(after);
@@ -800,12 +937,11 @@ TEST_CASE("A cooked model lists its dependencies and keeps them through a partia
     CHECK(std::vector<AssetId>(keptDependencies.begin(), keptDependencies.end()) == before);
 }
 
-TEST_CASE("A full cook after a rename that kept the .meta names the model by its new path",
-    "[gltf][cooker][identity]")
+TEST_CASE("A full cook after a rename that kept the .meta names the model by its new path", "[gltf][cooker][identity]")
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-rename-cooked");
-    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> full{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
     const auto before = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(before);
@@ -824,11 +960,11 @@ TEST_CASE("A full cook after a rename that kept the .meta names the model by its
 }
 
 TEST_CASE("Removing the old record after a rename that kept the .meta keeps the renamed model",
-    "[gltf][cooker][identity]")
+          "[gltf][cooker][identity]")
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-rename-remove-cooked");
-    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    std::vector<std::string> full{"--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string()};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
     const auto before = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(before);
@@ -841,7 +977,7 @@ TEST_CASE("Removing the old record after a rename that kept the .meta keeps the 
 
     // the editor offers Remove on a row for a path that no longer exists
     std::vector<std::string> remove = full;
-    remove.insert(remove.end(), { "--remove-model", "assets/flag.gltf" });
+    remove.insert(remove.end(), {"--remove-model", "assets/flag.gltf"});
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, remove, true) == 0);
 
     const auto after = AssetManifest::LoadFile(out / "manifest.blob");

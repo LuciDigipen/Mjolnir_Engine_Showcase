@@ -1,11 +1,10 @@
 #include "RaySceneCommon.slang"
 #include "RayPayload.slang"
-#include "SurfaceCommon.slang"
+#include "ModelRayMaterial.slang"
 #include "PbrCommon.slang"
 #ifdef MIR_DDGI
 #include "DdgiSampling.slang"
 #endif
-
 
 [[vk::binding(1, 0)]]
 RWTexture2D<float4> gOutput;
@@ -39,19 +38,14 @@ static const uint kMaxBlendLayers = 8;
 // the pattern for n samples starts at index n - 1.
 static const uint kMaxMsaaSamples = 8;
 static const float2 kMsaaOffsets[2 * kMaxMsaaSamples - 1] = {
-    float2(0.0, 0.0),
-    float2(4.0, 4.0), float2(-4.0, -4.0),
-    float2(-2.0, -6.0), float2(6.0, -2.0), float2(-6.0, 2.0), float2(2.0, 6.0),
-    float2(1.0, -3.0), float2(-1.0, 3.0), float2(5.0, 1.0), float2(-3.0, -5.0),
-    float2(-5.0, 5.0), float2(-7.0, -1.0), float2(3.0, 7.0), float2(7.0, -7.0)
-};
+    float2(0.0, 0.0),   float2(4.0, 4.0),  float2(-4.0, -4.0), float2(-2.0, -6.0), float2(6.0, -2.0),
+    float2(-6.0, 2.0),  float2(2.0, 6.0),  float2(1.0, -3.0),  float2(-1.0, 3.0),  float2(5.0, 1.0),
+    float2(-3.0, -5.0), float2(-5.0, 5.0), float2(-7.0, -1.0), float2(3.0, 7.0),   float2(7.0, -7.0)};
 
 // The CPU already rounds to a pattern size (ClampRtSampleCount); this keeps a bad value in range.
 uint MsaaPatternSize(uint requested)
 {
-    return requested <= 1u ? 1u : requested <= 2u ? 2u
-                              : requested <= 4u   ? 4u
-                                                  : kMaxMsaaSamples;
+    return requested <= 1u ? 1u : requested <= 2u ? 2u : requested <= 4u ? 4u : kMaxMsaaSamples;
 }
 
 struct RtPushConstants
@@ -69,9 +63,7 @@ RtPushConstants pushData;
 // No per-material roughness exists yet (MaterialDesc has none) - same fixed-constant
 // simplification kShininess already is, standing in for Ray Reconstruction's roughness guide.
 static const float kMaterialRoughness = pow(2.0 / (kShininess + 2.0), 0.25);
-[shader("raygeneration")]
-void rayGenMain()
-{
+[shader("raygeneration")] void rayGenMain() {
     const uint2 pixel = DispatchRaysIndex().xy;
     const uint2 dims = DispatchRaysDimensions().xy;
 
@@ -107,9 +99,7 @@ void rayGenMain()
         payload.distance = clipPlanes.y > 0.0 ? toFarPlane : 1.0e8;
         payload.hardwareDepth = 0.0; // Sky is at infinity with reversed Z.
         const float4 previousSkyClip = mul(prevViewProj, float4(rayDir, 0.0));
-        payload.velocity = previousSkyClip.w > 0.0
-                               ? ndc - previousSkyClip.xy / previousSkyClip.w
-                               : float2(0.0, 0.0);
+        payload.velocity = previousSkyClip.w > 0.0 ? ndc - previousSkyClip.xy / previousSkyClip.w : float2(0.0, 0.0);
 
         float transmittance = 1.0;
         for (uint layer = 0; layer <= kMaxBlendLayers; ++layer)
@@ -128,8 +118,9 @@ void rayGenMain()
                 const DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
                 const float3 position = ray.Origin + payload.distance * ray.Direction;
                 const float weight = DDGIGetVolumeBlendWeight(position, volume) * pushData.giWeight;
-                const float3 irradiance = weight > 0.0 ?
-                    SampleProbeIrradiance(position, payload.giNormal, ray.Direction, volume) : float3(0.0);
+                const float3 irradiance = weight > 0.0
+                                              ? SampleProbeIrradiance(position, payload.giNormal, ray.Direction, volume)
+                                              : float3(0.0);
                 const float3 indirect = payload.giDiffuse * irradiance * (pushData.giIntensity / 3.14159265359);
                 payload.color = ApplyFog(payload.color + (indirect - payload.giAmbient) * weight, payload.distance);
             }
@@ -159,8 +150,7 @@ void rayGenMain()
         gDlssDepth[pixel + pushData.outputOffset] = centerDepth;
 }
 
-[shader("miss")]
-void missMain(inout RayPayload payload)
+    [shader("miss")] void missMain(inout RayPayload payload)
 {
     AtmosphereParams params;
     params.rayleighCoeff = atmosphereScattering.xyz;
@@ -176,35 +166,28 @@ void missMain(inout RayPayload payload)
     payload.color = Atmosphere(WorldRayDirection(), rayOrigin, normalize(lightDirWS.xyz), params);
 }
 
-[shader("miss")]
-void shadowMissMain(inout ShadowPayload payload)
-{
-    payload.visibility = 1.0;
-}
+[shader("miss")] void shadowMissMain(inout ShadowPayload payload) { payload.visibility = 1.0; }
 
-[shader("anyhit")]
-void anyHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+    [shader("anyhit")] void anyHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
     const RtInstanceInfo info = gInstances[InstanceID()];
     if ((info.flags & kInstanceAlphaBlend) != 0)
     {
-        if (payload.skipBlend != 0 ||
-            ModelBaseColor(info, TriangleIndices(info), Barycentrics(attribs)).a <= 0.0)
+        if (payload.skipBlend != 0 || ModelBaseColor(info, TriangleIndices(info), Barycentrics(attribs)).a <= 0.0)
             IgnoreHit();
     }
     else if (!AlphaTestPasses(attribs))
         IgnoreHit();
 }
 
-[shader("anyhit")]
-void shadowAnyHitMain(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
-{
+[shader("anyhit")] void shadowAnyHitMain(inout ShadowPayload payload,
+                                         in BuiltInTriangleIntersectionAttributes attribs) {
     if (!OpaqueOrMaskedHit(attribs))
         IgnoreHit();
 }
 
-[shader("closesthit")]
-void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+    [shader("closesthit")] void closestHitMain(inout RayPayload payload,
+                                               in BuiltInTriangleIntersectionAttributes attribs)
 {
     const RtInstanceInfo info = gInstances[InstanceID()];
     const float3 barycentrics = Barycentrics(attribs);
@@ -236,57 +219,41 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
     }
     else
     {
-        const float3 objNormal = InterpolateFloat3(info, indices, barycentrics, kNormalOffset);
-
-        float3 N = normalize(
-            info.normalCol0.xyz * objNormal.x +
-            info.normalCol1.xyz * objNormal.y +
-            info.normalCol2.xyz * objNormal.z);
-        // model.slang lights a double-sided back face with the flipped normal.
-        if ((info.flags & kInstanceDoubleSided) != 0 && dot(N, WorldRayDirection()) > 0.0)
-            N = -N;
-
-        const float4 baseColor = (info.flags & kInstanceTextured) != 0
-                                     ? ModelBaseColor(info, indices, barycentrics)
-                                     : float4(kDefaultAlbedo * info.tint.rgb, 1.0);
-        const float3 albedo = baseColor.rgb;
-
-        RayVisibility visibility;
-        visibility.origin = hitWorldPos + FaceNormal(info, op0, op1, op2) *
-                                              max(kShadowNormalBias, length(hitWorldPos) * kShadowNormalBiasPerDistance);
-        float roughness = kMaterialRoughness;
-        if ((info.flags & kInstanceAlphaBlend) != 0)
-        {
-            const SurfaceOutput surface = BlendedModelSurface(albedo, N);
-            color = ShadePbr(visibility, surface, hitWorldPos);
-            roughness = surface.roughness;
-            payload.opacity = saturate(baseColor.a);
-        }
+        const float4 baseColor = (info.flags & kInstanceTextured) != 0 ? ModelBaseColor(info, indices, barycentrics)
+                                                                       : float4(kDefaultAlbedo * info.tint.rgb, 1);
+        SurfaceOutput surface;
+        if ((info.flags & kInstanceTextured) != 0)
+            surface = EvaluateRayModel(info, indices, barycentrics, baseColor, RayTCurrent() * rayCone.x);
         else
-        {
+            surface = BlendedModelSurface(baseColor.rgb, FaceNormal(info, op0, op1, op2));
+        RayVisibility visibility;
+        visibility.origin =
+            hitWorldPos + FaceNormal(info, op0, op1, op2) *
+                              max(kShadowNormalBias, length(hitWorldPos) * kShadowNormalBiasPerDistance);
+        const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, hitWorldPos);
+        color = PbrTotalLighting(lighting);
+        if ((info.flags & kInstanceAlphaBlend) != 0)
+            payload.opacity = saturate(baseColor.a);
 #ifdef MIR_DDGI
-            const DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
-            const float weight = DDGIGetVolumeBlendWeight(hitWorldPos, volume) * pushData.giWeight;
-            float3 indirect = ambientColor.rgb;
-            if (weight > 0.0)
-            {
-                const float3 geometricNormal = FaceNormal(info, op0, op1, op2);
-                const float3 irradiance = SampleProbeIrradiance(hitWorldPos, geometricNormal, WorldRayDirection(), volume);
-                // Replace the ambient baseline with GI where the probe volume contributes.
-                indirect = lerp(ambientColor.rgb, irradiance * (pushData.giIntensity / 3.14159265359), weight);
-            }
-            color = ShadeLitWithIndirect(visibility, albedo, N, hitWorldPos, indirect);
-#else
-            color = ShadeLit(visibility, albedo, N, hitWorldPos);
-#endif
+        const DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
+        const float weight = DDGIGetVolumeBlendWeight(hitWorldPos, volume) * pushData.giWeight;
+        if (weight > 0 && !surface.unlit)
+        {
+            const float3 irradiance =
+                SampleProbeIrradiance(hitWorldPos, FaceNormal(info, op0, op1, op2), WorldRayDirection(), volume);
+            const float3 diffuse = PbrDiffuseReflectance(surface);
+            color +=
+                weight * (diffuse * irradiance * (pushData.giIntensity / 3.14159265359) - lighting.ambientRadiance);
         }
-
+#endif
         if (payload.writeGuides != 0)
         {
-            const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
-            gAlbedo[guidePixel] = float4(albedo, 1.0);
-            gSpecularAlbedo[guidePixel] = float4(kSpecularStrength.xxx, 1.0);
-            gNormal[guidePixel] = float4(N, roughness);
+            const uint2 pixel = DispatchRaysIndex().xy + pushData.outputOffset;
+            gAlbedo[pixel] = float4(surface.albedo * (1 - surface.metallic), 1);
+            const float NoV = saturate(dot(surface.normalWS, normalize(cameraPos.xyz - hitWorldPos)));
+            gSpecularAlbedo[pixel] =
+                float4(SpecularAlbedoGuide(surface.f0, surface.roughness * surface.roughness, NoV), 1);
+            gNormal[pixel] = float4(surface.normalWS, surface.roughness);
         }
     }
 

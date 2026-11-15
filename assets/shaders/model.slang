@@ -1,6 +1,8 @@
 #include "ShadowMapCommon.slang"
 #include "SurfaceCommon.slang"
 #include "PbrCommon.slang"
+#include "ModelMaterial.slang"
+[[vk::binding(2, 0)]] ConstantBuffer<MaterialRecordRef> gModelRecordRef;
 #ifdef MIR_SSGI_SURFACE
 #include "RasterSurfaceCommon.slang"
 #endif
@@ -21,6 +23,7 @@ struct VSOutput
     float2 uv : TEXCOORD0;
     float3 worldPos : TEXCOORD1;
     float3 normal : NORMAL;
+    float4 tangent : TANGENT;
     float pointSize : PSIZE;
 };
 struct RasterPushConstants
@@ -44,7 +47,8 @@ struct RasterPushConstants
 
 [shader("vertex")] VSOutput vertexMain(VSInput input, uint vertex : SV_VertexID) {
     float3 p = input.pos, n = input.normal, t = input.tangent.xyz;
-    DeformModelVertex(vertex, p, n, t);
+    float sign = input.tangent.w;
+    DeformModelVertex(vertex, p, n, t, sign);
     VSOutput output;
     const float4 worldPos = mul(pushData.model, float4(p, 1));
     output.position = mul(viewProj, worldPos);
@@ -52,14 +56,17 @@ struct RasterPushConstants
     output.color = float4(input.color, input.alpha) * pushData.tint;
     output.uv = input.uv;
     output.normal = pushData.normalCol0.xyz * n.x + pushData.normalCol1.xyz * n.y + pushData.normalCol2.xyz * n.z;
+    output.tangent =
+        TransformTangentFrame(mul(pushData.model, float4(1, 0, 0, 0)).xyz, mul(pushData.model, float4(0, 1, 0, 0)).xyz,
+                              mul(pushData.model, float4(0, 0, 1, 0)).xyz, float4(t, sign), output.normal);
     output.pointSize = 1;
     return output;
-}
-[shader("fragment")]
+}[shader("fragment")]
 #ifdef MIR_SSGI_SURFACE
-RasterSurfaceOutput fragmentMain(VSOutput input, bool front : SV_IsFrontFace)
+    RasterSurfaceOutput fragmentMain(VSOutput input, bool front : SV_IsFrontFace)
 #else
-float4 fragmentMain(VSOutput input, bool front : SV_IsFrontFace) : SV_Target
+    float4 fragmentMain(VSOutput input, bool front : SV_IsFrontFace)
+    : SV_Target
 #endif
 {
     float4 color = baseColor.Sample(input.uv) * input.color;
@@ -68,25 +75,25 @@ float4 fragmentMain(VSOutput input, bool front : SV_IsFrontFace) : SV_Target
         discard;
     if (material.x != 2)
         color.a = 1;
-    float3 normal = normalize(input.normal);
-    if (material.z > 0 && !front)
-        normal = -normal;
+    MaterialContext context;
+    context.rayTraced = false;
+    context.uvDx = ddx(input.uv);
+    context.uvDy = ddy(input.uv);
+    context.footprintMeters = 0;
+    context.incidence = 1;
+    context.uvDensity = 0;
+    const SurfaceOutput surface = EvaluateModelMaterial(gModelRecordRef.offset, color, input.normal, input.tangent,
+                                                        input.uv, material.z > 0 && !front, context);
     ShadowMapVisibility visibility;
     visibility.worldPos = input.worldPos;
-    visibility.geoN = GeometricNormal(input.worldPos, normal);
+    visibility.geoN = GeometricNormal(input.worldPos, normalize(input.normal));
+    const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, input.worldPos);
+    const float3 lit = ApplyFog(PbrTotalLighting(lighting), length(cameraPos.xyz - input.worldPos));
 #ifdef MIR_SSGI_SURFACE
-    float3 diffuse;
-    float3 direct = ShadeLitAndDiffuse(visibility, color.rgb, normal, input.worldPos, float3(0), diffuse);
-    float3 lit = direct + color.rgb * ambientColor.rgb;
-    return MakeRasterSurface(float4(ApplyFog(lit, length(cameraPos.xyz - input.worldPos)), color.a),
-        normal, 1, color.rgb, diffuse, direct);
+    return MakeRasterSurface(float4(lit, color.a), surface.normalWS, surface.unlit ? 2 : 1,
+                             surface.albedo * surface.ao * (1 - surface.metallic), PbrDiffuseRadiance(lighting),
+                             PbrDirectLighting(lighting), 1 - max(surface.f0.x, max(surface.f0.y, surface.f0.z)));
 #else
-    if (material.x == 2)
-    {
-        const float3 lit = ShadePbr(visibility, BlendedModelSurface(color.rgb, normal), input.worldPos);
-        return float4(ApplyFog(lit, length(cameraPos.xyz - input.worldPos)), color.a);
-    }
-    const float3 lit = ShadeLit(visibility, color.rgb, normal, input.worldPos);
-    return float4(ApplyFog(lit, length(cameraPos.xyz - input.worldPos)), color.a);
+    return float4(lit, color.a);
 #endif
 }
