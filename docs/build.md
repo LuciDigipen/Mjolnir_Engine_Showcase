@@ -152,6 +152,21 @@ builds with it OFF, into its own `builds/windows-msvc-debug-float/`. Tests that
 need double positions far from the origin report Skipped there. After changing
 code that handles positions, build and test both presets.
 
+**Precompiled headers.** Every compiled engine module privately precompiles stable
+standard-library headers, with selected GLM, ImGui and JSON headers added by the
+modules that use them. Each module builds its own PCH with its compiler settings.
+C sources, tests and sources with separate compiler or Windows API settings keep
+their normal include order. To disable precompiled headers for an include-dependency
+check:
+
+```powershell
+cmake --preset windows-msvc-debug -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+cmake --build --preset windows-msvc-debug
+```
+
+Configure with `-DCMAKE_DISABLE_PRECOMPILE_HEADERS=OFF` to enable them again.
+Keep normal includes in source files so both configurations build independently.
+
 **Reconfigure** every time a `CMakeLists.txt` or `vcpkg.json` changes.
 
 Ninja does it for you at build time, and cmake-tools can do it on save — see

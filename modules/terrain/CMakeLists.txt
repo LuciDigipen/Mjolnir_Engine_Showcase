@@ -1,4 +1,4 @@
-﻿engine_add_module(terrain)
+﻿engine_add_module(terrain PCH_HEADERS glm/glm.hpp nlohmann/json.hpp)
 
 target_sources(engine_terrain PRIVATE
     src/terrain/TerrainModule.cpp
@@ -47,3 +47,5 @@ if(MSVC)
     string(REGEX REPLACE "/RTC1|/Ob0|/Od" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
 endif()
 set_property(SOURCE src/terrain/TerrainLod.cpp APPEND PROPERTY COMPILE_OPTIONS "$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:/O2>")
+# Preserve this source's optimization settings independently of the module PCH.
+set_source_files_properties(src/terrain/TerrainLod.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)

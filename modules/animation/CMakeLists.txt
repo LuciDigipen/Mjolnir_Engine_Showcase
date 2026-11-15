@@ -1,4 +1,4 @@
-engine_add_module(animation)
+engine_add_module(animation PCH_HEADERS glm/glm.hpp)
 target_sources(engine_animation PRIVATE
     src/animation/AnimationModule.cpp
     src/animation/ModelAnimation.cpp

@@ -1,4 +1,4 @@
-﻿engine_add_module(particles)
+﻿engine_add_module(particles PCH_HEADERS glm/glm.hpp nlohmann/json.hpp)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 # Public headers expose core world/coordinate types and asset identities.
