@@ -34,13 +34,13 @@ namespace
     {
         auto mesh = std::make_shared<DecodedMesh>();
         mesh->vertices.resize(3);
-        mesh->indices = { 0, 1, 2 };
+        mesh->indices = {0, 1, 2};
         return mesh;
     }
 
     GpuRecordKey KeyOf(uint32_t part, uint32_t revision = 1, bool rayTracing = true)
     {
-        return { kMeshAsset, part, ContentIdentity::ForRevision(revision), MeshUploadOptions{ .rayTracing = rayTracing } };
+        return {kMeshAsset, part, ContentIdentity::ForRevision(revision), MeshUploadOptions{.rayTracing = rayTracing}};
     }
 
     void Finish(test::FakeMeshResolveHost &host, ModelMeshTracker &tracker, MeshHandle handle)
@@ -52,7 +52,7 @@ namespace
 }
 
 TEST_CASE("Residency occupies retiring bytes but only asks to free what is held beyond the target and limits",
-    "[renderer][residency]")
+          "[renderer][residency]")
 {
     GpuResidency residency;
     uint64_t meshes = 100, textures = 300, retiring = 50;
@@ -98,13 +98,15 @@ TEST_CASE("Residency occupies retiring bytes but only asks to free what is held 
     }
 }
 
-TEST_CASE("A model mesh record uploads once for equal keys and splits on content or options",
-    "[renderer][model-mesh]")
+TEST_CASE("A model mesh record uploads once for equal keys and splits on content or options", "[renderer][model-mesh]")
 {
     test::FakeMeshResolveHost host;
     const auto tracker = host.ModelMeshes(nullptr);
     int made = 0;
-    const auto make = [&made] { ++made; return Triangle(); };
+    const auto make = [&made] {
+        ++made;
+        return Triangle();
+    };
 
     const AssetId first = tracker->Request(KeyOf(0), make, "a");
     const AssetId again = tracker->Request(KeyOf(0), make, "a");
@@ -135,8 +137,7 @@ TEST_CASE("Unused mesh records leave oldest first when the renderer is over its 
     const auto tracker = host.ModelMeshes(nullptr);
     host.Residency().SetTotalTarget(300);
 
-    const auto upload = [&](uint32_t part)
-    {
+    const auto upload = [&](uint32_t part) {
         const AssetId id = tracker->Request(KeyOf(part), [] { return Triangle(); }, "mesh");
         ModelMeshLease lease(tracker, id);
         tracker->Update();
@@ -166,8 +167,8 @@ namespace
             texture.rgba.assign(64, 90);
             REQUIRE(WriteBytes(Path() / "texture-b.blob", BuildTypedAsset(texture)));
             const AssetManifestSourceEntry entries[]{
-                { { kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion }, "texture.blob", "texture", {} },
-                { { kTextureB, kTextureAssetTypeTag, kTextureAssetContentVersion }, "texture-b.blob", "texture-b", {} } };
+                {{kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion}, "texture.blob", "texture", {}},
+                {{kTextureB, kTextureAssetTypeTag, kTextureAssetContentVersion}, "texture-b.blob", "texture-b", {}}};
             REQUIRE(WriteBytes(Path() / kAssetManifestFileName, BuildAssetManifestBlob(entries)));
         }
     };
@@ -177,7 +178,8 @@ namespace
         MaterialFixture()
             : mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1), mTracker(mTextures.TextureLoads(&mService)),
               mCache(mHost.MaterialRecords())
-        {}
+        {
+        }
 
         TextureHandle ReadyTexture(AssetId id = kTexture)
         {
@@ -230,15 +232,15 @@ namespace
 }
 
 TEST_CASE("Materials equal by value share one record and any resolved difference splits it",
-    "[renderer][material-records]")
+          "[renderer][material-records]")
 {
     test::FakeMeshResolveHost host;
     const auto cache = host.MaterialRecords();
-    std::vector<std::byte> bytesA(8, std::byte{ 3 }), bytesB(8, std::byte{ 3 });
+    std::vector<std::byte> bytesA(8, std::byte{3}), bytesB(8, std::byte{3});
 
     MaterialDesc desc;
     desc.shaderName = "model";
-    desc.baseColorTexture = TextureHandle{ 4, 1 };
+    desc.baseColorTexture = TextureHandle{4, 1};
     desc.record = bytesA;
     const uint64_t first = cache->Acquire(desc, {});
     REQUIRE(first != 0);
@@ -253,8 +255,7 @@ TEST_CASE("Materials equal by value share one record and any resolved difference
     }
     SECTION("any field that changes the material")
     {
-        const auto differs = [&](auto change)
-        {
+        const auto differs = [&](auto change) {
             MaterialDesc other = desc;
             change(other);
             return cache->Acquire(other, {}) != first;
@@ -265,8 +266,11 @@ TEST_CASE("Materials equal by value share one record and any resolved difference
         CHECK(differs([](MaterialDesc &d) { d.cullMode = VK_CULL_MODE_NONE; }));
         CHECK(differs([](MaterialDesc &d) { d.sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; }));
         CHECK(differs([](MaterialDesc &d) { d.shaderName = "default"; }));
-        CHECK(differs([](MaterialDesc &d) { d.baseColorTexture = TextureHandle{ 4, 2 }; }));
-        CHECK(differs([&](MaterialDesc &d) { bytesB[0] = std::byte{ 9 }; d.record = bytesB; }));
+        CHECK(differs([](MaterialDesc &d) { d.baseColorTexture = TextureHandle{4, 2}; }));
+        CHECK(differs([&](MaterialDesc &d) {
+            bytesB[0] = std::byte{9};
+            d.record = bytesB;
+        }));
     }
 }
 
@@ -313,15 +317,17 @@ TEST_CASE("A claimed material record is never evicted under pressure", "[rendere
     cache->Trim();
     CHECK(cache->Size() == 1);
     CHECK_FALSE(lease.Get().IsNull());
-    // it holds no texture and no table bytes, so releasing it gives nothing back and it stays
+    // Model PBR records now own 224 bytes even without textures, so pressure
+    // can reclaim the unclaimed record immediately.
+    CHECK(cache->RecordBytes() == 224);
     lease.Reset();
-    CHECK(cache->Size() == 1);
+    CHECK(cache->Size() == 0);
     cache->EvictUnused();
     CHECK(cache->Size() == 0);
 }
 
 TEST_CASE("Pressure releases only the unused records that give something back, oldest first",
-    "[renderer][material-records]")
+          "[renderer][material-records]")
 {
     MaterialFixture f;
     const TextureHandle first = f.ReadyTexture(kTexture);
@@ -332,7 +338,7 @@ TEST_CASE("Pressure releases only the unused records that give something back, o
     bareDesc.shaderName = "bare";
     const uint64_t bare = f.mCache->Acquire(bareDesc, {});
     const uint64_t b = f.Material("b", second, kTextureB);
-    for (const uint64_t id : { a, bare, b })
+    for (const uint64_t id : {a, bare, b})
         MaterialLease(f.mCache, id).Reset();
     REQUIRE(f.mCache->Size() == 3);
     CHECK(f.mCache->PinnedTextureBytes() > 0);
@@ -351,7 +357,7 @@ TEST_CASE("A texture another holder still claims is not freed by releasing a rec
     const TextureHandle texture = f.ReadyTexture(kTexture);
     f.mTextures.mRetired.clear();
     // the texture is also claimed by something that stays
-    TextureLoadLease holder(f.mTracker, UploadKey{ kTexture });
+    TextureLoadLease holder(f.mTracker, UploadKey{kTexture});
     const uint64_t id = f.Material("a", texture, kTexture);
     MaterialLease(f.mCache, id).Reset();
     CHECK(f.mCache->PinnedTextureBytes() == 0);
@@ -377,7 +383,7 @@ TEST_CASE("Records that share a texture go together when nothing else claims it"
 }
 
 TEST_CASE("A full material table is waited out, not failed, until the released slots come back",
-    "[renderer][material-records]")
+          "[renderer][material-records]")
 {
     test::FakeMeshResolveHost host;
     const auto cache = host.MaterialRecords();
@@ -421,7 +427,7 @@ TEST_CASE("A material the renderer cannot make is a failure, not a wait", "[rend
     host.rejectMaterials = true;
     MaterialDesc desc;
     desc.shaderName = "broken";
-    MaterialLease keepable(cache, cache->Acquire(MaterialDesc{ .shaderName = "other" }, {}));
+    MaterialLease keepable(cache, cache->Acquire(MaterialDesc{.shaderName = "other"}, {}));
     MaterialAcquire status = MaterialAcquire::Ready;
     CHECK(cache->Acquire(desc, {}, &status) == 0);
     CHECK(status == MaterialAcquire::Failed);
@@ -430,17 +436,17 @@ TEST_CASE("A material the renderer cannot make is a failure, not a wait", "[rend
 }
 
 TEST_CASE("Record bytes in the shared table are counted and released oldest first over their category limit",
-    "[renderer][material-records]")
+          "[renderer][material-records]")
 {
     test::FakeMeshResolveHost host;
     const auto cache = host.MaterialRecords();
-    std::vector<std::byte> bytes(40, std::byte{ 1 });
+    std::vector<std::byte> bytes(40, std::byte{1});
     MaterialDesc desc;
     desc.shaderName = "surface";
     desc.record = bytes;
     desc.recordAlignment = 16;
     const uint64_t a = cache->Acquire(desc, {});
-    bytes[0] = std::byte{ 2 };
+    bytes[0] = std::byte{2};
     desc.record = bytes;
     const uint64_t b = cache->Acquire(desc, {});
     MaterialLease(cache, a).Reset();
@@ -470,7 +476,7 @@ TEST_CASE("Releasing the renderer's materials leaves leases pointing at nothing"
 }
 
 TEST_CASE("Releasing every claim at once keeps what fits the target and does not evict for retiring bytes",
-    "[renderer][residency]")
+          "[renderer][residency]")
 {
     test::FakeMeshResolveHost host;
     const auto tracker = host.ModelMeshes(nullptr);
@@ -504,7 +510,7 @@ TEST_CASE("One total overage is freed once across texture and record bytes", "[r
     const TextureHandle texture = f.ReadyTexture(kTexture);
     // the older record pins a texture, the newer holds 48 bytes of table and no texture
     const uint64_t textured = f.Material("a", texture, kTexture);
-    std::vector<std::byte> bytes(40, std::byte{ 1 });
+    std::vector<std::byte> bytes(40, std::byte{1});
     MaterialDesc recordDesc;
     recordDesc.shaderName = "surface";
     recordDesc.record = bytes;

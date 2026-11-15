@@ -84,8 +84,8 @@ struct SurfaceRayVisibility : IShadowVisibility
         ray.Direction = L;
         ray.TMin = 0.001;
         ray.TMax = kSunShadowDistance;
-        TraceRay(gSurfaceTlas, RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xFF, 1, 0, 1, ray, shadowPayload);
+        TraceRay(gSurfaceTlas, RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xFF, 1, 0,
+                 1, ray, shadowPayload);
         return shadowPayload.visibility;
     }
 
@@ -100,8 +100,8 @@ struct SurfaceRayVisibility : IShadowVisibility
         ray.Direction = Lp;
         ray.TMin = 0.001;
         ray.TMax = max(dist, ray.TMin);
-        TraceRay(gSurfaceTlas, RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xFF, 1, 0, 1, ray, shadowPayload);
+        TraceRay(gSurfaceTlas, RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 0xFF, 1, 0,
+                 1, ray, shadowPayload);
         return shadowPayload.visibility;
     }
 };
@@ -114,14 +114,15 @@ uint3 TriangleIndices(RtInstanceInfo info)
 
 float3 Barycentrics(BuiltInTriangleIntersectionAttributes attribs)
 {
-    return float3(1.0 - attribs.barycentrics.x - attribs.barycentrics.y, attribs.barycentrics.x, attribs.barycentrics.y);
+    return float3(1.0 - attribs.barycentrics.x - attribs.barycentrics.y, attribs.barycentrics.x,
+                  attribs.barycentrics.y);
 }
 
 float4 LoadFloat4(RtInstanceInfo info, uint vertex, uint offset)
 {
     const uint b = vertex * kVertexStrideFloats + offset;
     return float4(info.vertexAddress[b], info.vertexAddress[b + 1], info.vertexAddress[b + 2],
-        info.vertexAddress[b + 3]);
+                  info.vertexAddress[b + 3]);
 }
 
 float3 InterpolateFloat3(RtInstanceInfo info, uint3 indices, float3 barycentrics, uint offset)
@@ -145,7 +146,7 @@ float4 InterpolateTangent(RtInstanceInfo info, uint3 indices, float3 barycentric
     {
         const uint b = indices[k] * kVertexStrideFloats + kTangentOffset;
         tangent += float4(info.vertexAddress[b], info.vertexAddress[b + 1], info.vertexAddress[b + 2],
-                        info.vertexAddress[b + 3]) *
+                          info.vertexAddress[b + 3]) *
                    barycentrics[k];
     }
     return tangent;
@@ -178,8 +179,8 @@ typedef ProbePayload SurfacePayload;
 typedef RayPayload SurfacePayload;
 #endif
 
-[shader("closesthit")]
-void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+[shader("closesthit")] void closestHitSurface<M : IMaterial>(inout SurfacePayload payload,
+                                                             in BuiltInTriangleIntersectionAttributes attribs)
 {
     const RtInstanceInfo info = gInstances[InstanceID()];
     // HitKind carries the instance's facing flip; the per-instance correction
@@ -208,14 +209,13 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
     float3 N = normalize(info.normalCol0.xyz * objNormal.x + info.normalCol1.xyz * objNormal.y +
                          info.normalCol2.xyz * objNormal.z);
 
-
     const float4 sourceTangent = InterpolateTangent(info, indices, barycentrics);
-    const float4 tangentFrame = TransformTangentFrame(info.modelCol0.xyz, info.modelCol1.xyz,
-        info.modelCol2.xyz, sourceTangent, N);
+    const float4 tangentFrame =
+        TransformTangentFrame(info.modelCol0.xyz, info.modelCol1.xyz, info.modelCol2.xyz, sourceTangent, N);
     const float4 vertexColor = float4(InterpolateFloat3(info, indices, barycentrics, kColorOffset),
-                                    InterpolateFloat(info, indices, barycentrics, kAlphaOffset));
+                                      InterpolateFloat(info, indices, barycentrics, kAlphaOffset));
     const float2 uv = float2(InterpolateFloat(info, indices, barycentrics, kUvOffset),
-        InterpolateFloat(info, indices, barycentrics, kUvOffset + 1));
+                             InterpolateFloat(info, indices, barycentrics, kUvOffset + 1));
 
     const float uvDensity = UvDensity(info, indices, op0, op1, op2);
     const float cosIncidence = max(abs(dot(normalize(N), normalize(WorldRayDirection()))), 0.05);
@@ -237,6 +237,10 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
     SurfaceInput surfaceInput =
         MeshFrontend::Build(hitWorldPos, N, tangentFrame, uv, objectPos, vertexColor, frontFace);
     surfaceInput.uvDensity = uvDensity;
+#ifdef MIR_DDGI_PROBE
+    surfaceInput.viewDirWS = -WorldRayDirection();
+    surfaceInput.viewDistance = RayTCurrent();
+#endif
     const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), info.tint);
 
     SurfaceRayVisibility visibility;
@@ -244,20 +248,21 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
                                           max(kShadowNormalBias, length(hitWorldPos) * kShadowNormalBiasPerDistance);
 
 #ifdef MIR_DDGI_PROBE
-    const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, hitWorldPos);
+    const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, hitWorldPos, -WorldRayDirection());
     payload.radiance = lighting.diffuseDirect + lighting.emissive;
-    payload.diffuseReflectance = min(surface.albedo * (1.0 - surface.f0), float3(0.9)) * surface.ao;
+    payload.diffuseReflectance = min(PbrDiffuseReflectance(surface), float3(0.9));
     payload.geometricNormal = FaceNormal(info, op0, op1, op2);
     payload.materialHit = 1;
 #else
-    const float3 lit = ShadePbr(visibility, surface, hitWorldPos);
+    const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, hitWorldPos);
+    const float3 lit = PbrTotalLighting(lighting);
 #ifdef MIR_DDGI
     // Sample in raygen so generic material specialization stays SDK-independent.
-    payload.giDiffuse = surface.albedo * (1.0 - surface.f0) * surface.ao;
-    payload.giAmbient = surface.albedo * surface.ao * ambientColor.rgb;
+    payload.giDiffuse = PbrDiffuseReflectance(surface);
+    payload.giAmbient = lighting.ambientRadiance;
     payload.giNormal = FaceNormal(info, op0, op1, op2);
-    payload.materialGi = 1;
-    payload.color = lit;
+    payload.materialGi = surface.unlit ? 0 : 1;
+    payload.color = surface.unlit ? ApplyFog(lit, RayTCurrent()) : lit;
 #else
     payload.color = ApplyFog(lit, RayTCurrent());
 #endif
@@ -276,11 +281,10 @@ void closestHitSurface<M : IMaterial>(inout SurfacePayload payload, in BuiltInTr
         const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
         const float3 viewDir = normalize(cameraPos.xyz - hitWorldPos);
         const float NoV = saturate(dot(normalize(surface.normalWS), viewDir));
-        gAlbedo[guidePixel] = float4(surface.albedo, 1.0);
+        gAlbedo[guidePixel] = float4(surface.albedo * (1.0 - surface.metallic), 1.0);
         gSpecularAlbedo[guidePixel] =
-            float4(SpecularAlbedoGuide(surface.f0.xxx, surface.roughness * surface.roughness, NoV), 1.0);
+            float4(SpecularAlbedoGuide(surface.f0, surface.roughness * surface.roughness, NoV), 1.0);
         gNormal[guidePixel] = float4(surface.normalWS, surface.roughness);
     }
 #endif // camera payload
-
 }

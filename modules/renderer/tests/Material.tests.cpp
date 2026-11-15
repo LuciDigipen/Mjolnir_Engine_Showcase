@@ -7,14 +7,32 @@
  *
  */
 #include <renderer/Material.h>
+#include <renderer/MaterialRecordCache.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 using namespace mir;
 
+TEST_CASE("Material cache distinguishes PBR channels, samplers and factors", "[renderer][material][pbr]")
+{
+    MaterialDesc desc;
+    desc.shaderName = "model";
+    const auto base = MaterialValueKey::Of(desc);
+    desc.model.factors[0].x = .3f;
+    CHECK_FALSE(MaterialValueKey::Of(desc) == base);
+    desc.model.factors[0].x = 1;
+    desc.model.textures[2].texture = {42, 1};
+    CHECK_FALSE(MaterialValueKey::Of(desc) == base);
+    desc.model.textures[2].texture = {};
+    desc.model.textures[0].sampler.useMips = true;
+    CHECK_FALSE(MaterialValueKey::Of(desc) == base);
+    const auto key = MaterialValueKey::Of(desc);
+    CHECK(MaterialValueKeyHash{}(key) == MaterialValueKeyHash{}(MaterialValueKey::Of(desc)));
+}
+
 TEST_CASE("Sampler anisotropy clamps to the device limit", "[renderer][material]")
 {
-    SamplerDesc desc{ .maxAnisotropy = 8.0f };
+    SamplerDesc desc{.maxAnisotropy = 8.0f};
     CHECK(EffectiveAnisotropy(desc, true, 16.0f) == 8.0f);
     CHECK(EffectiveAnisotropy(desc, true, 4.0f) == 4.0f);
     CHECK(EffectiveAnisotropy(desc, true, 1.0f) == 1.0f);
@@ -42,7 +60,7 @@ TEST_CASE("The sampler cache key includes the effective anisotropic state", "[re
     CHECK(SamplerCacheKey(desc, true, 16.0f) != anisotropic4);
 
     desc.maxAnisotropy = 16.0f;
-    CHECK(SamplerCacheKey(desc, true, 4.0f) == SamplerCacheKey(SamplerDesc{ .maxAnisotropy = 8.0f }, true, 4.0f));
+    CHECK(SamplerCacheKey(desc, true, 4.0f) == SamplerCacheKey(SamplerDesc{.maxAnisotropy = 8.0f}, true, 4.0f));
 
     desc.maxAnisotropy = 4.0f;
     CHECK(SamplerCacheKey(desc, false, 16.0f) == isotropic);

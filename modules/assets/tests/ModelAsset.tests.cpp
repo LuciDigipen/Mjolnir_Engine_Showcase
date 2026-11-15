@@ -17,6 +17,45 @@
 
 using namespace mir;
 
+TEST_CASE("PBR material factors and all texture bindings round trip", "[assets][pbr]")
+{
+    MaterialAsset material;
+    material.metallic = .3f;
+    material.roughness = .7f;
+    material.normalScale = -.5f;
+    material.ior = 1.8f;
+    material.clearcoat = .4f;
+    material.clearcoatNormalScale = .6f;
+    material.emissive = glm::vec3(2, 3, 4);
+    material.specularColor = glm::vec3(.2f, .4f, .6f);
+    for (size_t i = 0; i < material.textures.size(); ++i)
+    {
+        material.textures[i].texture = AssetId{100 + i};
+        material.textures[i].wrapT = 33071;
+    }
+    const auto bytes = BuildTypedAsset(material);
+    const auto view = ParseAssetBlob(bytes);
+    REQUIRE(view);
+    MaterialAsset loaded;
+    std::string error;
+    REQUIRE(ReadTypedAsset(*view, loaded, error));
+    CHECK(loaded.metallic == material.metallic);
+    CHECK(loaded.normalScale == material.normalScale);
+    CHECK(loaded.specularColor == material.specularColor);
+    CHECK(loaded.emissive == material.emissive);
+    CHECK(loaded.clearcoatNormalScale == material.clearcoatNormalScale);
+    for (size_t i = 0; i < material.textures.size(); ++i)
+    {
+        CHECK(loaded.textures[i].texture == material.textures[i].texture);
+        CHECK(loaded.textures[i].wrapT == 33071);
+    }
+    loaded.ior = 0;
+    loaded.specularColor = glm::vec3(2);
+    CHECK(ValidateAsset(loaded, error));
+    loaded.roughness = 2;
+    CHECK_FALSE(ValidateAsset(loaded, error));
+}
+
 namespace
 {
     TextureAsset MakeTexture()

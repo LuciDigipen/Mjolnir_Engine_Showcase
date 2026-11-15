@@ -72,10 +72,18 @@ namespace mir
         {
             a(v.name, v.duration, v.tracks);
         }
+        template <class A> void Fields(A &a, MaterialTextureBinding &v)
+        {
+            a(v.texture, v.texCoord, v.wrapS, v.wrapT, v.minFilter, v.magFilter);
+        }
         template <class A> void Fields(A &a, MaterialAsset &v)
         {
             a(v.baseColor, v.baseColorTexture, v.doubleSided, v.alpha, v.alphaCutoff, v.wrapS, v.wrapT, v.minFilter,
               v.magFilter);
+            for (auto &binding : v.textures)
+                Fields(a, binding);
+            a(v.metallic, v.roughness, v.normalScale, v.occlusionStrength, v.emissive, v.specularColor, v.specular,
+              v.ior, v.clearcoat, v.clearcoatRoughness, v.clearcoatNormalScale, v.unlit);
         }
         template <class A> void Fields(A &a, TextureMip &v)
         {
@@ -436,6 +444,22 @@ namespace mir
     }
     bool ValidateAsset(const MaterialAsset &a, std::string &e)
     {
+        auto finite = [](float f) { return std::isfinite(f); };
+        auto unit = [&](float f) { return finite(f) && f >= 0 && f <= 1; };
+        if (!unit(a.metallic) || !unit(a.roughness) || !unit(a.occlusionStrength) || !unit(a.specular) ||
+            !unit(a.clearcoat) || !unit(a.clearcoatRoughness) || !finite(a.ior) || (a.ior != 0 && a.ior < 1) ||
+            !finite(a.normalScale) || !finite(a.clearcoatNormalScale))
+            return Fail(e, "invalid PBR material factors");
+        for (int i = 0; i < 3; ++i)
+            if (!finite(a.emissive[i]) || a.emissive[i] < 0 || !finite(a.specularColor[i]) || a.specularColor[i] < 0)
+                return Fail(e, "invalid PBR material color");
+        for (const auto &binding : a.textures)
+            if ((binding.wrapS != 10497 && binding.wrapS != 33071 && binding.wrapS != 33648) ||
+                (binding.wrapT != 10497 && binding.wrapT != 33071 && binding.wrapT != 33648) ||
+                (binding.magFilter != 9728 && binding.magFilter != 9729) ||
+                (binding.minFilter != 9728 && binding.minFilter != 9729 &&
+                 (binding.minFilter < 9984 || binding.minFilter > 9987)))
+                return Fail(e, "invalid material texture sampler");
         auto wrap = [](uint32_t n) { return n == 10497 || n == 33071 || n == 33648; };
         return (a.alpha <= MaterialAlpha::Blend && a.alphaCutoff >= 0 && wrap(a.wrapS) && wrap(a.wrapT) &&
                 (a.magFilter == 9728 || a.magFilter == 9729) &&
@@ -490,7 +514,7 @@ namespace mir
         if (a.resolution == 0 || a.resolution > 16384)
             return Fail(e, "invalid surface material resolution");
         static const std::unordered_set<std::string> roles{"baseColor", "normal", "displacement", "roughness",
-                                                           "specular", "ao"};
+                                                           "specular",  "ao",     "metallic"};
         std::unordered_set<std::string> seen;
         for (const auto &texture : a.textures)
             if (!roles.contains(texture.role) || !seen.insert(texture.role).second || texture.path.empty() ||

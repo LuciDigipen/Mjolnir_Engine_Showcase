@@ -15,6 +15,8 @@
 
 #include "LightingCommon.slang"
 #include "TangentFrame.slang"
+#include "NormalMapping.slang"
+#include "PbrMaterialMath.slang"
 
 #ifndef MIR_SURFACE_SET
 #define MIR_SURFACE_SET 4
@@ -32,6 +34,7 @@
 static const uint kMaxSurfaceImages = 1024;
 static const uint kMaxSurfaceSamplers = 256;
 
+#ifndef MIR_SURFACE_EXTERNAL_TABLES
 [[vk::binding(MIR_SURFACE_IMAGES_BINDING, MIR_SURFACE_SET)]]
 Texture2D<float4> gSurfaceImages[kMaxSurfaceImages];
 
@@ -40,6 +43,8 @@ SamplerState gSurfaceSamplers[kMaxSurfaceSamplers];
 
 [[vk::binding(MIR_SURFACE_RECORDS_BINDING, MIR_SURFACE_SET)]]
 ByteAddressBuffer gSurfaceRecords;
+
+#endif
 
 // Stable image and sampler rows, filled by the CPU material loader.
 struct TextureRef
@@ -109,7 +114,15 @@ struct SurfaceOutput
     float3 albedo;
     float3 normalWS;
     float roughness;
-    float f0;
+    float3 f0;
+    float3 f90;
+    float3 dielectricF0;
+    float dielectricF90;
+    float metallic;
+    float clearcoat;
+    float clearcoatRoughness;
+    float3 clearcoatNormalWS;
+    bool unlit;
     float ao;
     float height;
     float3 emissive;
@@ -118,6 +131,7 @@ struct SurfaceOutput
 SurfaceOutput ApplySurfaceTint(SurfaceOutput surface, float4 tint)
 {
     surface.albedo *= tint.rgb;
+    surface.f0 = PbrMixedF0(surface.dielectricF0, surface.albedo, surface.metallic);
     surface.emissive *= tint.rgb;
     return surface;
 }
@@ -205,13 +219,12 @@ static const float kParallaxMinFootprintSine = 1e-3;
 // The raster path reuses the caller's uvDx/uvDy, so SampleGrad keeps the
 // original derivatives; the RT path uses MaterialContext's explicit level of
 // detail. Fade scales the found offset continuously, and maxDistance clamps it.
-float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef heightTexture,
-    float2 uv, float tileSizeMeters, float heightMeters, float reference, float maxDistanceMeters,
-    float fadeStartMeters, float fadeEndMeters, uint maxSteps, bool rayTracedEnabled)
+float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef heightTexture, float2 uv,
+                         float tileSizeMeters, float heightMeters, float reference, float maxDistanceMeters,
+                         float fadeStartMeters, float fadeEndMeters, uint maxSteps, bool rayTracedEnabled)
 {
     if (maxSteps == 0 || !(tileSizeMeters > 0.001) || !isfinite(tileSizeMeters) || !(heightMeters > 0.0) ||
-        !isfinite(heightMeters) || !isfinite(reference) || !isfinite(maxDistanceMeters) ||
-        !(maxDistanceMeters > 0.0))
+        !isfinite(heightMeters) || !isfinite(reference) || !isfinite(maxDistanceMeters) || !(maxDistanceMeters > 0.0))
         return uv;
     if (context.rayTraced && !rayTracedEnabled)
         return uv;
@@ -224,8 +237,8 @@ float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef
     const float3 tangent = SafeNormalize(input.tangentWS, float3(1.0, 0.0, 0.0));
     const float3 bitangent = input.bitangentSign * cross(normal, tangent);
     const float3 viewDirection = SafeNormalize(input.viewDirWS, float3(0.0, 0.0, -1.0));
-    const float3 viewTangent = float3(dot(viewDirection, tangent), dot(viewDirection, bitangent),
-        dot(viewDirection, normal));
+    const float3 viewTangent =
+        float3(dot(viewDirection, tangent), dot(viewDirection, bitangent), dot(viewDirection, normal));
     if (!(viewTangent.z > 0.0))
         return uv;
 
@@ -256,14 +269,16 @@ float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef
     const float2 uvDy = context.uvDy;
     const float determinant = uvDx.x * uvDy.y - uvDy.x * uvDx.y;
     const bool footprintKnown = !context.rayTraced && all(isfinite(uvDx)) && all(isfinite(uvDy)) &&
-        isfinite(determinant) && abs(determinant) > kParallaxMinFootprintSine * length(uvDx) * length(uvDy);
+                                isfinite(determinant) &&
+                                abs(determinant) > kParallaxMinFootprintSine * length(uvDx) * length(uvDy);
     const uint stepCap = min(maxSteps, 128u);
     uint steps = stepCap;
     if (footprintKnown)
     {
         // Screen pixels per unit of ray direction, through the inverse of [uvDx uvDy].
         const float2 rayPixels = float2(uvDy.y * rayDirection.x - uvDy.x * rayDirection.y,
-                                     uvDx.x * rayDirection.y - uvDx.y * rayDirection.x) / determinant;
+                                        uvDx.x * rayDirection.y - uvDx.y * rayDirection.x) /
+                                 determinant;
         const float rayPixelLength = length(rayPixels);
         const float pixelsPerUv = rayLength > 0.0 ? rayPixelLength / rayLength : 0.0;
         const float visibleOffsetUv = min(rayLength * heightMeters * fade * uvPerMeter, maximumOffsetUv);
@@ -280,16 +295,16 @@ float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef
     // clamped to that range.
     float previousS = heightMeters;
     float2 previousUv = uv + rayDirection * ((previousS * fade) * uvPerMeter);
-    float previousSurface = (context.Sample(heightTexture, previousUv, context.uvDx, context.uvDy).g -
-                                clampedReference) * heightMeters;
+    float previousSurface =
+        (context.Sample(heightTexture, previousUv, context.uvDx, context.uvDy).g - clampedReference) * heightMeters;
     float previousGap = previousSurface - previousS;
 
     for (uint index = 1; index <= steps; ++index)
     {
         const float currentS = heightMeters - 2.0 * heightMeters * float(index) / float(steps);
         const float2 currentUv = uv + rayDirection * ((currentS * fade) * uvPerMeter);
-        const float currentSurface = (context.Sample(heightTexture, currentUv, context.uvDx, context.uvDy).g -
-                                         clampedReference) * heightMeters;
+        const float currentSurface =
+            (context.Sample(heightTexture, currentUv, context.uvDx, context.uvDy).g - clampedReference) * heightMeters;
         const float currentGap = currentSurface - currentS;
         if (!isfinite(currentGap))
             return uv;
@@ -320,8 +335,8 @@ interface IMaterial
 
 struct MeshFrontend
 {
-    static SurfaceInput Build(float3 positionRS, float3 normalWS, float4 tangentWS, float2 uv0,
-        float3 localPos, float4 vertexColor, bool frontFace)
+    static SurfaceInput Build(float3 positionRS, float3 normalWS, float4 tangentWS, float2 uv0, float3 localPos,
+                              float4 vertexColor, bool frontFace)
     {
         SurfaceInput input;
         input.positionRS = positionRS;
@@ -341,8 +356,8 @@ struct MeshFrontend
 
 struct TerrainFrontend
 {
-    static SurfaceInput Build(float3 positionRS, float3 macroNormalWS, float2 uv0, float3 localPos,
-        float4 vertexColor, bool frontFace, float uvDensity)
+    static SurfaceInput Build(float3 positionRS, float3 macroNormalWS, float2 uv0, float3 localPos, float4 vertexColor,
+                              bool frontFace, float uvDensity)
     {
         SurfaceInput input;
         input.positionRS = positionRS;

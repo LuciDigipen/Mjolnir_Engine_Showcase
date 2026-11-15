@@ -52,8 +52,8 @@ namespace
 {
     using Json = nlohmann::json;
     constexpr uint32_t kCacheVersion = 6;
-    constexpr std::string_view kImporterFingerprint = "fastgltf-v2-stable-identity";
-    constexpr std::string_view kMaterialCookerFingerprint = "surface-material-v1-packed-2048";
+    constexpr std::string_view kImporterFingerprint = "fastgltf-v3-pbr-materials";
+    constexpr std::string_view kMaterialCookerFingerprint = "surface-material-v2-packed-metallic";
     // One generation back, kept so a crashed cook can be rolled back.
     constexpr std::string_view kPreviousManifestFileName = "manifest.previous.blob";
     struct SourceRoot
@@ -108,7 +108,10 @@ namespace
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return value;
     }
-    bool IsMaterialPath(const std::filesystem::path &path) { return LowerFilename(path).ends_with(".material.json"); }
+    bool IsMaterialPath(const std::filesystem::path &path)
+    {
+        return LowerFilename(path).ends_with(".material.json");
+    }
     void Publish(const std::filesystem::path &path, std::span<const std::byte> bytes)
     {
         std::filesystem::create_directories(path.parent_path());
@@ -144,19 +147,32 @@ namespace
         PublishText(path, source);
         // Remove an interrupted cook's output so a failed compile cannot reuse it.
         std::filesystem::remove(spirv);
-        const std::vector<std::string> args{path.string(), "-target", "spirv", "-profile", "spirv_1_5",
-            "-entry", "computeMain", "-stage", "compute", "-fvk-use-entrypoint-name",
-            "-matrix-layout-column-major", "-O0", "-o", spirv.string()};
+        const std::vector<std::string> args{path.string(),
+                                            "-target",
+                                            "spirv",
+                                            "-profile",
+                                            "spirv_1_5",
+                                            "-entry",
+                                            "computeMain",
+                                            "-stage",
+                                            "compute",
+                                            "-fvk-use-entrypoint-name",
+                                            "-matrix-layout-column-major",
+                                            "-O0",
+                                            "-o",
+                                            spirv.string()};
         mir::ChildProcess compiler;
         if (!compiler.Start(PARTICLE_SLANGC_EXECUTABLE, args))
-            throw std::runtime_error("cannot start particle shader compiler: " + std::string(PARTICLE_SLANGC_EXECUTABLE));
+            throw std::runtime_error("cannot start particle shader compiler: " +
+                                     std::string(PARTICLE_SLANGC_EXECUTABLE));
         const auto exit = compiler.Wait();
         if (!exit || *exit != 0)
-            throw std::runtime_error("particle shader compilation failed, slangc exit " + std::to_string(exit.value_or(-1)));
+            throw std::runtime_error("particle shader compilation failed, slangc exit " +
+                                     std::to_string(exit.value_or(-1)));
         const auto bytes = mir::ReadBytes(spirv);
-        if (!bytes || bytes->size() < 20 || bytes->size() % 4 != 0 ||
-            std::to_integer<uint8_t>((*bytes)[0]) != 0x03 || std::to_integer<uint8_t>((*bytes)[1]) != 0x02 ||
-            std::to_integer<uint8_t>((*bytes)[2]) != 0x23 || std::to_integer<uint8_t>((*bytes)[3]) != 0x07)
+        if (!bytes || bytes->size() < 20 || bytes->size() % 4 != 0 || std::to_integer<uint8_t>((*bytes)[0]) != 0x03 ||
+            std::to_integer<uint8_t>((*bytes)[1]) != 0x02 || std::to_integer<uint8_t>((*bytes)[2]) != 0x23 ||
+            std::to_integer<uint8_t>((*bytes)[3]) != 0x07)
             throw std::runtime_error("particle compiler emitted missing or invalid SPIR-V");
         return *bytes;
     }
@@ -183,7 +199,7 @@ namespace
     }
     class OutputLock
     {
-    public:
+      public:
         explicit OutputLock(const std::filesystem::path &out) : mPath(out / ".asset-cooker.lock")
         {
             std::error_code error;
@@ -212,7 +228,7 @@ namespace
         OutputLock(const OutputLock &) = delete;
         OutputLock &operator=(const OutputLock &) = delete;
 
-    private:
+      private:
         std::filesystem::path mPath;
         bool mHeld = false;
     };
@@ -360,9 +376,9 @@ namespace
         };
         append(std::as_bytes(std::span(kImporterFingerprint)));
         append(std::as_bytes(std::span(kMaterialCookerFingerprint)));
-        const uint32_t payloadVersions[]{mir::kModelAssetContentVersion,      mir::kMeshAssetContentVersion,
-                                         mir::kSkeletonAssetContentVersion,   mir::kAnimationAssetContentVersion,
-                                         mir::kMaterialAssetContentVersion,   mir::kTextureAssetContentVersion,
+        const uint32_t payloadVersions[]{mir::kModelAssetContentVersion,          mir::kMeshAssetContentVersion,
+                                         mir::kSkeletonAssetContentVersion,       mir::kAnimationAssetContentVersion,
+                                         mir::kMaterialAssetContentVersion,       mir::kTextureAssetContentVersion,
                                          mir::kSurfaceMaterialAssetContentVersion};
         append(std::as_bytes(std::span(payloadVersions)));
         for (const auto &path : dependencies)
@@ -397,8 +413,12 @@ namespace
         Json deps = Json::array();
         for (const mir::AssetId dep : v.deps)
             deps.push_back(dep.value);
-        return {{"id", v.id.value}, {"tag", v.tag}, {"version", v.version}, {"file", v.file},
-                {"logicalPath", v.logicalPath}, {"deps", deps}};
+        return {{"id", v.id.value},
+                {"tag", v.tag},
+                {"version", v.version},
+                {"file", v.file},
+                {"logicalPath", v.logicalPath},
+                {"deps", deps}};
     }
     bool CachedOutputsValid(const Json &record, const std::filesystem::path &out)
     {
@@ -581,7 +601,7 @@ namespace
         const auto manifest = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName);
         if (!manifest)
             throw std::runtime_error("no valid manifest in " + options.out.string() + ", nothing was deleted");
-        std::unordered_set<std::string> kept{ std::string(mir::kAssetManifestFileName) };
+        std::unordered_set<std::string> kept{std::string(mir::kAssetManifestFileName)};
         for (const auto &entry : manifest->Entries())
             kept.insert(std::string(manifest->PathOf(entry)));
         size_t removed = 0;
@@ -619,7 +639,9 @@ namespace
                                 !cache.contains("models") || !cache["models"].is_object() ||
                                 !cache.contains("materials") || !cache["materials"].is_object();
         if (resetCache)
-            cache = {{"version", kCacheVersion}, {"models", Json::object()}, {"materials", Json::object()},
+            cache = {{"version", kCacheVersion},
+                     {"models", Json::object()},
+                     {"materials", Json::object()},
                      {"requiresFullCook", true}};
         const bool requiresFullCook = cache.value("requiresFullCook", false);
         std::vector<std::pair<std::string, std::string>> completedMoves;
@@ -636,11 +658,10 @@ namespace
         ids.Scan();
         // Particle dependencies form a small source graph, a changed member recooks
         // the complete graph before publishing its replacement manifest.
-        bool particleChange = std::any_of(options.changed.begin(), options.changed.end(), [](const auto &path)
-            {
-                const auto name = path.filename().string();
-                return name.ends_with(".particle.json") || name.ends_with(".emitter.json");
-            });
+        bool particleChange = std::any_of(options.changed.begin(), options.changed.end(), [](const auto &path) {
+            const auto name = path.filename().string();
+            return name.ends_with(".particle.json") || name.ends_with(".emitter.json");
+        });
         if (!particleChange && !options.changed.empty())
             for (const auto &root : options.roots)
                 for (const auto &entry : std::filesystem::recursive_directory_iterator(root.physical))
@@ -648,13 +669,18 @@ namespace
                     if (!entry.is_regular_file() || !entry.path().filename().string().ends_with(".emitter.json"))
                         continue;
                     const auto bytes = mir::ReadBytes(entry.path());
-                    if (!bytes) continue;
+                    if (!bytes)
+                        continue;
                     const auto emitter = mir::ReadParticleEmitterSource(
                         {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
-                    if (!emitter.mEmitter) continue;
+                    if (!emitter.mEmitter)
+                        continue;
                     const auto texture = std::filesystem::weakly_canonical(root.physical / emitter.mTexturePath);
-                    particleChange = particleChange || std::any_of(options.changed.begin(), options.changed.end(),
-                        [&](const auto &changed) { return std::filesystem::weakly_canonical(changed) == texture; });
+                    particleChange =
+                        particleChange ||
+                        std::any_of(options.changed.begin(), options.changed.end(), [&](const auto &changed) {
+                            return std::filesystem::weakly_canonical(changed) == texture;
+                        });
                 }
         const bool partial = !requiresFullCook &&
                              (!options.models.empty() || !options.materials.empty() || !options.changed.empty() ||
@@ -665,10 +691,10 @@ namespace
             for (const auto &entry : previous->Entries())
             {
                 const auto deps = previous->Dependencies(entry);
-                previousOutputs.emplace(entry.id.value,
-                    Output{entry.id, entry.typeTag, entry.contentVersion, std::string(previous->PathOf(entry)),
-                           std::string(previous->LogicalPathOf(entry)),
-                           std::vector<mir::AssetId>(deps.begin(), deps.end())});
+                previousOutputs.emplace(entry.id.value, Output{entry.id, entry.typeTag, entry.contentVersion,
+                                                               std::string(previous->PathOf(entry)),
+                                                               std::string(previous->LogicalPathOf(entry)),
+                                                               std::vector<mir::AssetId>(deps.begin(), deps.end())});
             }
         if (partial)
             outputs = previousOutputs;
@@ -782,23 +808,23 @@ namespace
 
             const mir::PrefabId uuid = parsed.mDocument->mId;
             if (const auto owner = prefabOwners.find(uuid); owner != prefabOwners.end())
-                throw std::runtime_error("prefab UUID " + mir::ToString(uuid) + " is used by both '" +
-                    owner->second + "' and '" + logical + "'");
+                throw std::runtime_error("prefab UUID " + mir::ToString(uuid) + " is used by both '" + owner->second +
+                                         "' and '" + logical + "'");
             prefabOwners.emplace(uuid, logical);
 
             const mir::AssetId id = mir::PrefabAssetId(uuid);
             if (const auto existing = outputs.find(id.value); existing != outputs.end())
                 throw std::runtime_error("prefab '" + logical + "' hashes to the AssetId of cooked blob '" +
-                    existing->second.file + "'; regenerate the prefab UUID");
+                                         existing->second.file + "'; regenerate the prefab UUID");
             prefabAssetOwners.emplace(id.value, logical);
             emit(id, mir::BuildPrefabAsset(*parsed.mDocument));
         };
 
         std::unordered_map<uint64_t, std::string> particleScripts;
-        auto cookParticleEmitter = [&](const SourceRoot &root, const std::filesystem::path &path)
-        {
+        auto cookParticleEmitter = [&](const SourceRoot &root, const std::filesystem::path &path) {
             const auto bytes = mir::ReadBytes(path);
-            if (!bytes) throw std::runtime_error("missing particle emitter: " + path.string());
+            if (!bytes)
+                throw std::runtime_error("missing particle emitter: " + path.string());
             auto emitter = mir::ReadParticleEmitterSource(
                 {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical, particleIdOf);
             if (!emitter.mEmitter)
@@ -819,9 +845,11 @@ namespace
                 if (found == particleScripts.end())
                 {
                     const auto code = CompileParticleScript(source, options.out);
-                    emit(scriptId, mir::BuildAssetBlob(mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion, code));
+                    emit(scriptId,
+                         mir::BuildAssetBlob(mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion, code));
                     emit(layoutId, mir::BuildAssetBlob(mir::kParticleScriptLayoutTypeTag,
-                        mir::kParticleScriptLayoutContentVersion, std::as_bytes(std::span(layout))));
+                                                       mir::kParticleScriptLayoutContentVersion,
+                                                       std::as_bytes(std::span(layout))));
                     particleScripts.emplace(scriptId.value, source);
                 }
                 emitter.mEmitter->script = scriptId;
@@ -906,7 +934,8 @@ namespace
                 throw std::runtime_error(logical + ": " + error.what());
             }
             if (!options.force && record.value("fingerprint", 0ull) == fingerprint &&
-                record.value("materialId", 0ull) == ids.Meta(path).guid.value && CachedOutputsValid(record, options.out))
+                record.value("materialId", 0ull) == ids.Meta(path).guid.value &&
+                CachedOutputsValid(record, options.out))
             {
                 for (const auto &cached : record["outputs"])
                 {
@@ -914,9 +943,8 @@ namespace
                     outputs[output.id.value] = output;
                 }
                 record["missing"] = false;
-                resultModels.push_back({{"path", logical},
-                                        {"status", "unchanged"},
-                                        {"materialId", record.value("materialId", 0ull)}});
+                resultModels.push_back(
+                    {{"path", logical}, {"status", "unchanged"}, {"materialId", record.value("materialId", 0ull)}});
                 continue;
             }
 
@@ -935,17 +963,16 @@ namespace
             }
             Json cachedOutputs = Json::array();
             for (const auto &blob : imported.blobs)
-                cachedOutputs.push_back(OutputToJson(emit(blob.id, blob.bytes,
-                    blob.id == imported.materialId ? std::string_view(logical) : std::string_view())));
+                cachedOutputs.push_back(OutputToJson(
+                    emit(blob.id, blob.bytes,
+                         blob.id == imported.materialId ? std::string_view(logical) : std::string_view())));
             Json dependencyNames = Json::array();
             for (const auto &dependency : imported.dependencies)
                 dependencyNames.push_back(dependency.generic_string());
             Json contents = Json::array();
             for (const auto &entry : imported.contents)
-                contents.push_back({{"kind", entry.kind},
-                                    {"name", entry.name},
-                                    {"id", entry.id.value},
-                                    {"index", entry.index}});
+                contents.push_back(
+                    {{"kind", entry.kind}, {"name", entry.name}, {"id", entry.id.value}, {"index", entry.index}});
             Json sizes = Json::array();
             for (const auto &size : imported.textureSizes)
                 sizes.push_back({{"role", size.role}, {"width", size.width}, {"height", size.height}});
@@ -1038,7 +1065,7 @@ namespace
             for (const auto &blob : imported.blobs)
             {
                 Output output = emit(blob.id, blob.bytes,
-                    blob.id == imported.modelId ? std::string_view(logical) : std::string_view());
+                                     blob.id == imported.modelId ? std::string_view(logical) : std::string_view());
                 cachedOutputs.push_back(OutputToJson(output));
                 if (blob.id == imported.modelId)
                     modelOutput = output;
@@ -1052,10 +1079,8 @@ namespace
             // and their ids without loading any cooked blob.
             Json contents = Json::array();
             for (const auto &entry : imported.contents)
-                contents.push_back({{"kind", entry.kind},
-                                    {"name", entry.name},
-                                    {"id", entry.id.value},
-                                    {"index", entry.index}});
+                contents.push_back(
+                    {{"kind", entry.kind}, {"name", entry.name}, {"id", entry.id.value}, {"index", entry.index}});
             record = {{"modelId", imported.modelId.value},
                       {"fingerprint", fingerprint},
                       {"dependencies", dependencyNames},
@@ -1079,17 +1104,18 @@ namespace
         {
             // A record whose source is gone keeps its outputs, unless this cook emitted them all again.
             // Then the source moved, and its new record replaces the old one.
-            auto keepMissing = [&](Json &records, const std::unordered_set<std::string> &seen)
-            {
+            auto keepMissing = [&](Json &records, const std::unordered_set<std::string> &seen) {
                 std::vector<std::string> moved;
                 for (auto &[logical, record] : records.items())
                 {
                     if (seen.contains(logical))
                         continue;
                     const Json cachedOutputs = record.value("outputs", Json::array());
-                    const bool emittedAgain = !cachedOutputs.empty() &&
-                        std::all_of(cachedOutputs.begin(), cachedOutputs.end(), [&](const Json &cached)
-                            { return outputs.contains(cached.at("id").get<uint64_t>()); });
+                    const bool emittedAgain =
+                        !cachedOutputs.empty() &&
+                        std::all_of(cachedOutputs.begin(), cachedOutputs.end(), [&](const Json &cached) {
+                            return outputs.contains(cached.at("id").get<uint64_t>());
+                        });
                     if (emittedAgain)
                     {
                         moved.push_back(logical);
@@ -1122,12 +1148,11 @@ namespace
                 }
             // The recook below re-emits every live particle source, so entries for deleted
             // or renamed sources must not survive from the previous manifest.
-            std::erase_if(outputs, [](const auto &entry)
-                {
-                    return entry.second.tag == mir::kParticleEffectTypeTag ||
-                           entry.second.tag == mir::kParticleEmitterTypeTag;
-                });
-            //a gltf's images are cooked by its import, under its own ids
+            std::erase_if(outputs, [](const auto &entry) {
+                return entry.second.tag == mir::kParticleEffectTypeTag ||
+                       entry.second.tag == mir::kParticleEmitterTypeTag;
+            });
+            // a gltf's images are cooked by its import, under its own ids
             std::unordered_set<std::string> modelImages;
             for (const auto &[logical, record] : cache["models"].items())
                 for (const auto &dependency : record.value("dependencies", Json::array()))
@@ -1145,10 +1170,10 @@ namespace
                     const std::string ext = LowerExtension(path), filename = path.filename().string();
                     // a bank's Wwise metadata is read loose, beside the bank
                     const bool bankMetadata =
-                        ext == ".json" && std::filesystem::exists(std::filesystem::path(path).replace_extension(".bnk"));
-                    if (ext == ".gltf" || ext == ".glb" || IsMaterialPath(path) || ext == ".slang" ||
-                        ext == ".bnk" || ext == ".wem" ||
-                        bankMetadata || mir::IsAssetToolingFile(path))
+                        ext == ".json" &&
+                        std::filesystem::exists(std::filesystem::path(path).replace_extension(".bnk"));
+                    if (ext == ".gltf" || ext == ".glb" || IsMaterialPath(path) || ext == ".slang" || ext == ".bnk" ||
+                        ext == ".wem" || bankMetadata || mir::IsAssetToolingFile(path))
                         continue;
                     // TerrainTool owns recipes and releases.
                     const std::string logical = LogicalPath(root, path);
@@ -1182,8 +1207,8 @@ namespace
                     auto bytes = mir::ReadBytes(path);
                     if (!bytes)
                         throw std::runtime_error("cannot read " + path.string());
-                    //any other image is a texture of its own, decoded here so
-                    //runtime never parses an image format
+                    // any other image is a texture of its own, decoded here so
+                    // runtime never parses an image format
                     const std::string canonicalPath = std::filesystem::weakly_canonical(path).generic_string();
                     if (mir::cook::IsImagePath(path) && materialSourceImages.contains(canonicalPath))
                         continue;
@@ -1217,12 +1242,11 @@ namespace
         for (const auto &[id, output] : outputs)
             for (const mir::AssetId dep : output.deps)
                 referenced.insert(dep.value);
-        std::erase_if(outputs, [&](const auto &entry)
-            {
-                const auto &output = entry.second;
-                return (output.tag == mir::kParticleScriptTypeTag || output.tag == mir::kParticleScriptLayoutTypeTag) &&
-                    !referenced.contains(output.id.value);
-            });
+        std::erase_if(outputs, [&](const auto &entry) {
+            const auto &output = entry.second;
+            return (output.tag == mir::kParticleScriptTypeTag || output.tag == mir::kParticleScriptLayoutTypeTag) &&
+                   !referenced.contains(output.id.value);
+        });
         for (const auto &[id, output] : outputs)
             for (const mir::AssetId dep : output.deps)
                 if (!outputs.contains(dep.value))

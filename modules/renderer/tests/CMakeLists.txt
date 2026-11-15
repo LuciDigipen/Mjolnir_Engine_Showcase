@@ -10,6 +10,7 @@ engine_add_module_tests(renderer
     FilmEffect.tests.cpp
     GpuRecords.tests.cpp
     Material.tests.cpp
+    PbrMaterialMath.tests.cpp
     MaterialRecordTable.tests.cpp
     MaterialReflection.tests.cpp
     MaterialResolution.tests.cpp
