@@ -10,6 +10,7 @@
 #include <renderer/SurfaceMaterialHost.h>
 #include <renderer/SurfaceMaterialTexture.h>
 
+#include <assets/AssetManifest.h>
 #include <assets/AsyncAssetService.h>
 #include <assets/ModelAsset.h>
 #include <core/log/Log.h>
@@ -886,6 +887,11 @@ namespace mir
             }
 
             load.layered = *layered;
+            // Cooked materials are keyed by their .meta guid, so the path hash is only a fallback.
+            if (const std::shared_ptr<const AssetManifest> manifest = mAssets->CatalogSnapshot())
+                for (TerrainMaterialLayerAsset &layer : load.layered.layers)
+                    if (const AssetManifestEntry *found = manifest->FindByPath(layer.material))
+                        layer.asset = found->id;
             load.layerEntries.clear();
             load.layerLoads.clear();
             load.layerEntries.reserve(load.layered.layers.size());
