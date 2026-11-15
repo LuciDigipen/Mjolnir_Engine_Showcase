@@ -1,4 +1,4 @@
-option(MIR_OPTIMIZE_ASSET_COOKER ON)
+option(MIR_OPTIMIZE_ASSET_COOKER "Optimize offline asset cooking" ON)
 if(MSVC AND MIR_OPTIMIZE_ASSET_COOKER)
     # Offline tools keep the Debug runtime and symbols, /RTC1 cannot combine with /O2.
     separate_arguments(asset_cooker_original_debug_flags WINDOWS_COMMAND "${CMAKE_CXX_FLAGS_DEBUG}")
