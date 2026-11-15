@@ -44,7 +44,8 @@
             ],
             "generator": "Ninja",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_TESTING": "OFF"
             },
             "condition": {
                 "type": "equals",
