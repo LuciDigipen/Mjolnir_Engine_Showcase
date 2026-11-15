@@ -244,7 +244,7 @@ namespace mir
     TerrainBrushCommand::TerrainBrushCommand(TerrainLayerDocument &document, uint32_t sequence,
         TerrainEditTileStates before, TerrainEditTileStates after, std::string name)
         : TerrainLayerCommand(document), mSequence(sequence), mBefore(std::move(before)), mAfter(std::move(after)),
-          mName(std::move(name))
+          mName(std::move(name)), mMaterialGeneration(document.MaterialGeneration())
     {
     }
 
@@ -279,6 +279,9 @@ namespace mir
 
     bool TerrainBrushCommand::Apply(const TerrainEditTileStates &states)
     {
+        if (mDocument.MaterialGeneration() != mMaterialGeneration)
+            return false;
+
         TerrainEditLayer *layer = mDocument.MutableLayer(mSequence);
         if (layer == nullptr)
             return false;

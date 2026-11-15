@@ -39,6 +39,10 @@ namespace mir
         uint64_t ChangeCount() const { return mChangeCount; }
         void MarkChanged() { ++mChangeCount; }
 
+        // Increases when Apply renames or deletes material layers, so brush steps from before refuse to run.
+        uint64_t MaterialGeneration() const { return mMaterialGeneration; }
+        void BumpMaterialGeneration() { ++mMaterialGeneration; }
+
         const std::vector<TerrainEditLayer> &Layers() const { return mLayers; }
 
         // Indices into Layers(), ordered by priority then sequence so the highest is last. Disabled layers
@@ -73,5 +77,6 @@ namespace mir
         std::string mSaveError;
         uint32_t mNextSequence = 1;
         uint64_t mChangeCount = 0;
+        uint64_t mMaterialGeneration = 0;
     };
 } // namespace mir

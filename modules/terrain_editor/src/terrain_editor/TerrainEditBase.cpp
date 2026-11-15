@@ -278,7 +278,8 @@ namespace mir
 
     TerrainBrushAvailability EvaluateTerrainPaintAvailability(bool active, bool editing, bool sceneDocument,
                                                               bool documentEditable, bool hasLayer, bool weightsReady,
-                                                              std::string_view weightsError, bool hasMaterialLayer)
+                                                              std::string_view weightsError, bool hasMaterialLayer,
+                                                              bool recipeHasMaterials)
     {
         TerrainBrushAvailability availability;
         if (!active)
@@ -305,6 +306,12 @@ namespace mir
         }
         if (!weightsReady)
         {
+            if (!recipeHasMaterials)
+            {
+                availability.message =
+                    "This terrain has no material layers yet; add them in the Material layers section.";
+                return availability;
+            }
             constexpr std::string_view kBuildHint =
                 "Build the game to create the material weights cache.";
             availability.message = weightsError.empty() ? std::string(kBuildHint)

@@ -161,5 +161,7 @@ namespace mir
         TerrainEditTileStates mBefore;
         TerrainEditTileStates mAfter;
         std::string mName;
+        // A stroke recorded before Apply renamed or deleted material layers keeps old channel names.
+        uint64_t mMaterialGeneration = 0;
     };
 } // namespace mir

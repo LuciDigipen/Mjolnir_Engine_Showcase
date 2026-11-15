@@ -109,5 +109,6 @@ namespace mir
 
     TerrainBrushAvailability EvaluateTerrainPaintAvailability(bool active, bool editing, bool sceneDocument,
                                                               bool documentEditable, bool hasLayer, bool weightsReady,
-                                                              std::string_view weightsError, bool hasMaterialLayer);
+                                                              std::string_view weightsError, bool hasMaterialLayer,
+                                                              bool recipeHasMaterials = true);
 } // namespace mir

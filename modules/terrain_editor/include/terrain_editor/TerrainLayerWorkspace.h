@@ -43,6 +43,7 @@ namespace mir
         void Clear();
 
         std::span<const TerrainEditAsset> Assets() const { return mAssets; }
+        const std::filesystem::path &AssetsDir() const { return mAssetsDir; }
         std::size_t SelectedAsset() const { return mSelectedAsset; }
         void SelectAsset(std::size_t index);
 

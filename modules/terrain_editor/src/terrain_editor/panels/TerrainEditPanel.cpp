@@ -15,6 +15,7 @@
 #include <terrain_editor/TerrainLayerCommands.h>
 #include <terrain_editor/TerrainLayerDocument.h>
 #include <terrain_editor/TerrainLayerWorkspace.h>
+#include <terrain_editor/TerrainMaterialLayersDraft.h>
 
 #include <imgui.h>
 
@@ -76,13 +77,16 @@ namespace mir
         }
     } // namespace
 
-    TerrainBakeActions TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
-        const TerrainBrushAvailability &brush, const TerrainBakeView &bake, std::span<const std::string> materialLayers,
+    TerrainPanelActions TerrainEditPanel::Draw(TerrainEditMode &mode, TerrainLayerWorkspace &layers, History &history,
+        const TerrainBrushAvailability &brush, const TerrainBakeView &bake,
+        const TerrainMaterialLayersView &materialLayersView, std::span<const std::string> materialLayerNames,
         std::string &chosenMaterial)
     {
-        TerrainBakeActions actions;
+        TerrainPanelActions actions;
         if (widgets::CategoryHeader("Edit Layers"))
             DrawLayers(layers, history);
+
+        DrawMaterialLayers(materialLayersView, actions);
 
         const bool brushOpen = widgets::CategoryHeader("Brush");
         ImGui::SetItemTooltip("Left-drag in the viewport to sculpt the selected edit layer (hold Ctrl to lower).\n"
@@ -105,7 +109,7 @@ namespace mir
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 if (ImGui::BeginCombo("Material##paint", preview))
                 {
-                    for (const std::string &layer : materialLayers)
+                    for (const std::string &layer : materialLayerNames)
                     {
                         if (ImGui::Selectable(layer.c_str(), layer == chosenMaterial))
                             chosenMaterial = layer;
@@ -149,13 +153,13 @@ namespace mir
         {
             ImGui::BeginDisabled(!bake.mCanStart);
             if (ImGui::Button("Bake##start"))
-                actions.mStart = true;
+                actions.mStartBake = true;
             ImGui::EndDisabled();
 
             ImGui::SameLine();
             ImGui::BeginDisabled(!bake.mCanCancel);
             if (ImGui::Button("Cancel"))
-                actions.mCancel = true;
+                actions.mCancelBake = true;
             ImGui::EndDisabled();
 
             if (bake.mBaking)
@@ -178,6 +182,282 @@ namespace mir
         }
 
         return actions;
+    }
+
+    void TerrainEditPanel::DrawMaterialLayers(const TerrainMaterialLayersView &view, TerrainPanelActions &actions)
+    {
+        const bool open = widgets::CategoryHeader("Material layers");
+        ImGui::SetItemTooltip("The terrain's surface layers and the height, slope and noise rules that blend them.\n"
+                              "Apply writes the recipe and layered material, migrates painted weights and bakes.");
+        if (open && !mMaterialSectionOpen)
+            actions.mRescanMaterials = true;
+        mMaterialSectionOpen = open;
+        if (!open)
+            return;
+
+        if (view.mDraft != mMaterialDraftSeen ||
+            (view.mDraft != nullptr && view.mDraft->RecipePath().generic_string() != mMaterialRecipeSeen))
+        {
+            mMaterialDraftSeen = view.mDraft;
+            if (view.mDraft != nullptr)
+                mMaterialRecipeSeen = view.mDraft->RecipePath().generic_string();
+            mMaterialRenameRow = -1;
+            mMaterialRenameError.clear();
+            mMaterialDeleteRow = -1;
+        }
+
+        if (!view.mLoadError.empty())
+        {
+            ImGui::PushTextWrapPos(0.0f);
+            TextError(view.mLoadError);
+            ImGui::PopTextWrapPos();
+            return;
+        }
+        if (view.mDraft == nullptr)
+        {
+            ImGui::TextDisabled("No terrain asset is selected.");
+            return;
+        }
+
+        TerrainMaterialLayersDraft &draft = *view.mDraft;
+        ImGui::PushID("material-layers");
+        if (ImGui::BeginTable("##table", 3,
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp))
+        {
+            ImGui::TableSetupColumn("Layer");
+            ImGui::TableSetupColumn("Surface Material");
+            ImGui::TableSetupColumn("Order", ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableHeadersRow();
+
+            for (std::size_t index = 0; index < draft.Layers().size(); ++index)
+            {
+                TerrainMaterialLayerRow &row = draft.Row(index);
+                ImGui::PushID(static_cast<int>(index));
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                if (mMaterialRenameRow == static_cast<int>(index))
+                {
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    const bool submitted = ImGui::InputText("##name", mMaterialRenameBuffer,
+                        sizeof(mMaterialRenameBuffer),
+                        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+                    {
+                        mMaterialRenameRow = -1;
+                        mMaterialRenameError.clear();
+                    }
+                    else if (submitted)
+                    {
+                        const std::string name = mMaterialRenameBuffer;
+                        const bool used = std::ranges::any_of(draft.Layers(),
+                            [&](const TerrainMaterialLayerRow &other) { return &other != &row && other.name == name; });
+                        if (!IsValidTerrainMaterialName(name))
+                            mMaterialRenameError =
+                                "Layer names use lowercase letters, digits or underscores, and cannot be empty.";
+                        else if (used)
+                            mMaterialRenameError = "Another layer already uses that name.";
+                        else
+                        {
+                            row.name = name;
+                            mMaterialRenameRow = -1;
+                            mMaterialRenameError.clear();
+                        }
+                    }
+                }
+                else if (ImGui::Selectable(row.name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) &&
+                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                {
+                    std::snprintf(mMaterialRenameBuffer, sizeof(mMaterialRenameBuffer), "%s", row.name.c_str());
+                    mMaterialRenameRow = static_cast<int>(index);
+                    mMaterialRenameError.clear();
+                }
+                ImGui::SetItemTooltip("Double-click to rename; painted weights follow the layer.");
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                const char *preview = row.material.empty() ? "Choose a material" : row.material.c_str();
+                if (ImGui::BeginCombo("##material", preview))
+                {
+                    for (const std::string &material : view.mMaterials)
+                    {
+                        if (ImGui::Selectable(material.c_str(), material == row.material))
+                            row.material = material;
+                    }
+                    ImGui::EndCombo();
+                }
+                const bool missing =
+                    std::find(view.mMaterials.begin(), view.mMaterials.end(), row.material) == view.mMaterials.end();
+                if (!row.material.empty() && missing)
+                {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(not found)");
+                }
+
+                ImGui::TableSetColumnIndex(2);
+                ImGui::BeginDisabled(index == 0);
+                if (ImGui::Button("Up##row"))
+                    draft.MoveLayer(index, -1);
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::BeginDisabled(index + 1 >= draft.Layers().size());
+                if (ImGui::Button("Down##row"))
+                    draft.MoveLayer(index, 1);
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Delete##row"))
+                {
+                    // Painted channels still carry the name the row loaded with.
+                    const std::string &channel = row.originalName.empty() ? row.name : row.originalName;
+                    const bool painted = std::find(view.mPaintedLayers.begin(), view.mPaintedLayers.end(), channel) !=
+                        view.mPaintedLayers.end();
+                    if (painted)
+                        mMaterialDeleteRow = static_cast<int>(index);
+                    else
+                        draft.RemoveLayer(index);
+                }
+
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+
+        if (mMaterialDeleteRow >= 0)
+        {
+            if (mMaterialDeleteRow >= static_cast<int>(draft.Layers().size()))
+                mMaterialDeleteRow = -1;
+            else
+            {
+                const std::string name = draft.Layers()[static_cast<std::size_t>(mMaterialDeleteRow)].name;
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::Text("Delete layer '%s'? Its painted weights are removed too.", name.c_str());
+                ImGui::PopTextWrapPos();
+                if (ImGui::Button("Delete##confirm"))
+                {
+                    draft.RemoveLayer(static_cast<std::size_t>(mMaterialDeleteRow));
+                    mMaterialDeleteRow = -1;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel##confirm"))
+                    mMaterialDeleteRow = -1;
+            }
+        }
+
+        ImGui::BeginDisabled(!draft.CanAddLayer());
+        if (ImGui::Button("Add Layer##material"))
+            draft.AddLayer();
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Adds a layer that blends over the ones before it.");
+
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh Materials"))
+            actions.mRescanMaterials = true;
+        ImGui::SetItemTooltip("Rescans the assets root for surface materials that declare the terrain frontend.");
+
+        const auto dragMeters = [](const char *label, double &value, double low, double high) {
+            float edited = static_cast<float>(value);
+            if (ImGui::DragFloat(label, &edited, 0.1f, static_cast<float>(low), static_cast<float>(high), "%.2f m"))
+                value = static_cast<double>(edited);
+        };
+        const auto dragDegrees = [](const char *label, double &value, double low, double high) {
+            float edited = static_cast<float>(value);
+            if (ImGui::DragFloat(label, &edited, 0.1f, static_cast<float>(low), static_cast<float>(high), "%.1f deg"))
+                value = static_cast<double>(edited);
+        };
+
+        for (std::size_t index = 1; index < draft.Layers().size(); ++index)
+        {
+            TerrainMaterialRules &rules = draft.MutableRules(index);
+            ImGui::PushID(static_cast<int>(index));
+            if (ImGui::TreeNodeEx("##rules", ImGuiTreeNodeFlags_None, "Rules: %s", draft.Layers()[index].name.c_str()))
+            {
+                bool height = rules.height.has_value();
+                if (ImGui::Checkbox("Height", &height))
+                {
+                    rules.height = height ? std::optional<TerrainMaterialHeightRule>(TerrainMaterialHeightRule{})
+                                          : std::nullopt;
+                }
+                if (rules.height)
+                {
+                    TerrainMaterialHeightRule &rule = *rules.height;
+                    ImGui::SetNextItemWidth(120.0f);
+                    dragMeters("Min##height", rule.min, -kMaxTerrainHeightMagnitude, kMaxTerrainHeightMagnitude);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    dragMeters("Max##height", rule.max, -kMaxTerrainHeightMagnitude, kMaxTerrainHeightMagnitude);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    dragMeters("Blend##height", rule.blend, 0.0, kMaxTerrainHeightMagnitude);
+                }
+
+                bool slope = rules.slope.has_value();
+                if (ImGui::Checkbox("Slope", &slope))
+                    rules.slope = slope ? std::optional<TerrainMaterialSlopeRule>(TerrainMaterialSlopeRule{})
+                                        : std::nullopt;
+                if (rules.slope)
+                {
+                    TerrainMaterialSlopeRule &rule = *rules.slope;
+                    ImGui::SetNextItemWidth(120.0f);
+                    dragDegrees("Min##slope", rule.min, 0.0, kMaxTerrainMaterialSlopeDegrees);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    dragDegrees("Max##slope", rule.max, 0.0, kMaxTerrainMaterialSlopeDegrees);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    dragDegrees("Blend##slope", rule.blend, 0.0, kMaxTerrainMaterialSlopeDegrees);
+                }
+
+                bool noise = rules.noise.has_value();
+                if (ImGui::Checkbox("Noise", &noise))
+                    rules.noise = noise ? std::optional<TerrainMaterialNoiseRule>(TerrainMaterialNoiseRule{})
+                                        : std::nullopt;
+                if (rules.noise)
+                {
+                    TerrainMaterialNoiseRule &rule = *rules.noise;
+                    ImGui::SetNextItemWidth(120.0f);
+                    dragMeters("Wavelength##noise", rule.wavelength, kMinTerrainNoiseWavelength,
+                        kMaxTerrainNoiseWavelength);
+                    ImGui::SameLine();
+                    int octaves = rule.octaves;
+                    ImGui::SetNextItemWidth(120.0f);
+                    if (ImGui::SliderInt("Octaves##noise", &octaves, 1, kMaxTerrainMaterialNoiseOctaves))
+                        rule.octaves = octaves;
+                    ImGui::SameLine();
+                    float strength = static_cast<float>(rule.strength);
+                    ImGui::SetNextItemWidth(120.0f);
+                    if (ImGui::SliderFloat("Strength##noise", &strength, 0.0f, 1.0f))
+                        rule.strength = static_cast<double>(strength);
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+
+        TextError(mMaterialRenameError);
+
+        ImGui::Separator();
+        ImGui::BeginDisabled(!view.mCanApply);
+        if (ImGui::Button("Apply##material"))
+            actions.mApplyMaterials = true;
+        ImGui::SetItemTooltip("Writes the recipe and layered material, migrates painted weights and bakes.");
+        ImGui::SameLine();
+        if (ImGui::Button("Revert##material"))
+            actions.mRevertMaterials = true;
+        ImGui::SetItemTooltip("Reloads the draft from disk.");
+        ImGui::EndDisabled();
+
+        if (!view.mDisabledReason.empty())
+        {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", view.mDisabledReason.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        if (view.mFailed)
+            TextError(view.mStatus);
+        else if (!view.mStatus.empty())
+            ImGui::TextUnformatted(view.mStatus.c_str());
+
+        ImGui::PopID();
     }
 
     void TerrainEditPanel::DrawLayers(TerrainLayerWorkspace &layers, History &history)
