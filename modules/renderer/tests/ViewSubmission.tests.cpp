@@ -583,3 +583,23 @@ TEST_CASE("Debug lines narrow against the viewport camera and stay pairs", "[ren
     mir::BuildViewDebugLines(world, At(camera), view);
     CHECK(view.size() == 2);
 }
+
+TEST_CASE("View submission preserves settled deformation and camera-cut history", "[renderer][pose-cache]")
+{
+    const std::vector<glm::vec4> current(3, glm::vec4(1));
+    const std::vector<glm::vec4> previous(3, glm::vec4(2));
+    auto item = ItemAt({0, 0, -2});
+    item.deformation = current;
+    item.previousDeformation = previous;
+    item.settledDeformation = true;
+    std::vector<DrawItem> view;
+    mir::BuildViewDrawItems(std::span(&item, 1), At({0, 0, 0}), glm::mat4(1), view);
+    REQUIRE(view.size() == 1);
+    CHECK(view[0].settledDeformation);
+    CHECK(view[0].deformation.data() == current.data());
+    CHECK(view[0].previousDeformation.data() == previous.data());
+    mir::BuildViewDrawItems(std::span(&item, 1), At({0, 0, 0}), glm::mat4(1), view, true);
+    REQUIRE(view.size() == 1);
+    CHECK(view[0].settledDeformation);
+    CHECK(view[0].previousDeformation.data() == current.data());
+}

@@ -487,6 +487,13 @@ TEST_CASE("Model draws retain the preceding morph sample and discard history aft
     CHECK(draws.items[0].previousDeformation.empty());
     CHECK(weight(draws.items[0].deformation) == 0.0f);
 
+    const auto *settledSample = draws.items[0].deformation.data();
+    CHECK(draws.items[0].settledDeformation);
+    frame();
+    REQUIRE(draws.items.size() == 1);
+    CHECK(draws.items[0].deformation.data() == settledSample);
+    CHECK(draws.items[0].previousDeformation.data() == settledSample);
+
     overrides.instances[PackEntity(entity)]["root"] = {1.0f};
     frame();
     REQUIRE(draws.items.size() == 1);

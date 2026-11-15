@@ -9,6 +9,7 @@
 #pragma once
 #include <animation/ModelAnimation.h>
 #include <animation/ModelLibrary.h>
+#include <animation/ModelEvaluation.h>
 #include <core/ecs/System.h>
 #include <renderer/VulkanRenderer.h>
 #include <unordered_set>
@@ -63,7 +64,7 @@ namespace mir
         struct PrimitiveHistory
         {
             MeshHandle mesh;
-            std::vector<glm::vec4> deformation;
+            std::shared_ptr<const std::vector<glm::vec4>> deformation;
         };
         struct NodeHistory
         {
@@ -75,5 +76,6 @@ namespace mir
         using NodePoses = std::unordered_map<uint32_t, NodeHistory>;
         std::unordered_map<uint64_t, NodePoses> mPreviousPoses;
         std::unordered_map<uint64_t, NodePoses> mCurrentPoses;
+        std::unordered_map<uint64_t, ModelPoseCache> mPoseCaches;
     };
 } // namespace mir

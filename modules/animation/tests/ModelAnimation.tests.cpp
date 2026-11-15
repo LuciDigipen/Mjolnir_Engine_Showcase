@@ -8,11 +8,74 @@
  */
 #include <animation/ModelAnimation.h>
 #include <animation/ModelPlayer.h>
+#include <animation/ModelEvaluation.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
 #include <unordered_map>
 using namespace mir;
+TEST_CASE("Settled model poses retain two samples independently of entity placement", "[animation][pose-cache]")
+{
+    auto resources = std::make_shared<ModelResources>();
+    auto model = std::make_shared<ModelAsset>();
+    model->nodes.resize(1);
+    model->nodes[0].key = "gear";
+    model->nodes[0].translation = {2, 0, 0};
+    model->nodes[0].mesh = MakeAssetId("gear-mesh");
+    model->nodes[0].weights = {0};
+    model->scenes.resize(1);
+    model->scenes[0].roots = {0};
+    model->defaultScene = 0;
+    auto mesh = std::make_shared<MeshRecord>();
+    mesh->asset.primitives.resize(1);
+    auto &primitive = mesh->asset.primitives[0];
+    primitive.vertices.resize(1);
+    primitive.morphTargets.resize(1);
+    primitive.morphTargets[0].positions = {{0, 1, 0}};
+    primitive.morphTargets[0].normals = {{0, 0, 0}};
+    primitive.morphTargets[0].tangents = {{0, 0, 0}};
+    resources->model = model;
+    resources->meshes[model->nodes[0].mesh.value] = mesh;
+    ModelPoseCache cache;
+    ModelEvaluationInput input;
+    input.loop = false;
+    auto down = cache.Evaluate(input, resources, true);
+    REQUIRE(down->nodes.size() == 1);
+    CHECK(down->nodes[0].world.position.Meters().x == 2);
+    input.world.position = *WorldPosition::FromDoubleMeters({10000, 0, 0});
+    input.world.linear[0][0] = -2;
+    CHECK(cache.Evaluate(input, resources, true) == down);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    auto up = cache.Evaluate(input, resources, true);
+    CHECK(up != down);
+    CHECK(up->nodes[0].deformations != down->nodes[0].deformations);
+    // Animated evaluations must not evict either endpoint.
+    input.time = .5f;
+    CHECK(cache.Evaluate(input, resources, false) != up);
+    input.time = 0;
+    input.overrides.clear();
+    CHECK(cache.Evaluate(input, resources, true) == down);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    CHECK(cache.Evaluate(input, resources, true) == up);
+    input.time = .25f;
+    input.overrides["gear"] = {.25f};
+    auto partial = cache.Evaluate(input, resources, true);
+    CHECK(partial != up);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    CHECK(cache.Evaluate(input, resources, true) == up);
+    input.time = 0;
+    input.overrides.clear();
+    CHECK(cache.Evaluate(input, resources, true) != down);
+    input.time = 1;
+    input.overrides["gear"] = {1};
+    // A new resource generation cannot hit even with identical sample inputs.
+    auto reloaded = std::make_shared<ModelResources>(*resources);
+    CHECK(cache.Evaluate(input, reloaded, true) != up);
+}
+
 TEST_CASE("Mirrored skinning preserves the normal-map tangent handedness", "[animation][pbr]")
 {
     MeshPrimitive mesh;

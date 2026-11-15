@@ -15,6 +15,7 @@
 #include <vk_mem_alloc.h>
 
 #include <cmath>
+#include <algorithm>
 
 namespace mir::vk
 {
@@ -71,35 +72,95 @@ namespace mir::vk
         return result == VK_SUCCESS;
     }
 
-    void RayTracer::ResetDeformations(uint32_t frame)
+    void RayTracer::DestroyDeformedMesh(DeformedMesh &mesh)
+    {
+        DestroyBLAS(mesh.blas);
+        if (mesh.scratch != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), mesh.scratch, mesh.scratchAllocation);
+        if (mesh.vertices != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), mesh.vertices, mesh.vertexAllocation);
+        if (mesh.deformation != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), mesh.deformation, mesh.deformationAllocation);
+        if (mesh.previousVertices != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), mesh.previousVertices, mesh.previousVertexAllocation);
+        if (mesh.previousDeformation != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), mesh.previousDeformation, mesh.previousDeformationAllocation);
+        mesh = {};
+    }
+
+    void RayTracer::ResetDeformations(uint32_t frame, const ResourceStore *resources)
     {
         for (auto &mesh : mDeformedMeshes[frame])
-        {
-            DestroyBLAS(mesh.blas);
-            if (mesh.scratch != VK_NULL_HANDLE)
-                vmaDestroyBuffer(mDevice->Allocator(), mesh.scratch, mesh.scratchAllocation);
-            if (mesh.vertices != VK_NULL_HANDLE)
-                vmaDestroyBuffer(mDevice->Allocator(), mesh.vertices, mesh.vertexAllocation);
-            if (mesh.deformation != VK_NULL_HANDLE)
-                vmaDestroyBuffer(mDevice->Allocator(), mesh.deformation, mesh.deformationAllocation);
-            if (mesh.previousVertices != VK_NULL_HANDLE)
-                vmaDestroyBuffer(mDevice->Allocator(), mesh.previousVertices, mesh.previousVertexAllocation);
-            if (mesh.previousDeformation != VK_NULL_HANDLE)
-                vmaDestroyBuffer(mDevice->Allocator(), mesh.previousDeformation, mesh.previousDeformationAllocation);
-        }
+            DestroyDeformedMesh(mesh);
         mDeformedMeshes[frame].clear();
+        ++mDeformationEpoch[frame];
+        // Keep both endpoints while the source exists, even through long flights.
+        // A released/reloaded source generation can be retired after this wait.
+        std::erase_if(mSettledMeshes[frame], [&](auto &entry) {
+            if (!resources || resources->FindMesh(entry.source))
+                return false;
+            DestroyDeformedMesh(entry.geometry);
+            return true;
+        });
     }
 
     void RayTracer::ShutdownDeformation()
     {
         for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+        {
             ResetDeformations(frame);
+            for (auto &entry : mSettledMeshes[frame])
+                DestroyDeformedMesh(entry.geometry);
+            mSettledMeshes[frame].clear();
+        }
         if (mDeformationPipeline != VK_NULL_HANDLE)
             vkDestroyPipeline(mDevice->Handle(), mDeformationPipeline, nullptr);
         if (mDeformationLayout != VK_NULL_HANDLE)
             vkDestroyPipelineLayout(mDevice->Handle(), mDeformationLayout, nullptr);
         mDeformationPipeline = VK_NULL_HANDLE;
         mDeformationLayout = VK_NULL_HANDLE;
+    }
+
+    const RayTracer::DeformedMesh *RayTracer::RecordSettledMesh(VkCommandBuffer cmd, uint32_t frame,
+        MeshHandle source, const GpuMesh &mesh, std::span<const glm::vec4> deformation)
+    {
+        auto &entries = mSettledMeshes[frame];
+        const auto epoch = mDeformationEpoch[frame];
+        size_t count = 0;
+        auto oldest = entries.end();
+        for (auto it = entries.begin(); it != entries.end(); ++it)
+        {
+            if (it->source != source) continue;
+            ++count;
+            if (std::ranges::equal(it->sample, deformation))
+            {
+                it->lastUsed = epoch;
+                ++mDeformationStats.settledHits;
+                return &it->geometry;
+            }
+            if (it->lastUsed != epoch && (oldest == entries.end() || it->lastUsed < oldest->lastUsed))
+                oldest = it;
+        }
+        // Bound memory, and never evict a pose already referenced by this
+        // slot's command buffer (including another viewport or instance).
+        if ((count >= 2 && oldest == entries.end()) || (count < 2 && entries.size() >= 128))
+            return RecordDeformedMesh(cmd, frame, mesh, deformation, {});
+
+        const auto *built = RecordDeformedMesh(cmd, frame, mesh, deformation, {});
+        if (!built) return nullptr;
+        ++mDeformationStats.settledBuilds;
+        SettledMesh entry{source, {deformation.begin(), deformation.end()}, *built, epoch};
+        // Transfer ownership out of the transient frame list.
+        mDeformedMeshes[frame].back() = {};
+        mDeformedMeshes[frame].pop_back();
+        if (count >= 2)
+        {
+            DestroyDeformedMesh(oldest->geometry);
+            *oldest = std::move(entry);
+            return &oldest->geometry;
+        }
+        entries.push_back(std::move(entry));
+        return &entries.back().geometry;
     }
 
     const RayTracer::DeformedMesh *RayTracer::RecordDeformedMesh(VkCommandBuffer cmd, uint32_t frame,
@@ -169,6 +230,7 @@ namespace mir::vk
             MIR_LOG_ERROR("RT deformation: instance BLAS build failed");
             return nullptr;
         }
+        ++mDeformationStats.blasBuilds;
         const VkMemoryBarrier2 built{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
             .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,

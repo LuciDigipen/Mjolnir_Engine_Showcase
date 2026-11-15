@@ -371,6 +371,38 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 
 ## Rules
 
+### Settled model deformation
+
+Paused models and non-looping animations resting at their playback endpoint use
+settled deformation. `ModelPoseCache` keeps two model-space CPU samples per
+entity, including exact morph overrides. Entity movement only recomposes the
+world transform; it does not resample the skeleton or repack skin/morph data.
+Animated samples do not displace the two retained poses. Resource-generation
+changes invalidate the CPU cache, and entity removal releases its samples.
+
+The ray tracer retains two settled vertex-buffer/BLAS pairs per source mesh
+generation in each frame slot (up to 128 pairs per slot). For the SF-50 these
+are populated lazily for extended and retracted landing gear. Static aircraft
+primitives continue using their ordinary shared BLASes. Cached poses are shared
+between instances and views within the slot; per-slot ownership makes eviction
+safe after that slot's timeline wait. Live source meshes retain both poses even
+through long animations. Released/reloaded mesh generations are collected at
+the next slot reuse, and shader reload invalidates settled GPU geometry.
+
+`settledDeformation` travels with world/view draw items. An exact deformation
+comparison prevents false hits after seeks or morph changes. A frame whose
+previous deformation differs uses the dynamic path to preserve motion vectors;
+subsequent unchanged frames reuse the settled geometry. Animated samples and
+cache-capacity overflow use the existing transient deformation/BLAS-build path.
+If both retained poses were already submitted in the current slot, a third
+pose is transient rather than evicting geometry still referenced by commands.
+
+`VulkanRenderer::RayTracingDeformations()` reports cumulative deformation BLAS
+builds, settled builds, and cache hits. `ModelWorldsGpuCheck` checks warm-up,
+shared settled instances, movement, endpoint reuse, animated transitions, and
+mesh replacement on ray-tracing hardware. Dynamic BLAS refitting remains a
+separate optimization; this cache does not change that build path.
+
 **Surface materials.** `SurfaceCommon.slang` defines `SurfaceInput`,
 `SurfaceOutput`, `IMaterial`, `MaterialContext` and `MeshFrontend`;
 `SurfaceForward.slang` and `SurfaceRt.slang` are the fixed pass entries, and a

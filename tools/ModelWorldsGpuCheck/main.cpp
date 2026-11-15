@@ -23,6 +23,8 @@
 #include <jobs/JobExecutor.h>
 #include <renderer/MeshResolveSystem.h>
 #include <renderer/VulkanRenderer.h>
+#include <renderer/CameraMath.h>
+#include <renderer/Shapes.h>
 #include <window/Window.h>
 
 #include <algorithm>
@@ -39,6 +41,91 @@ namespace
     {
         if (!condition)
             throw std::runtime_error(message);
+    }
+
+    void CheckSettledGeometry(mir::VulkanRenderer &renderer, mir::Window &window)
+    {
+        if (!renderer.RayTracingSupported()) return;
+        const auto cube = mir::MakeCube();
+        const auto mesh = renderer.CreateMesh(cube.vertices, cube.indices);
+        Require(!mesh.IsNull(), "Pose cache fixture upload failed");
+        mir::MeshPrimitive primitive;
+        primitive.vertices.resize(cube.vertices.size());
+        primitive.morphTargets.resize(1);
+        auto &morph = primitive.morphTargets[0];
+        morph.positions.assign(cube.vertices.size(), glm::vec3(0, .5f, 0));
+        morph.normals.assign(cube.vertices.size(), glm::vec3(0));
+        morph.tangents.assign(cube.vertices.size(), glm::vec3(0));
+        const float zero = 0, one = 1;
+        const auto down = mir::BuildDeformationData(primitive, std::span(&zero, 1), {});
+        const auto up = mir::BuildDeformationData(primitive, std::span(&one, 1), {});
+        mir::DrawItem item;
+        item.mesh = mesh;
+        item.model[3].z = -3;
+        item.previousModel = item.model;
+        item.settledDeformation = true;
+        item.deformation = down;
+        item.previousDeformation = down;
+        // A second aircraft shares this primitive and settled geometry.
+        mir::DrawItem other = item;
+        other.model[3].x = -1;
+        std::vector<mir::DrawItem> items{item, other};
+        mir::RenderView view;
+        view.items = items;
+        view.rayTracingItems = items;
+        view.viewProj = mir::MakeViewProjection(glm::mat4(1), mir::Camera{}, 640.f / 360.f);
+        view.nearZ = .1f;
+        view.farZ = 100;
+        view.fovYDegrees = 60;
+        const auto draw = [&](int frames) {
+            items[0] = item;
+            for (int i = 0; i < frames; ++i)
+            {
+                window.PollEvents();
+                renderer.TraceFrame(std::span(&view, 1));
+            }
+        };
+        draw(4);
+        const auto warm = renderer.RayTracingDeformations();
+        Require(warm.settledBuilds == 2, "Settled instances did not share one BLAS per frame slot");
+        item.model[3].x = 1; // Translation must not rebuild local geometry.
+        draw(6);
+        Require(renderer.RayTracingDeformations().blasBuilds == warm.blasBuilds,
+            "A settled or moving instance rebuilt its BLAS");
+        item.deformation = up;
+        // Preserve down geometry for velocity on the first paused frame.
+        const auto beforeTransition = renderer.RayTracingDeformations();
+        draw(1);
+        Require(renderer.RayTracingDeformations().settledBuilds == beforeTransition.settledBuilds,
+            "A pose transition lost its previous deformation");
+        item.previousDeformation = up;
+        draw(4);
+        const auto both = renderer.RayTracingDeformations();
+        item.deformation = down;
+        item.previousDeformation = down;
+        draw(6);
+        Require(renderer.RayTracingDeformations().blasBuilds == both.blasBuilds,
+            "Returning to the other settled pose rebuilt its BLAS");
+        item.settledDeformation = false;
+        draw(4);
+        Require(renderer.RayTracingDeformations().blasBuilds >= both.blasBuilds + 4,
+            "Animated samples did not use dynamic BLAS builds");
+        item.settledDeformation = true;
+        draw(4);
+        const auto resumed = renderer.RayTracingDeformations();
+        Require(resumed.settledBuilds == both.settledBuilds,
+            "Animation evicted a settled endpoint");
+        // A replacement mesh must not reuse BLASes of a retired generation.
+        renderer.DestroyMesh(mesh);
+        const auto replacement = renderer.CreateMesh(cube.vertices, cube.indices);
+        item.mesh = replacement;
+        items[1].mesh = replacement;
+        draw(4);
+        Require(renderer.RayTracingDeformations().settledBuilds >= resumed.settledBuilds + 2,
+            "A replacement mesh reused stale settled geometry");
+        renderer.DestroyMesh(replacement);
+        MIR_LOG_INFO("Settled geometry GPU check passed: {} builds, {} cache hits",
+            resumed.blasBuilds, resumed.settledHits);
     }
 
     // Reloads change only this private fixture, never the build's cooked files.
@@ -214,6 +301,7 @@ int main(int argc, char **argv)
             ~Shutdown() { mRenderer.Shutdown(); }
         } shutdown{ renderer };
         Require(renderer.Initialize({ window.get(), "ModelWorldsGpuCheck", true }), "Renderer initialization failed");
+        CheckSettledGeometry(renderer, *window);
 
         const mir::AssetId model{ 0x574f8c6b27fedda9ull };
         // the App's one library, declared after the renderer so it goes first
