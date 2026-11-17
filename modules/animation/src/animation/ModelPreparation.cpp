@@ -19,26 +19,24 @@ namespace mir
 {
     namespace
     {
-        SamplerDesc ToSamplerDesc(const MaterialAsset &material)
+        template <class T> SamplerDesc ToSamplerDesc(const T &material)
         {
-            const auto wrap = [](uint32_t gl)
-                {
-                    return gl == 33071 ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
-                        : gl == 33648 ? VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT
-                        : VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                };
+            const auto wrap = [](uint32_t gl) {
+                return gl == 33071   ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
+                       : gl == 33648 ? VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT
+                                     : VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            };
 
             SamplerDesc sampler;
             sampler.magFilter = material.magFilter == 9728 ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
             // NEAREST, NEAREST_MIPMAP_NEAREST, NEAREST_MIPMAP_LINEAR.
-            sampler.minFilter = (material.minFilter == 9728 || material.minFilter == 9984 ||
-                material.minFilter == 9986)
-                ? VK_FILTER_NEAREST
-                : VK_FILTER_LINEAR;
+            sampler.minFilter = (material.minFilter == 9728 || material.minFilter == 9984 || material.minFilter == 9986)
+                                    ? VK_FILTER_NEAREST
+                                    : VK_FILTER_LINEAR;
             // *_MIPMAP_LINEAR.
             sampler.mipmapMode = (material.minFilter == 9986 || material.minFilter == 9987)
-                ? VK_SAMPLER_MIPMAP_MODE_LINEAR
-                : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+                                     ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                                     : VK_SAMPLER_MIPMAP_MODE_NEAREST;
             sampler.addressModeU = wrap(material.wrapS);
             sampler.addressModeV = wrap(material.wrapT);
             // Only the four *_MIPMAP_* minFilters sample past level 0.
@@ -49,13 +47,13 @@ namespace mir
 
     std::span<const uint32_t> ModelIdentityTags()
     {
-        static constexpr uint32_t kTags[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag,
-            kMaterialAssetTypeTag, kTextureAssetTypeTag };
+        static constexpr uint32_t kTags[]{kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag,
+                                          kMaterialAssetTypeTag, kTextureAssetTypeTag};
         return kTags;
     }
 
     ModelPreparation::ModelPreparation(IMeshResolveHost &host, ITextureUploader &textures, TextureHandle errorTexture,
-        AsyncAssetService *assets, AssetId id, std::string label)
+                                       AsyncAssetService *assets, AssetId id, std::string label)
         : mHost(host), mErrorTexture(errorTexture), mId(id), mLabel(std::move(label)),
           mTracker(textures.TextureLoads(assets)), mMeshTracker(host.ModelMeshes(assets)),
           mMaterials(host.MaterialRecords()), mService(assets)
@@ -151,8 +149,7 @@ namespace mir
             {
             case AssetLoadState::Queued:
                 return mState;
-            case AssetLoadState::Ready:
-            {
+            case AssetLoadState::Ready: {
                 const auto root = mRoot.Acquire();
                 if (!root)
                 {
@@ -214,12 +211,12 @@ namespace mir
     {
         const ModelDependencies needed = DependenciesOf(*mLoaded->model);
         for (const AssetId id : needed.meshes)
-            mMeshClaims.push_back({ id, mService->RequestLease(id, MeshRecordDecoder()) });
+            mMeshClaims.push_back({id, mService->RequestLease(id, MeshRecordDecoder())});
         for (const AssetId id : needed.skeletons)
-            mSkeletonClaims.push_back({ id, mService->RequestLease(id, SkeletonRecordDecoder()) });
+            mSkeletonClaims.push_back({id, mService->RequestLease(id, SkeletonRecordDecoder())});
         // in the order of the model's animations, which is the order clips are indexed by
         for (const AssetId id : mLoaded->model->animations)
-            mClipClaims.push_back({ id, mService->RequestLease(id, ClipRecordDecoder()) });
+            mClipClaims.push_back({id, mService->RequestLease(id, ClipRecordDecoder())});
         mState = State::Records;
     }
 
@@ -237,8 +234,8 @@ namespace mir
         for (const auto &[key, mesh] : mLoaded->meshes)
             for (const AssetId material : MaterialsOf(mesh->asset))
                 if (std::none_of(mMaterialClaims.begin(), mMaterialClaims.end(),
-                        [&](const auto &claim) { return claim.id == material; }))
-                    mMaterialClaims.push_back({ material, mService->RequestLease(material, MaterialRecordDecoder()) });
+                                 [&](const auto &claim) { return claim.id == material; }))
+                    mMaterialClaims.push_back({material, mService->RequestLease(material, MaterialRecordDecoder())});
         mState = State::Materials;
     }
 
@@ -246,13 +243,18 @@ namespace mir
     {
         for (const auto &[key, material] : mLoaded->materials)
         {
-            const AssetId texture = material->baseColorTexture;
-            if (texture.IsNull() || mTextureClaims.contains(texture.value))
-                continue;
-            const UploadKey uploadKey{ texture, ContentOf(texture) };
-            mTextureKeys.emplace(texture.value, uploadKey);
-            mTracker->Request(uploadKey, std::format("{} texture {:016x}", mLabel, texture.value));
-            mTextureClaims.emplace(texture.value, TextureLoadLease(mTracker, uploadKey));
+            std::vector<AssetId> textures{material->baseColorTexture};
+            for (const auto &binding : material->textures)
+                textures.push_back(binding.texture);
+            for (const AssetId texture : textures)
+            {
+                if (texture.IsNull() || mTextureClaims.contains(texture.value))
+                    continue;
+                const UploadKey uploadKey{texture, ContentOf(texture)};
+                mTextureKeys.emplace(texture.value, uploadKey);
+                mTracker->Request(uploadKey, std::format("{} texture {:016x}", mLabel, texture.value));
+                mTextureClaims.emplace(texture.value, TextureLoadLease(mTracker, uploadKey));
+            }
         }
         mState = State::Textures;
     }
@@ -309,7 +311,7 @@ namespace mir
                             model->degraded = true;
                             if (report)
                                 MIR_LOG_ERROR("Model {:016x}: material {:016x} is unreadable, using error texture",
-                                    mId.value, p.material.value);
+                                              mId.value, p.material.value);
                         }
                     }
                     if (materialRead && material.baseColorTexture != p.baseColorTexture)
@@ -318,8 +320,8 @@ namespace mir
                     desc.shaderName = "model";
                     desc.cullMode = material.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
                     desc.topology = p.topology == MeshTopology::Triangles ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
-                        : p.topology == MeshTopology::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
-                        : VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+                                    : p.topology == MeshTopology::Lines   ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
+                                                                          : VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
                     desc.sampler = ToSamplerDesc(material);
                     desc.alphaMode = static_cast<MaterialAlphaMode>(material.alpha);
                     desc.alphaCutoff = material.alphaCutoff;
@@ -339,18 +341,49 @@ namespace mir
                             model->degraded = true;
                             if (report)
                                 MIR_LOG_ERROR("Model {:016x}: texture {:016x} did not load, using error texture",
-                                    mId.value, material.baseColorTexture.value);
+                                              mId.value, material.baseColorTexture.value);
                             desc.baseColorTexture = mErrorTexture;
+                        }
+                    }
+
+                    static_assert(kModelTextureCount == kMaterialTextureRoles);
+                    desc.model.factors = {glm::vec4(material.metallic, material.roughness, material.normalScale,
+                                                    material.occlusionStrength),
+                                          glm::vec4(material.emissive, material.unlit ? 1.f : 0.f),
+                                          glm::vec4(material.specularColor, material.specular),
+                                          glm::vec4(material.ior, material.clearcoat, material.clearcoatRoughness,
+                                                    material.clearcoatNormalScale)};
+                    std::vector<AssetId> modelClaims;
+                    if (!claimedTexture.IsNull())
+                        modelClaims.push_back(claimedTexture);
+                    for (size_t role = 0; role < kMaterialTextureRoles; ++role)
+                    {
+                        const auto &binding = material.textures[role];
+                        desc.model.textures[role].sampler = ToSamplerDesc(binding);
+                        if (binding.texture.IsNull())
+                            continue;
+                        const auto *view = mTextureClaims.at(binding.texture.value).Get();
+                        if (view && view->phase == AssetUploadPhase::Ready)
+                        {
+                            desc.model.textures[role].texture = view->texture;
+                            if (std::find(modelClaims.begin(), modelClaims.end(), binding.texture) == modelClaims.end())
+                                modelClaims.push_back(binding.texture);
+                        }
+                        else
+                        {
+                            model->degraded = true;
+                            if (report)
+                                MIR_LOG_ERROR("Model {:016x}: PBR texture {:016x} unavailable; using neutral fallback",
+                                              mId.value, binding.texture.value);
                         }
                     }
 
                     // Both face directions need their own texture claim.
                     bool failed = false;
-                    const auto acquire = [&](const MaterialDesc &variant)
-                    {
+                    const auto acquire = [&](const MaterialDesc &variant) {
                         std::vector<TextureLoadLease> claims;
-                        if (!claimedTexture.IsNull())
-                            claims.emplace_back(mTracker, mTextureKeys.at(claimedTexture.value));
+                        for (const auto texture : modelClaims)
+                            claims.emplace_back(mTracker, mTextureKeys.at(texture.value));
                         MaterialAcquire status = MaterialAcquire::Failed;
                         MaterialLease lease(mMaterials, mMaterials->Acquire(variant, std::move(claims), &status));
                         // a table that stayed full past the wait is a failure like any other
@@ -374,19 +407,18 @@ namespace mir
                         model->degraded = true;
                         if (report)
                             MIR_LOG_ERROR("Model {:016x}: '{}' material creation failed, using error material",
-                                mId.value, desc.shaderName);
+                                          mId.value, desc.shaderName);
                         if (gpu.material.IsNull())
                             gpu.material = mHost.ErrorMaterial();
                         if (gpu.mirrored.IsNull())
                             gpu.mirrored = mHost.ErrorMaterial();
                     }
                     // Magenta, not the base color, which would tint the error texture and hide the failure.
-                    gpu.factor = materialFailed || desc.baseColorTexture == mErrorTexture
-                        ? glm::vec4(1, 0, 1, 1)
-                        : material.baseColor;
+                    gpu.factor = materialFailed || desc.baseColorTexture == mErrorTexture ? glm::vec4(1, 0, 1, 1)
+                                                                                          : material.baseColor;
                     gpu.transparent = !materialFailed && material.alpha == MaterialAlpha::Blend;
                     primitives.push_back(gpu);
-                    requests.push_back({ key, index, primitives.size() - 1, upload });
+                    requests.push_back({key, index, primitives.size() - 1, upload});
                 }
                 if (slotsFull)
                     break;
@@ -412,12 +444,13 @@ namespace mir
             for (const MeshRequest &request : requests)
             {
                 // The mesh blob alone decides the vertices, so an unchanged mesh keeps its record across a reload.
-                const uint64_t content = ContentOf(AssetId{ request.key });
+                const uint64_t content = ContentOf(AssetId{request.key});
                 const ContentIdentity identity = (content >> 63) != 0 ? ContentIdentity::ForRevision(mRevision)
                                                                       : ContentIdentity::ForContent(content);
-                const GpuRecordKey recordKey{ AssetId{ request.key }, static_cast<uint32_t>(request.index), identity,
-                    MeshUploadOptions{ .rayTracing = true } };
-                const AssetId record = mMeshTracker->Request(recordKey, [&request] { return request.upload; },
+                const GpuRecordKey recordKey{AssetId{request.key}, static_cast<uint32_t>(request.index), identity,
+                                             MeshUploadOptions{.rayTracing = true}};
+                const AssetId record = mMeshTracker->Request(
+                    recordKey, [&request] { return request.upload; },
                     std::format("{} mesh {:016x}.{}", mLabel, request.key, request.index));
                 model->meshClaims.emplace_back(mMeshTracker, record);
             }
@@ -429,7 +462,7 @@ namespace mir
         }
         std::vector<MeshSlot> slots;
         for (const MeshRequest &request : requests)
-            slots.push_back({ request.key, request.primitive });
+            slots.push_back({request.key, request.primitive});
         for (auto &[key, claim] : mTextureClaims)
             model->textures.push_back(std::move(claim));
         mTextureClaims.clear();

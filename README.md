@@ -8,6 +8,12 @@ A game is data, not a build target. Each game is a directory under `games/`
 holding configuration, assets, Lua scripts and scenes. One shared runtime loads
 that directory, so changing a game needs no rebuild.
 
+Vulkan validation is enabled by default in Debug and disabled in optimized
+builds (Release, RelWithDebInfo and MinSizeRel). Use `--validation` to enable
+it for diagnostics or `--no-validation` to disable it explicitly. The choice
+is preserved when switching projects; startup logs report whether validation
+is active.
+
 ## Folder structure
 
 ```

@@ -12,10 +12,12 @@
 #include <renderer/Texture.h>
 
 #include <volk.h>
+#include <glm/vec4.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <array>
 #include <string>
 
 namespace mir
@@ -28,7 +30,10 @@ namespace mir
         uint32_t mIndex = kNullIndex;
         uint32_t mGeneration = 0;
 
-        constexpr bool IsNull() const { return mIndex == kNullIndex; }
+        constexpr bool IsNull() const
+        {
+            return mIndex == kNullIndex;
+        }
         constexpr bool operator==(const MaterialHandle &) const = default;
     };
 
@@ -62,6 +67,21 @@ namespace mir
         Blend
     };
 
+    inline constexpr size_t kModelTextureCount = 9;
+    struct ModelTextureBinding
+    {
+        TextureHandle texture;
+        SamplerDesc sampler;
+        bool operator==(const ModelTextureBinding &) const = default;
+    };
+    struct ModelMaterialDesc
+    {
+        // metallic/roughness/normal scale/AO strength; emission/unlit;
+        // specular RGB/weight; IOR/coat/coat roughness/coat normal scale.
+        std::array<glm::vec4, 4> factors{glm::vec4(1), glm::vec4(0), glm::vec4(1), glm::vec4(1.5f, 0, 0, 1)};
+        std::array<ModelTextureBinding, kModelTextureCount> textures{};
+        bool operator==(const ModelMaterialDesc &) const = default;
+    };
     struct MaterialDesc
     {
         std::string shaderName = "default";
@@ -74,6 +94,7 @@ namespace mir
         // A null handle falls back to the renderer's default white / flat normal.
         TextureHandle baseColorTexture;
         TextureHandle normalTexture;
+        ModelMaterialDesc model;
 
         SamplerDesc sampler;
 

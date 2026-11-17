@@ -702,6 +702,11 @@ namespace mir
         return mMeshUploads->Footprint(*mRayTracer, vertexCount, indexCount, options);
     }
 
+    RtDeformationStats VulkanRenderer::RayTracingDeformations() const
+    {
+        return mRayTracer ? mRayTracer->DeformationStats() : RtDeformationStats{};
+    }
+
     MeshStreamingStats VulkanRenderer::MeshStreaming() const
     {
         MeshStreamingStats stats;

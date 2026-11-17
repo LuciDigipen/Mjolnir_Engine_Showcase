@@ -166,7 +166,8 @@ namespace mir::vk
         bool HasDlssGuides() const { return Image(RtImage::Albedo, 0) != VK_NULL_HANDLE; }
 
         // Called only after the frame slot's fence has completed.
-        void ResetDeformations(uint32_t frame);
+        void ResetDeformations(uint32_t frame, const ResourceStore *resources = nullptr);
+        RtDeformationStats DeformationStats() const { return mDeformationStats; }
 
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
@@ -208,9 +209,24 @@ namespace mir::vk
             VkBuffer scratch = VK_NULL_HANDLE;
             VmaAllocation scratchAllocation = VK_NULL_HANDLE;
         };
+        struct SettledMesh
+        {
+            MeshHandle source;
+            std::vector<glm::vec4> sample;
+            DeformedMesh geometry;
+            uint64_t lastUsed = 0;
+        };
+        void DestroyDeformedMesh(DeformedMesh &mesh);
+        // Slot-local caches avoid cross-frame writes/lifetime hazards. Each source
+        // retains two poses (e.g. gear up/down), shared by draws and instances.
+        std::vector<SettledMesh> mSettledMeshes[kFramesInFlight];
+        uint64_t mDeformationEpoch[kFramesInFlight]{};
+        RtDeformationStats mDeformationStats;
         const DeformedMesh *RecordDeformedMesh(VkCommandBuffer cmd, uint32_t frame,
             const GpuMesh &mesh, std::span<const glm::vec4> deformation,
             std::span<const glm::vec4> previousDeformation);
+        const DeformedMesh *RecordSettledMesh(VkCommandBuffer cmd, uint32_t frame,
+            MeshHandle source, const GpuMesh &mesh, std::span<const glm::vec4> deformation);
         PreparedScene RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
             const ResourceStore &resources, const MaterialStore &materials,
             std::optional<std::span<const DrawItem>> fallbackItems);

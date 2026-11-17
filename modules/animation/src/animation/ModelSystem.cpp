@@ -32,6 +32,7 @@ namespace mir
         mRequestedModels.clear();
         mPreviousPoses.clear();
         mCurrentPoses.clear();
+        mPoseCaches.clear();
     }
 
     ModelSystem::ModelSystem(std::shared_ptr<ModelLibrary> library, AsyncAssetService *assets,
@@ -181,6 +182,7 @@ namespace mir
         mFailed.erase(packed);
         mPreviousPoses.erase(packed);
         mCurrentPoses.erase(packed);
+        mPoseCaches.erase(packed);
         if (auto *overrides = world.TryResource<ModelMorphOverrides>())
             overrides->instances.erase(packed);
     }
@@ -198,8 +200,10 @@ namespace mir
             std::string path;
             const PreparedModel *loaded;
             ModelEvaluationInput sample;
+            bool settled;
+            ModelPoseCache *cache;
         };
-        struct Result { ModelEvaluationResult value; std::exception_ptr error; };
+        struct Result { std::shared_ptr<const ModelEvaluationResult> value; std::exception_ptr error; };
         std::vector<Input> inputs;
         uint32_t required = 0, settled = 0;
         {
@@ -258,7 +262,13 @@ namespace mir
                         if (overrides)
                             if (auto it = overrides->instances.find(packed); it != overrides->instances.end())
                                 sample.overrides = it->second;
-                        inputs.push_back(Input{packed, path, data, std::move(sample)});
+                        const bool endpoint = !player.Loops() && clip < data->resources->clips.size() &&
+                            ((player.Speed() >= 0 && sample.time >= data->resources->clips[clip]->duration) ||
+                             (player.Speed() <= 0 && sample.time <= 0));
+                        const bool settledPose = !player.IsPlaying() || !IsSimulating(context.world) ||
+                            player.Speed() == 0 || endpoint;
+                        inputs.push_back(Input{packed, path, data, std::move(sample), settledPose,
+                            &mPoseCaches[packed]});
                     }
                     catch (const std::exception &e)
                     {
@@ -274,7 +284,8 @@ namespace mir
             const auto evaluate = [&](size_t begin, size_t end)
             {
                 for (size_t i = begin; i < end; ++i)
-                    try { EvaluateModelInstance(inputs[i].sample, results[i].value); }
+                    try { results[i].value = inputs[i].cache->Evaluate(inputs[i].sample,
+                        inputs[i].loaded->resources, inputs[i].settled); }
                     catch (...) { results[i].error = std::current_exception(); }
             };
             // Keep the conservative threshold; scale ranges to the available pool.
@@ -290,21 +301,29 @@ namespace mir
         {
             size_t drawCount = 0;
             for (const auto &result : results)
-                for (const auto &node : result.value.nodes) drawCount += node.deformations.size();
+                if (result.value)
+                    for (const auto &node : result.value->nodes) drawCount += node.deformations.size();
             draws.items.reserve(drawCount);
             for (size_t i = 0; i < inputs.size(); ++i)
             {
                 const auto &input = inputs[i];
                 auto &result = results[i];
-                for (const auto &key : result.value.invalidOverrides)
-                    if (overrides)
-                        if (auto instance = overrides->instances.find(input.entity); instance != overrides->instances.end())
-                            if (instance->second.erase(key))
-                                MIR_LOG_WARN("Model '{}': cleared invalid morph override for node '{}'", input.path, key);
+                if (result.value)
+                    for (const auto &key : result.value->invalidOverrides)
+                        if (overrides)
+                            if (auto instance = overrides->instances.find(input.entity); instance != overrides->instances.end())
+                                if (instance->second.erase(key))
+                                    MIR_LOG_WARN("Model '{}': cleared invalid morph override for node '{}'", input.path, key);
                 try
                 {
-                    for (auto &node : result.value.nodes)
+                    if (result.error) std::rethrow_exception(result.error);
+                    for (const auto &node : result.value->nodes)
                     {
+                        const auto world = TryComposePose(input.sample.world, node.world.linear,
+                            node.world.position.Meters());
+                        if (!world || std::abs(glm::determinant(world->linear)) < 1e-10f) continue;
+                        const auto normal = glm::inverseTranspose(world->linear);
+                        const bool mirrored = glm::determinant(world->linear) < 0;
                         const auto mesh = input.loaded->resources->model->nodes[node.index].mesh;
                         const auto &gpu = input.loaded->meshes.at(mesh.value);
                         const NodeHistory *previous = nullptr;
@@ -312,30 +331,31 @@ namespace mir
                             if (auto pose = entity->second.find(node.index); pose != entity->second.end())
                                 previous = &pose->second;
                         auto &current = mCurrentPoses[input.entity][node.index];
-                        current.pose = node.world;
+                        current.pose = *world;
                         current.primitives.reserve(node.deformations.size());
                         for (size_t primitive = 0; primitive < node.deformations.size(); ++primitive)
                         {
                             const auto &material = gpu.at(primitive);
-                            current.primitives.push_back({material.mesh, std::move(node.deformations[primitive])});
-                            WorldDrawItem item{material.mesh, node.world, node.normalMatrix, material.factor,
-                                node.mirrored ? material.mirrored : material.material,
-                                current.primitives.back().deformation};
+                            current.primitives.push_back({material.mesh,
+                                {result.value, &node.deformations[primitive]}});
+                            WorldDrawItem item{material.mesh, *world, normal, material.factor,
+                                mirrored ? material.mirrored : material.material,
+                                *current.primitives.back().deformation};
                             item.transparent = material.transparent;
+                            item.settledDeformation = input.settled;
                             if (previous && primitive < previous->primitives.size())
                             {
                                 const auto &old = previous->primitives[primitive];
                                 if (old.mesh == material.mesh &&
-                                    old.deformation.size() == item.deformation.size())
+                                    old.deformation->size() == item.deformation.size())
                                 {
                                     item.previousPose = previous->pose;
-                                    item.previousDeformation = old.deformation;
+                                    item.previousDeformation = *old.deformation;
                                 }
                             }
                             draws.items.push_back(item);
                         }
                     }
-                    if (result.error) std::rethrow_exception(result.error);
                 }
                 catch (const std::exception &error)
                 {
@@ -348,6 +368,7 @@ namespace mir
             std::erase_if(overrides->instances, [&](const auto &p) { return !alive.contains(p.first); });
         std::erase_if(mFailed, [&](auto key) { return !alive.contains(key); });
         std::erase_if(mRequestedModels, [&](const auto &entry) { return !alive.contains(entry.first); });
+        std::erase_if(mPoseCaches, [&](const auto &entry) { return !alive.contains(entry.first); });
         PruneModels();
         std::swap(mPreviousPoses, mCurrentPoses);
     }

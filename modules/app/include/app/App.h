@@ -88,7 +88,12 @@ namespace mir
 
         // Vulkan instance name. Engine-level, not project data
         const char *mAppName = "MjolnirEngine";
+        // Optimized builds run without Vulkan validation unless explicitly requested.
+#ifdef NDEBUG
+        bool mEnableValidation = false;
+#else
         bool mEnableValidation = true;
+#endif
 
         bool mEnableEditorLayout = true;
 

@@ -48,9 +48,15 @@ TEST_CASE("QuoteCommandLineArgument quotes an empty argument and whitespace", "[
 
 TEST_CASE("QuoteCommandLineArgument escapes quotes and the backslashes around them", "[process]")
 {
-    CHECK(mir::QuoteCommandLineArgument(R"(say "hi")") == R"("say \"hi\"")");
-    CHECK(mir::QuoteCommandLineArgument(R"(a\"b)") == R"("a\\\"b")");
-    CHECK(mir::QuoteCommandLineArgument(R"(C:\My Dir\)") == R"("C:\My Dir\\")");
+    const auto quotedSpeech = mir::QuoteCommandLineArgument(R"(say "hi")");
+    const auto quotedBackslash = mir::QuoteCommandLineArgument(R"(a\"b)");
+    const auto quotedDirectory = mir::QuoteCommandLineArgument(R"(C:\My Dir\)");
+    const std::string expectedSpeech = R"("say \"hi\"")";
+    const std::string expectedBackslash = R"("a\\\"b")";
+    const std::string expectedDirectory = R"("C:\My Dir\\")";
+    CHECK(quotedSpeech == expectedSpeech);
+    CHECK(quotedBackslash == expectedBackslash);
+    CHECK(quotedDirectory == expectedDirectory);
 }
 
 TEST_CASE("LaunchProcess returns the exit code of a process it waits for", "[process]")

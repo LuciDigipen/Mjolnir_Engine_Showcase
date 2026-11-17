@@ -562,11 +562,13 @@ Set it to `OFF` to omit `audio`, `audio_script`, their tests, and the app's
 audio registration and Lua bindings. Games run silently; saved audio components
 are skipped as unknown components. Scripts that call audio bindings should
 check that those methods exist first, as the HelloWorld audio demo does.
-`MIR_WITH_DLSS` defaults to `OFF`, which avoids fetching or linking NVIDIA NGX.
+`MIR_WITH_DLSS` and `MIR_WITH_RTXGI` default to `ON`. Pass
+`-DMIR_WITH_DLSS=OFF` and/or `-DMIR_WITH_RTXGI=OFF` to omit their SDKs.
+Existing build directories retain their cached values until explicitly changed.
 
 The `ci-windows-editor-debug` and `ci-windows-game-release` presets explicitly
-disable both options and enable tests. Each has matching configure, build and
-test presets, so no Wwise or NVIDIA SDK is needed:
+disable audio, DLSS and RTXGI and enable tests. Each has matching configure,
+build and test presets, so no Wwise or NVIDIA SDK is needed:
 
 ```powershell
 cmake --preset ci-windows-editor-debug

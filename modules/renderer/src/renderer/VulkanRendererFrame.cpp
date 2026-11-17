@@ -405,7 +405,7 @@ namespace mir
                 mDevice->EndLabel(frame->cmd);
             }
             mModelDescriptors->ResetFrame(mFrameSync->Index());
-            mRayTracer->ResetDeformations(mFrameSync->Index());
+            mRayTracer->ResetDeformations(mFrameSync->Index(), mResources.get());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mImGuiOverlay->Collect(mFrameSync->CompletedValue());
             CollectReleasedResources(mFrameSync->CompletedValue());

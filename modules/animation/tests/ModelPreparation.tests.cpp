@@ -40,65 +40,84 @@ namespace
     const AssetId kMesh = MakeAssetId("mesh");
     const AssetId kMaterial = MakeAssetId("material");
     const AssetId kTexture = MakeAssetId("texture");
-    const TextureHandle kError{ 777, 1 };
+    const TextureHandle kError{777, 1};
 
     struct CookedModel : test::CookedDir
     {
-        explicit CookedModel(bool withTexture = true) { Write(withTexture); }
+        explicit CookedModel(bool withTexture = true, bool withPbr = false)
+        {
+            Write(withTexture, 0, 0, false, false, withPbr);
+        }
 
         // Blob names carry a content hash like a cook's, a variant changes that blob alone. A second model names
         // the same mesh.
         void Write(bool withTexture = true, uint32_t meshVariant = 0, uint32_t textureVariant = 0,
-            bool secondModel = false, bool withMorph = false)
+                   bool secondModel = false, bool withMorph = false, bool withPbr = false)
         {
             ModelAsset model;
             model.nodes.resize(1);
             model.nodes[0].key = "root";
             model.nodes[0].mesh = kMesh;
-            model.scenes = { { "scene", { 0 } } };
+            model.scenes = {{"scene", {0}}};
             MeshPrimitive primitive;
             primitive.vertices.resize(3);
             primitive.vertices[0].position.x = static_cast<float>(meshVariant);
-            primitive.indices = { 0, 1, 2 };
+            primitive.indices = {0, 1, 2};
             primitive.material = kMaterial;
             primitive.baseColorTexture = kTexture;
             if (withMorph)
             {
                 model.nodes[0].weights = {0};
                 primitive.morphTargets.push_back({std::vector<glm::vec3>(3, glm::vec3(1, 0, 0)),
-                    std::vector<glm::vec3>(3), std::vector<glm::vec3>(3)});
+                                                  std::vector<glm::vec3>(3), std::vector<glm::vec3>(3)});
             }
             MeshAsset mesh;
-            if (withMorph) mesh.weights = {0};
+            if (withMorph)
+                mesh.weights = {0};
             mesh.primitives.push_back(primitive);
             MaterialAsset material;
             material.baseColor = glm::vec4(0.25f, 0.5f, 0.75f, 1);
             material.baseColorTexture = kTexture;
+            if (withPbr)
+            {
+                material.metallic = .3f;
+                material.roughness = .7f;
+                material.specular = .5f;
+                material.clearcoat = .8f;
+                material.textures[0].texture = kTexture;
+                material.textures[0].minFilter = 9987;
+                material.textures[1].texture = kTexture;
+                material.textures[1].wrapS = 33071;
+            }
             TextureAsset texture;
             texture.width = texture.height = 4;
             texture.rgba.assign(64, static_cast<uint8_t>(80 + textureVariant));
 
             const std::string modelFile = "model-0000000000000011.blob",
-                meshFile = std::format("mesh-{:016x}.blob", 0x12 + meshVariant),
-                materialFile = "material-0000000000000013.blob",
-                textureFile = std::format("texture-{:016x}.blob", 0x14 + textureVariant),
-                model2File = "model2-0000000000000015.blob";
+                              meshFile = std::format("mesh-{:016x}.blob", 0x12 + meshVariant),
+                              materialFile = "material-0000000000000013.blob",
+                              textureFile = std::format("texture-{:016x}.blob", 0x14 + textureVariant),
+                              model2File = "model2-0000000000000015.blob";
             const std::vector<std::pair<std::string, std::vector<std::byte>>> blobs{
-                { modelFile, BuildTypedAsset(model) }, { meshFile, BuildTypedAsset(mesh) },
-                { materialFile, BuildTypedAsset(material) }, { textureFile, BuildTypedAsset(texture) } };
+                {modelFile, BuildTypedAsset(model)},
+                {meshFile, BuildTypedAsset(mesh)},
+                {materialFile, BuildTypedAsset(material)},
+                {textureFile, BuildTypedAsset(texture)}};
             for (const auto &[file, bytes] : blobs)
                 REQUIRE(WriteBytes(Path() / file, bytes));
             REQUIRE(WriteBytes(Path() / model2File, BuildTypedAsset(model)));
-            const AssetId modelEdges[]{ kMesh }, meshEdges[]{ kMaterial }, materialEdges[]{ kTexture };
+            const AssetId modelEdges[]{kMesh}, meshEdges[]{kMaterial}, materialEdges[]{kTexture};
             std::vector<AssetManifestSourceEntry> entries{
-                { { kModel, kModelAssetTypeTag, kModelAssetContentVersion }, modelFile, "model", modelEdges },
-                { { kMesh, kMeshAssetTypeTag, kMeshAssetContentVersion }, meshFile, "mesh", meshEdges },
-                { { kMaterial, kMaterialAssetTypeTag, kMaterialAssetContentVersion }, materialFile, "material",
-                  materialEdges },
-                { { kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion }, textureFile, "texture", {} } };
+                {{kModel, kModelAssetTypeTag, kModelAssetContentVersion}, modelFile, "model", modelEdges},
+                {{kMesh, kMeshAssetTypeTag, kMeshAssetContentVersion}, meshFile, "mesh", meshEdges},
+                {{kMaterial, kMaterialAssetTypeTag, kMaterialAssetContentVersion},
+                 materialFile,
+                 "material",
+                 materialEdges},
+                {{kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion}, textureFile, "texture", {}}};
             if (secondModel)
-                entries.push_back({ { kModel2, kModelAssetTypeTag, kModelAssetContentVersion }, model2File, "model-2",
-                    modelEdges });
+                entries.push_back(
+                    {{kModel2, kModelAssetTypeTag, kModelAssetContentVersion}, model2File, "model-2", modelEdges});
             // a texture the manifest does not list, its material still names it
             if (!withTexture)
             {
@@ -111,10 +130,11 @@ namespace
 
     struct Fixture : CookedModel
     {
-        explicit Fixture(bool withTexture = true)
-            : CookedModel(withTexture), mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1),
+        explicit Fixture(bool withTexture = true, bool withPbr = false)
+            : CookedModel(withTexture, withPbr), mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1),
               mPreparation(mHost, mTextures, kError, &mService, kModel, "model")
-        {}
+        {
+        }
 
         ModelPreparation::State Frame()
         {
@@ -138,11 +158,36 @@ namespace
     };
 }
 
+TEST_CASE("Model PBR bindings share texture uploads but preserve samplers and factors",
+          "[animation][model-preparation][pbr]")
+{
+    Fixture f(true, true);
+    f.QueueTexture();
+    REQUIRE(f.mTextures.mEntries.size() == 1);
+    const TextureHandle texture{0, 1};
+    f.mTextures.Begin(texture);
+    f.mTextures.CopyAll(texture);
+    f.mTextures.Complete(texture);
+    REQUIRE(f.Frame() == ModelPreparation::State::Meshes);
+    REQUIRE(f.mHost.createdMaterials.size() == 2);
+    for (const auto &desc : f.mHost.createdMaterials)
+    {
+        CHECK(desc.model.textures[0].texture == texture);
+        CHECK(desc.model.textures[1].texture == texture);
+        CHECK(desc.model.textures[0].sampler.useMips);
+        CHECK(desc.model.textures[1].sampler.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+        CHECK(desc.model.factors[0].x == .3f);
+        CHECK(desc.model.factors[0].y == .7f);
+        CHECK(desc.model.factors[2].w == .5f);
+        CHECK(desc.model.factors[3].y == .8f);
+    }
+}
+
 TEST_CASE("A model publishes after its texture and meshes are ready and uses both", "[animation][model-preparation]")
 {
     Fixture f;
     f.QueueTexture();
-    const TextureHandle texture{ 0, 1 };
+    const TextureHandle texture{0, 1};
     CHECK(f.Frame() == ModelPreparation::State::Textures);
     CHECK(f.mHost.createdMaterials.empty());
     f.mTextures.Begin(texture);
@@ -155,7 +200,7 @@ TEST_CASE("A model publishes after its texture and meshes are ready and uses bot
     REQUIRE(f.mHost.uploader.queued == 1);
     CHECK(f.mHost.syncMeshes == 0);
     CHECK(f.mPreparation.Take() == nullptr);
-    const MeshHandle mesh{ 0, 1 };
+    const MeshHandle mesh{0, 1};
     f.mHost.uploader.Record(mesh);
     CHECK(f.Frame() == ModelPreparation::State::Meshes);
     f.mHost.uploader.Complete(mesh);
@@ -178,16 +223,16 @@ TEST_CASE("A model publishes after its texture and meshes are ready and uses bot
 }
 
 TEST_CASE("A second preparation of the same model shares the mesh and material records",
-    "[animation][model-preparation]")
+          "[animation][model-preparation]")
 {
     Fixture f;
     f.QueueTexture();
-    const TextureHandle texture{ 0, 1 };
+    const TextureHandle texture{0, 1};
     f.mTextures.Begin(texture);
     f.mTextures.CopyAll(texture);
     f.mTextures.Complete(texture);
     f.Frame();
-    const MeshHandle mesh{ 0, 1 };
+    const MeshHandle mesh{0, 1};
     f.mHost.uploader.Record(mesh);
     f.mHost.uploader.Complete(mesh);
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
@@ -219,10 +264,10 @@ TEST_CASE("A failed mesh upload fails the model and drops its claims", "[animati
 {
     Fixture f;
     f.QueueTexture();
-    const TextureHandle texture{ 0, 1 };
+    const TextureHandle texture{0, 1};
     f.mTextures.Fail(texture);
     REQUIRE(f.Frame() == ModelPreparation::State::Meshes);
-    f.mHost.uploader.Fail(MeshHandle{ 0, 1 });
+    f.mHost.uploader.Fail(MeshHandle{0, 1});
     CHECK(f.Frame() == ModelPreparation::State::Failed);
     CHECK(f.mPreparation.Error() == "GPU mesh creation failed");
     CHECK(f.mPreparation.Take() == nullptr);
@@ -233,12 +278,12 @@ TEST_CASE("A failed texture publishes the magenta error appearance", "[animation
 {
     Fixture f;
     f.QueueTexture();
-    const TextureHandle texture{ 0, 1 };
+    const TextureHandle texture{0, 1};
     f.mTextures.Fail(texture);
     REQUIRE(f.Frame() == ModelPreparation::State::Meshes);
     REQUIRE(f.mHost.createdMaterials.size() == 2);
     CHECK(f.mHost.createdMaterials[0].baseColorTexture == kError);
-    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    f.mHost.uploader.Complete(MeshHandle{0, 1});
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     const auto model = f.mPreparation.Take();
     REQUIRE(model);
@@ -251,7 +296,7 @@ TEST_CASE("A missing texture blob settles as an error appearance", "[animation][
     for (int frame = 0; frame < 12 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
         f.Frame();
     REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
-    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    f.mHost.uploader.Complete(MeshHandle{0, 1});
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     const auto model = f.mPreparation.Take();
     CHECK(model->meshes.at(kMesh.value)[0].factor == glm::vec4(1, 0, 1, 1));
@@ -292,19 +337,18 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
 {
     Fixture f;
     f.QueueTexture();
-    const TextureHandle texture{ 0, 1 };
+    const TextureHandle texture{0, 1};
     f.mTextures.Begin(texture);
     f.mTextures.CopyAll(texture);
     f.mTextures.Complete(texture);
     f.Frame();
-    const MeshHandle mesh{ 0, 1 };
+    const MeshHandle mesh{0, 1};
     f.mHost.uploader.Record(mesh);
     f.mHost.uploader.Complete(mesh);
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     const auto before = f.mPreparation.Take();
     const auto resources = before->resources;
-    const auto frames = [&](ModelPreparation &preparation)
-    {
+    const auto frames = [&](ModelPreparation &preparation) {
         for (int frame = 0; frame < 12 && preparation.GetState() != ModelPreparation::State::Ready; ++frame)
         {
             f.mService.DrainCompletions();
@@ -344,10 +388,10 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
         CHECK(f.mHost.uploader.queued == 2);
         CHECK(f.mTextures.mQueued == 1);
         CHECK(f.mHost.createdMaterials.size() == 2);
-        f.mHost.uploader.Complete(MeshHandle{ 1, 1 });
+        f.mHost.uploader.Complete(MeshHandle{1, 1});
         REQUIRE(after.Advance() == ModelPreparation::State::Ready);
         const auto replacement = after.Take();
-        CHECK(replacement->meshes.at(kMesh.value)[0].mesh == MeshHandle{ 1, 1 });
+        CHECK(replacement->meshes.at(kMesh.value)[0].mesh == MeshHandle{1, 1});
         CHECK(replacement->meshes.at(kMesh.value)[0].material == before->meshes.at(kMesh.value)[0].material);
         CHECK(before->meshes.at(kMesh.value)[0].mesh == mesh);
     }
@@ -358,7 +402,9 @@ namespace
     // The renderer-wide library with one World's worth of fakes behind it
     struct LibraryFixture : CookedModel
     {
-        LibraryFixture() : mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1), mLibrary(mHost, mTextures, kError) {}
+        LibraryFixture() : mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1), mLibrary(mHost, mTextures, kError)
+        {
+        }
 
         void Settle(const ModelLibrary::Claim &claim)
         {
@@ -368,13 +414,14 @@ namespace
                 mLibrary.Advance();
                 for (const auto &[index, texture] : std::vector(mTextures.mEntries.begin(), mTextures.mEntries.end()))
                     if (texture.mState != TextureUploadState::Ready)
-                        mTextures.Complete(TextureHandle{ index, 1 });
-                for (const auto &[index, mesh] : std::vector(mHost.uploader.meshes.begin(), mHost.uploader.meshes.end()))
+                        mTextures.Complete(TextureHandle{index, 1});
+                for (const auto &[index, mesh] :
+                     std::vector(mHost.uploader.meshes.begin(), mHost.uploader.meshes.end()))
                     if (mesh.state != MeshUploadState::Ready)
                     {
                         if (mesh.state == MeshUploadState::Pending)
-                            mHost.uploader.Record(MeshHandle{ index, 1 });
-                        mHost.uploader.Complete(MeshHandle{ index, 1 });
+                            mHost.uploader.Record(MeshHandle{index, 1});
+                        mHost.uploader.Complete(MeshHandle{index, 1});
                     }
             }
         }
@@ -395,7 +442,7 @@ namespace
 }
 
 TEST_CASE("Model draws retain the preceding morph sample and discard history after a visibility gap",
-    "[animation][model-system][motion]")
+          "[animation][model-system][motion]")
 {
     RegisterModelPlayer();
     mir::RegisterCoreComponents();
@@ -410,8 +457,7 @@ TEST_CASE("Model draws retain the preceding morph sample and discard history aft
     auto &draws = world.EmplaceResource<ModelDrawItems>();
     auto &overrides = world.EmplaceResource<ModelMorphOverrides>();
     SystemContext context{world, commands, 0.016f, 0.0, 0};
-    const auto frame = [&]
-    {
+    const auto frame = [&] {
         f.mService.DrainCompletions();
         system.OnUpdate(context);
         for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
@@ -419,12 +465,12 @@ TEST_CASE("Model draws retain the preceding morph sample and discard history aft
         for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
             if (mesh.state != MeshUploadState::Ready)
             {
-                if (mesh.state == MeshUploadState::Pending) f.mHost.uploader.Record(MeshHandle{index, 1});
+                if (mesh.state == MeshUploadState::Pending)
+                    f.mHost.uploader.Record(MeshHandle{index, 1});
                 f.mHost.uploader.Complete(MeshHandle{index, 1});
             }
     };
-    const auto weight = [](std::span<const glm::vec4> sample)
-    {
+    const auto weight = [](std::span<const glm::vec4> sample) {
         REQUIRE(sample.size() >= 3);
         const auto offset = static_cast<uint32_t>(sample[1].z);
         REQUIRE(offset < sample.size());
@@ -435,10 +481,18 @@ TEST_CASE("Model draws retain the preceding morph sample and discard history aft
     ModelPlayer player;
     player.SetModelAsset(kModel);
     world.AddComponent<ModelPlayer>(entity, player);
-    for (int step = 0; step < 40 && draws.items.empty(); ++step) frame();
+    for (int step = 0; step < 40 && draws.items.empty(); ++step)
+        frame();
     REQUIRE(draws.items.size() == 1);
     CHECK(draws.items[0].previousDeformation.empty());
     CHECK(weight(draws.items[0].deformation) == 0.0f);
+
+    const auto *settledSample = draws.items[0].deformation.data();
+    CHECK(draws.items[0].settledDeformation);
+    frame();
+    REQUIRE(draws.items.size() == 1);
+    CHECK(draws.items[0].deformation.data() == settledSample);
+    CHECK(draws.items[0].previousDeformation.data() == settledSample);
 
     overrides.instances[PackEntity(entity)]["root"] = {1.0f};
     frame();
@@ -456,7 +510,8 @@ TEST_CASE("Model draws retain the preceding morph sample and discard history aft
     frame();
     CHECK(draws.items.empty());
     world.AddComponent<ModelPlayer>(entity, player);
-    for (int step = 0; step < 40 && draws.items.empty(); ++step) frame();
+    for (int step = 0; step < 40 && draws.items.empty(); ++step)
+        frame();
     REQUIRE(draws.items.size() == 1);
     CHECK(draws.items[0].previousDeformation.empty());
 }
@@ -491,7 +546,8 @@ TEST_CASE("The last claim frees the prepared model and the records stay for the 
     CHECK(f.mHost.createdMaterials.size() == 2);
 }
 
-TEST_CASE("A reload with the same content is the same entry and changed content is another", "[animation][model-library]")
+TEST_CASE("A reload with the same content is the same entry and changed content is another",
+          "[animation][model-library]")
 {
     LibraryFixture f;
     const ModelLibrary::Claim before = f.mLibrary.Acquire(kModel, &f.mService, "model");
@@ -544,7 +600,7 @@ namespace
 }
 
 TEST_CASE("A reload that lands during preparation supersedes it instead of mixing two catalogs",
-    "[animation][model-preparation]")
+          "[animation][model-preparation]")
 {
     SECTION("a mesh changed after the model was decoded")
     {
@@ -569,7 +625,7 @@ TEST_CASE("A reload that lands during preparation supersedes it instead of mixin
             f.mService.DrainCompletions();
             fresh.Advance();
             for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
-                f.mTextures.Complete(TextureHandle{ index, 1 });
+                f.mTextures.Complete(TextureHandle{index, 1});
         }
         REQUIRE(fresh.GetState() == ModelPreparation::State::Meshes);
         REQUIRE(f.mHost.uploader.queued == 1);
@@ -602,7 +658,7 @@ TEST_CASE("A reload that lands during preparation supersedes it instead of mixin
 }
 
 TEST_CASE("The library gives a changed texture another entry although the model's records are the same",
-    "[animation][model-library]")
+          "[animation][model-library]")
 {
     LibraryFixture f;
     const ModelLibrary::Claim before = f.mLibrary.Acquire(kModel, &f.mService, "model");
@@ -623,23 +679,24 @@ TEST_CASE("Two models that name one mesh share its decoded record and its upload
     f.mAssets.CommitReload();
     ModelPreparation first(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
     ModelPreparation second(f.mHost, f.mTextures, kError, &f.mService, kModel2, "model-2");
-    const auto settle = [&]
-    {
+    const auto settle = [&] {
         for (int frame = 0; frame < 60; ++frame)
         {
             f.mService.DrainCompletions();
             first.Advance();
             second.Advance();
             for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
-                f.mTextures.Complete(TextureHandle{ index, 1 });
-            for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
+                f.mTextures.Complete(TextureHandle{index, 1});
+            for (const auto &[index, mesh] :
+                 std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
                 if (mesh.state != MeshUploadState::Ready)
                 {
                     if (mesh.state == MeshUploadState::Pending)
-                        f.mHost.uploader.Record(MeshHandle{ index, 1 });
-                    f.mHost.uploader.Complete(MeshHandle{ index, 1 });
+                        f.mHost.uploader.Record(MeshHandle{index, 1});
+                    f.mHost.uploader.Complete(MeshHandle{index, 1});
                 }
-            if (first.GetState() == ModelPreparation::State::Ready && second.GetState() == ModelPreparation::State::Ready)
+            if (first.GetState() == ModelPreparation::State::Ready &&
+                second.GetState() == ModelPreparation::State::Ready)
                 return;
         }
     };
@@ -664,20 +721,19 @@ TEST_CASE("A model nobody names any more is released while the scene stays open"
     World world;
     CommandBuffer commands;
     world.EmplaceResource<SceneLoadGroup>();
-    SystemContext context{ world, commands, 0.016f, 0.0, 0 };
+    SystemContext context{world, commands, 0.016f, 0.0, 0};
 
-    const auto frame = [&]
-    {
+    const auto frame = [&] {
         f.mService.DrainCompletions();
         system.OnLoadingUpdate(context);
         for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
-            f.mTextures.Complete(TextureHandle{ index, 1 });
+            f.mTextures.Complete(TextureHandle{index, 1});
         for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
             if (mesh.state != MeshUploadState::Ready)
             {
                 if (mesh.state == MeshUploadState::Pending)
-                    f.mHost.uploader.Record(MeshHandle{ index, 1 });
-                f.mHost.uploader.Complete(MeshHandle{ index, 1 });
+                    f.mHost.uploader.Record(MeshHandle{index, 1});
+                f.mHost.uploader.Complete(MeshHandle{index, 1});
             }
     };
 
@@ -718,7 +774,8 @@ TEST_CASE("A model nobody names any more is released while the scene stays open"
     CHECK(f.mHost.uploader.queued == 1);
 }
 
-TEST_CASE("Clearing an entity's model selection releases the claim like deleting the entity", "[animation][model-system]")
+TEST_CASE("Clearing an entity's model selection releases the claim like deleting the entity",
+          "[animation][model-system]")
 {
     const bool fullUpdate = GENERATE(false, true);
     INFO(std::string(fullUpdate ? "the frame update" : "the loading tick"));
@@ -733,22 +790,21 @@ TEST_CASE("Clearing an entity's model selection releases the claim like deleting
     world.EmplaceResource<EngineModeState>();
     world.EmplaceResource<ModelDrawItems>();
     world.EmplaceResource<ModelMorphOverrides>();
-    SystemContext context{ world, commands, 0.016f, 0.0, 0 };
-    const auto frame = [&]
-    {
+    SystemContext context{world, commands, 0.016f, 0.0, 0};
+    const auto frame = [&] {
         f.mService.DrainCompletions();
         if (fullUpdate)
             system.OnUpdate(context);
         else
             system.OnLoadingUpdate(context);
         for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
-            f.mTextures.Complete(TextureHandle{ index, 1 });
+            f.mTextures.Complete(TextureHandle{index, 1});
         for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
             if (mesh.state != MeshUploadState::Ready)
             {
                 if (mesh.state == MeshUploadState::Pending)
-                    f.mHost.uploader.Record(MeshHandle{ index, 1 });
-                f.mHost.uploader.Complete(MeshHandle{ index, 1 });
+                    f.mHost.uploader.Record(MeshHandle{index, 1});
+                f.mHost.uploader.Complete(MeshHandle{index, 1});
             }
     };
 
@@ -779,7 +835,7 @@ TEST_CASE("Clearing an entity's model selection releases the claim like deleting
 }
 
 TEST_CASE("The model's own record is shared with the prepared model and counted by the asset service",
-    "[animation][model-preparation]")
+          "[animation][model-preparation]")
 {
     LibraryFixture f;
     const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
@@ -834,7 +890,7 @@ TEST_CASE("A texture that failed to upload is tried again by the next reload", "
 }
 
 TEST_CASE("A model that failed is remembered within a revision and tried again after a reload",
-    "[animation][model-library]")
+          "[animation][model-library]")
 {
     LibraryFixture f;
     const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
@@ -843,9 +899,9 @@ TEST_CASE("A model that failed is remembered within a revision and tried again a
         f.mService.DrainCompletions();
         f.mLibrary.Advance();
         for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
-            f.mTextures.Complete(TextureHandle{ index, 1 });
+            f.mTextures.Complete(TextureHandle{index, 1});
         for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
-            f.mHost.uploader.Fail(MeshHandle{ index, 1 });
+            f.mHost.uploader.Fail(MeshHandle{index, 1});
     }
     REQUIRE_FALSE(claim->failure.empty());
 
@@ -861,7 +917,7 @@ TEST_CASE("A model that failed is remembered within a revision and tried again a
 }
 
 TEST_CASE("A full material table makes the model wait for the slots instead of taking the error material",
-    "[animation][model-preparation]")
+          "[animation][model-preparation]")
 {
     LibraryFixture f;
     f.mHost.materialLimit = 2;
@@ -897,17 +953,17 @@ TEST_CASE("A full material table makes the model wait for the slots instead of t
 }
 
 TEST_CASE("A material table that stays full past the wait gives the primitive the error material",
-    "[animation][model-preparation]")
+          "[animation][model-preparation]")
 {
     Fixture f;
     f.mPreparation.SetMaterialWait(std::chrono::milliseconds(0));
     f.mHost.materialLimit = 0;
     f.QueueTexture();
-    f.mTextures.Complete(TextureHandle{ 0, 1 });
+    f.mTextures.Complete(TextureHandle{0, 1});
     for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
         f.Frame();
     REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
-    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    f.mHost.uploader.Complete(MeshHandle{0, 1});
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     const auto model = f.mPreparation.Take();
     REQUIRE(model);
@@ -923,12 +979,12 @@ TEST_CASE("A material the renderer cannot make takes the error material at once"
     Fixture f;
     f.mHost.rejectMaterials = true;
     f.QueueTexture();
-    f.mTextures.Complete(TextureHandle{ 0, 1 });
+    f.mTextures.Complete(TextureHandle{0, 1});
     for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
         f.Frame();
     // no wait, the default wait is seconds long
     REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
-    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    f.mHost.uploader.Complete(MeshHandle{0, 1});
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     CHECK(f.mPreparation.Take()->meshes.at(kMesh.value)[0].material == f.mHost.ErrorMaterial());
 }

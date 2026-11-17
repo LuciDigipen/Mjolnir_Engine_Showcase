@@ -1,0 +1,3314 @@
+{
+  "source": "games/CalderaDemo/source/aircraft/sf50/cirrus_sf-50.blend",
+  "glb_bytes": 243489560,
+  "source_triangles": 2273442,
+  "meshes": 16,
+  "materials": [
+    {
+      "name": "SF50_Interior_10",
+      "normalTexture": {
+        "index": 0,
+        "scale": 0.20000000298023224
+      },
+      "occlusionTexture": {
+        "index": 1
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 2
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_11",
+      "normalTexture": {
+        "index": 3,
+        "scale": 0.5
+      },
+      "occlusionTexture": {
+        "index": 4
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 5
+        },
+        "metallicRoughnessTexture": {
+          "index": 4
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_12",
+      "normalTexture": {
+        "index": 6
+      },
+      "occlusionTexture": {
+        "index": 7
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 8
+        },
+        "metallicRoughnessTexture": {
+          "index": 7
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_01",
+      "normalTexture": {
+        "index": 9
+      },
+      "occlusionTexture": {
+        "index": 10
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 11
+        },
+        "metallicRoughnessTexture": {
+          "index": 10
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_14",
+      "normalTexture": {
+        "index": 12
+      },
+      "occlusionTexture": {
+        "index": 13
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 14
+        },
+        "metallicRoughnessTexture": {
+          "index": 13
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_02_Detail",
+      "normalTexture": {
+        "index": 15
+      },
+      "occlusionTexture": {
+        "index": 16
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 17
+        },
+        "metallicRoughnessTexture": {
+          "index": 16
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_16",
+      "normalTexture": {
+        "index": 18
+      },
+      "occlusionTexture": {
+        "index": 19
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 20
+        },
+        "metallicRoughnessTexture": {
+          "index": 19
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_13",
+      "normalTexture": {
+        "index": 21
+      },
+      "occlusionTexture": {
+        "index": 22
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 23
+        },
+        "metallicRoughnessTexture": {
+          "index": 22
+        }
+      }
+    },
+    {
+      "name": "SF50_Floor02",
+      "normalTexture": {
+        "index": 24
+      },
+      "occlusionTexture": {
+        "index": 25
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 26
+        },
+        "metallicRoughnessTexture": {
+          "index": 25
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_04",
+      "normalTexture": {
+        "index": 27,
+        "scale": 0.30000001192092896
+      },
+      "occlusionTexture": {
+        "index": 28
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 29
+        },
+        "metallicRoughnessTexture": {
+          "index": 28
+        }
+      }
+    },
+    {
+      "emissiveTexture": {
+        "index": 30
+      },
+      "name": "SF50_Interior_15",
+      "normalTexture": {
+        "index": 31
+      },
+      "occlusionTexture": {
+        "index": 32
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 33
+        },
+        "metallicRoughnessTexture": {
+          "index": 32
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_08",
+      "normalTexture": {
+        "index": 34
+      },
+      "occlusionTexture": {
+        "index": 35
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 36
+        },
+        "metallicRoughnessTexture": {
+          "index": 35
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_03",
+      "normalTexture": {
+        "index": 37,
+        "scale": 0.20000000298023224
+      },
+      "occlusionTexture": {
+        "index": 38
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 39
+        },
+        "metallicRoughnessTexture": {
+          "index": 38
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_09",
+      "normalTexture": {
+        "index": 40,
+        "scale": 0.20000000298023224
+      },
+      "occlusionTexture": {
+        "index": 41
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 42
+        },
+        "metallicRoughnessTexture": {
+          "index": 41
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_05",
+      "normalTexture": {
+        "index": 43,
+        "scale": 0.30000001192092896
+      },
+      "occlusionTexture": {
+        "index": 44
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 45
+        },
+        "metallicRoughnessTexture": {
+          "index": 44
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "emissiveTexture": {
+        "index": 46
+      },
+      "name": "SF50_Interior_Decal_01",
+      "occlusionTexture": {
+        "index": 47
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 48
+        },
+        "metallicRoughnessTexture": {
+          "index": 47
+        }
+      }
+    },
+    {
+      "alphaMode": "MASK",
+      "name": "SF50_Pedals",
+      "normalTexture": {
+        "index": 49
+      },
+      "occlusionTexture": {
+        "index": 50
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 51
+        },
+        "metallicRoughnessTexture": {
+          "index": 50
+        }
+      }
+    },
+    {
+      "name": "SF50_Panel01",
+      "normalTexture": {
+        "index": 52,
+        "scale": 0.10000000149011612
+      },
+      "occlusionTexture": {
+        "index": 53
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 54
+        },
+        "metallicRoughnessTexture": {
+          "index": 53
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_03_Detail_Map",
+      "normalTexture": {
+        "index": 55,
+        "scale": 0.30000001192092896
+      },
+      "occlusionTexture": {
+        "index": 56
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 57
+        },
+        "metallicRoughnessTexture": {
+          "index": 56
+        }
+      }
+    },
+    {
+      "name": "SF50_Panel02",
+      "normalTexture": {
+        "index": 58,
+        "scale": 0.10000000149011612
+      },
+      "occlusionTexture": {
+        "index": 59
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 60
+        },
+        "metallicRoughnessTexture": {
+          "index": 59
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_06",
+      "normalTexture": {
+        "index": 61
+      },
+      "occlusionTexture": {
+        "index": 62
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 63
+        },
+        "metallicRoughnessTexture": {
+          "index": 62
+        }
+      }
+    },
+    {
+      "name": "SF50_DoorSupport",
+      "normalTexture": {
+        "index": 64
+      },
+      "occlusionTexture": {
+        "index": 65
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 66
+        },
+        "metallicRoughnessTexture": {
+          "index": 65
+        }
+      }
+    },
+    {
+      "name": "SF50_Door03",
+      "normalTexture": {
+        "index": 67
+      },
+      "occlusionTexture": {
+        "index": 68
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 69
+        },
+        "metallicRoughnessTexture": {
+          "index": 68
+        }
+      }
+    },
+    {
+      "name": "SF50_Floor01",
+      "normalTexture": {
+        "index": 70
+      },
+      "occlusionTexture": {
+        "index": 71
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 72
+        },
+        "metallicRoughnessTexture": {
+          "index": 71
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_10_Detail_Map",
+      "normalTexture": {
+        "index": 73
+      },
+      "occlusionTexture": {
+        "index": 74
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 75
+        },
+        "metallicRoughnessTexture": {
+          "index": 74
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_07",
+      "normalTexture": {
+        "index": 76,
+        "scale": 0.30000001192092896
+      },
+      "occlusionTexture": {
+        "index": 77
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 78
+        },
+        "metallicRoughnessTexture": {
+          "index": 77
+        }
+      }
+    },
+    {
+      "name": "SF50_Interior_09_Detail_Map",
+      "normalTexture": {
+        "index": 79
+      },
+      "occlusionTexture": {
+        "index": 80
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 81
+        },
+        "metallicRoughnessTexture": {
+          "index": 80
+        }
+      }
+    },
+    {
+      "name": "SF50_Door01",
+      "normalTexture": {
+        "index": 82
+      },
+      "occlusionTexture": {
+        "index": 83
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 84
+        },
+        "metallicRoughnessTexture": {
+          "index": 83
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_OnlyNormal",
+      "normalTexture": {
+        "index": 85
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 86
+        }
+      }
+    },
+    {
+      "name": "New_Battery_Panels",
+      "normalTexture": {
+        "index": 87
+      },
+      "occlusionTexture": {
+        "index": 88
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 89
+        },
+        "metallicRoughnessTexture": {
+          "index": 88
+        }
+      }
+    },
+    {
+      "name": "SF50_Yoke_Detail",
+      "normalTexture": {
+        "index": 90
+      },
+      "occlusionTexture": {
+        "index": 91
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 92
+        },
+        "metallicRoughnessTexture": {
+          "index": 91
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Interior_Stitches",
+      "normalTexture": {
+        "index": 93
+      },
+      "occlusionTexture": {
+        "index": 94
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 95
+        },
+        "metallicRoughnessTexture": {
+          "index": 94
+        }
+      }
+    },
+    {
+      "name": "$AS3000_TSC_3",
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "doubleSided": true,
+      "name": "SF50_SunVisor01",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.3499999940395355,
+          0.28999999165534973,
+          0.18000000715255737,
+          0.4000000059604645
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.11999999731779099
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "doubleSided": true,
+      "name": "SF50_Engine_Glass",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.7200000286102295,
+          0.8199999928474426,
+          0.8999999761581421,
+          0.18000000715255737
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.11999999731779099
+      }
+    },
+    {
+      "name": "SF50_Interior_15_Detail",
+      "normalTexture": {
+        "index": 96
+      },
+      "occlusionTexture": {
+        "index": 97
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 98
+        },
+        "metallicRoughnessTexture": {
+          "index": 97
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "emissiveTexture": {
+        "index": 99
+      },
+      "name": "SF50_Interior_Decal_02",
+      "occlusionTexture": {
+        "index": 100
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 101
+        },
+        "metallicRoughnessTexture": {
+          "index": 100
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "$RegistrationNumberInt",
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0,
+        "roughnessFactor": 0.10000000149011612
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "Text_Decal_New",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 102
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Cockpit_Ribbons",
+      "normalTexture": {
+        "index": 103
+      },
+      "occlusionTexture": {
+        "index": 104
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 105
+        },
+        "metallicFactor": 0,
+        "metallicRoughnessTexture": {
+          "index": 104
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Ribbons_NormOnly",
+      "normalTexture": {
+        "index": 106
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 107
+        }
+      }
+    },
+    {
+      "emissiveTexture": {
+        "index": 108
+      },
+      "name": "LIGHTS_MS",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 109
+        }
+      }
+    },
+    {
+      "emissiveTexture": {
+        "index": 110
+      },
+      "name": "Text_Decal_New_2",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 111
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "doubleSided": true,
+      "name": "SF50_Red_Glass",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.75,
+          0.00800000037997961,
+          0.004000000189989805,
+          0.44999998807907104
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.11999999731779099
+      }
+    },
+    {
+      "name": "SF50_Door04",
+      "normalTexture": {
+        "index": 112,
+        "scale": 0.6000000238418579
+      },
+      "occlusionTexture": {
+        "index": 113
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 114
+        },
+        "metallicRoughnessTexture": {
+          "index": 113
+        }
+      }
+    },
+    {
+      "name": "SF50_Door_Lock_open",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0,
+          0.1942446082830429,
+          0,
+          1
+        ],
+        "metallicFactor": 0
+      }
+    },
+    {
+      "name": "SF50_Door02",
+      "normalTexture": {
+        "index": 115
+      },
+      "occlusionTexture": {
+        "index": 116
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 117
+        },
+        "metallicRoughnessTexture": {
+          "index": 116
+        }
+      }
+    },
+    {
+      "name": "SF50_Door_Lock_Closed",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.16546763479709625,
+          0,
+          0,
+          1
+        ],
+        "metallicFactor": 0
+      }
+    },
+    {
+      "name": "SF50_Screen",
+      "occlusionTexture": {
+        "index": 118
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 119
+        },
+        "metallicRoughnessTexture": {
+          "index": 118
+        }
+      }
+    },
+    {
+      "doubleSided": true,
+      "name": "SF50_Common_Machinery_Metal",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.2199999988079071,
+          0.23999999463558197,
+          0.25999999046325684,
+          1
+        ],
+        "metallicFactor": 0.8500000238418579,
+        "roughnessFactor": 0.47999998927116394
+      }
+    },
+    {
+      "name": "SF50_Cargo_Paint_And_Floor",
+      "normalTexture": {
+        "index": 120
+      },
+      "occlusionTexture": {
+        "index": 121
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 122
+        },
+        "metallicRoughnessTexture": {
+          "index": 121
+        }
+      }
+    },
+    {
+      "name": "SF50_Cargo_Details",
+      "normalTexture": {
+        "index": 123
+      },
+      "occlusionTexture": {
+        "index": 124
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 125
+        },
+        "metallicRoughnessTexture": {
+          "index": 124
+        }
+      }
+    },
+    {
+      "name": "SF50_Cargo_Carbon",
+      "normalTexture": {
+        "index": 126
+      },
+      "occlusionTexture": {
+        "index": 127
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 128
+        },
+        "metallicRoughnessTexture": {
+          "index": 127
+        }
+      }
+    },
+    {
+      "name": "SF50_Rubber",
+      "occlusionTexture": {
+        "index": 129
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 130
+        },
+        "metallicRoughnessTexture": {
+          "index": 129
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Cargo_Stitches",
+      "normalTexture": {
+        "index": 131
+      },
+      "occlusionTexture": {
+        "index": 132
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 133
+        },
+        "metallicRoughnessTexture": {
+          "index": 132
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "Thread_Decals",
+      "normalTexture": {
+        "index": 134
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "emissiveTexture": {
+        "index": 135
+      },
+      "name": "SF50_Ext_Decals",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 136
+        },
+        "metallicFactor": 0,
+        "roughnessFactor": 0.5
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_LiveryDecal",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 137
+        },
+        "metallicFactor": 0,
+        "roughnessFactor": 0.25
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Livery_Color_3",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.13013647496700287,
+          0.12213877588510513,
+          0.12477181851863861,
+          1
+        ]
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Fuselage_2",
+      "normalTexture": {
+        "index": 138
+      },
+      "occlusionTexture": {
+        "index": 139
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 140
+        },
+        "metallicRoughnessTexture": {
+          "index": 139
+        }
+      }
+    },
+    {
+      "name": "SF50_CAPS_Panels",
+      "normalTexture": {
+        "index": 141
+      },
+      "occlusionTexture": {
+        "index": 142
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 143
+        },
+        "metallicRoughnessTexture": {
+          "index": 142
+        }
+      }
+    },
+    {
+      "name": "SF50_Ext_Decals_Ribbons_std",
+      "normalTexture": {
+        "index": 144
+      },
+      "occlusionTexture": {
+        "index": 145
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 146
+        },
+        "metallicRoughnessTexture": {
+          "index": 145
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Ext_Decals_Ribbons_Norm_Only_mat",
+      "normalTexture": {
+        "index": 147,
+        "scale": 0.699999988079071
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Int_RIBBONS_mat",
+      "normalTexture": {
+        "index": 148,
+        "scale": 0.25
+      },
+      "occlusionTexture": {
+        "index": 149
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.3488648533821106,
+          0.3488648533821106,
+          0.3488648533821106,
+          1
+        ],
+        "metallicRoughnessTexture": {
+          "index": 149
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Ext_Decals_Ribbons_mat",
+      "normalTexture": {
+        "index": 150
+      },
+      "occlusionTexture": {
+        "index": 151
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 152
+        },
+        "metallicRoughnessTexture": {
+          "index": 151
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Livery_Color_2",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.9130986332893372,
+          0.9130986332893372,
+          0.9130986332893372,
+          1
+        ]
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "doubleSided": true,
+      "name": "SF50_Ext_Glass_mat",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.7200000286102295,
+          0.8199999928474426,
+          0.8999999761581421,
+          0.18000000715255737
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.11999999731779099
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Fuselage_3",
+      "normalTexture": {
+        "index": 153
+      },
+      "occlusionTexture": {
+        "index": 154
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 155
+        },
+        "metallicRoughnessTexture": {
+          "index": 154
+        }
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Fuselage_1",
+      "normalTexture": {
+        "index": 156
+      },
+      "occlusionTexture": {
+        "index": 157
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 158
+        },
+        "metallicRoughnessTexture": {
+          "index": 157
+        }
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Wings_2",
+      "normalTexture": {
+        "index": 159
+      },
+      "occlusionTexture": {
+        "index": 160
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 161
+        },
+        "metallicRoughnessTexture": {
+          "index": 160
+        }
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Wings_1",
+      "normalTexture": {
+        "index": 162
+      },
+      "occlusionTexture": {
+        "index": 163
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 164
+        },
+        "metallicRoughnessTexture": {
+          "index": 163
+        }
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Fuselage_4",
+      "normalTexture": {
+        "index": 165
+      },
+      "occlusionTexture": {
+        "index": 166
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 167
+        },
+        "metallicRoughnessTexture": {
+          "index": 166
+        }
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Tail_1",
+      "normalTexture": {
+        "index": 168
+      },
+      "occlusionTexture": {
+        "index": 169
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 170
+        },
+        "metallicRoughnessTexture": {
+          "index": 169
+        }
+      }
+    },
+    {
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.800000011920929,
+          "clearcoatRoughnessFactor": 0.11999999731779099
+        }
+      },
+      "name": "SF50_Tail_2",
+      "normalTexture": {
+        "index": 171
+      },
+      "occlusionTexture": {
+        "index": 172
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 173
+        },
+        "metallicRoughnessTexture": {
+          "index": 172
+        }
+      }
+    },
+    {
+      "name": "SF50_ExteriorParts_03",
+      "normalTexture": {
+        "index": 174
+      },
+      "occlusionTexture": {
+        "index": 175
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 176
+        },
+        "metallicRoughnessTexture": {
+          "index": 175
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Rivets_Metallic",
+      "normalTexture": {
+        "index": 177
+      },
+      "occlusionTexture": {
+        "index": 178
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 179
+        },
+        "metallicRoughnessTexture": {
+          "index": 178
+        }
+      }
+    },
+    {
+      "name": "SF50_ExteriorParts_01",
+      "normalTexture": {
+        "index": 180
+      },
+      "occlusionTexture": {
+        "index": 181
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 182
+        },
+        "metallicRoughnessTexture": {
+          "index": 181
+        }
+      }
+    },
+    {
+      "name": "SF50_ExteriorParts_02",
+      "normalTexture": {
+        "index": 183
+      },
+      "occlusionTexture": {
+        "index": 184
+      },
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.01850022003054619,
+          0.020288562402129173,
+          0.024157632142305374,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 185
+        },
+        "metallicRoughnessTexture": {
+          "index": 184
+        }
+      }
+    },
+    {
+      "name": "SF50_Ext-Engine_Inside_mat",
+      "normalTexture": {
+        "index": 186
+      },
+      "occlusionTexture": {
+        "index": 187
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 188
+        },
+        "metallicRoughnessTexture": {
+          "index": 187
+        }
+      }
+    },
+    {
+      "name": "SF50_RLGear_WheelBreak",
+      "normalTexture": {
+        "index": 189
+      },
+      "occlusionTexture": {
+        "index": 190
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 191
+        },
+        "metallicFactor": 0,
+        "metallicRoughnessTexture": {
+          "index": 190
+        }
+      }
+    },
+    {
+      "name": "SF50_FGear",
+      "normalTexture": {
+        "index": 192
+      },
+      "occlusionTexture": {
+        "index": 193
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 194
+        },
+        "metallicRoughnessTexture": {
+          "index": 193
+        }
+      }
+    },
+    {
+      "name": "SF50_FLGear_04_Non_Paint",
+      "normalTexture": {
+        "index": 195
+      },
+      "occlusionTexture": {
+        "index": 196
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 197
+        },
+        "metallicRoughnessTexture": {
+          "index": 196
+        }
+      }
+    },
+    {
+      "name": "SF50_FLGear_Bolt02",
+      "normalTexture": {
+        "index": 198
+      },
+      "occlusionTexture": {
+        "index": 199
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 200
+        },
+        "metallicRoughnessTexture": {
+          "index": 199
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_FLGear_Decals01",
+      "normalTexture": {
+        "index": 201
+      },
+      "occlusionTexture": {
+        "index": 202
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 203
+        },
+        "metallicRoughnessTexture": {
+          "index": 202
+        }
+      }
+    },
+    {
+      "name": "SF50_Seat_01",
+      "normalTexture": {
+        "index": 204,
+        "scale": 0.20000000298023224
+      },
+      "occlusionTexture": {
+        "index": 205
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 206
+        },
+        "metallicRoughnessTexture": {
+          "index": 205
+        }
+      }
+    },
+    {
+      "name": "SF50_Seat_02",
+      "normalTexture": {
+        "index": 207,
+        "scale": 0.20000000298023224
+      },
+      "occlusionTexture": {
+        "index": 208
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 209
+        },
+        "metallicRoughnessTexture": {
+          "index": 208
+        }
+      }
+    },
+    {
+      "name": "SF50_Seat_03",
+      "normalTexture": {
+        "index": 210
+      },
+      "occlusionTexture": {
+        "index": 211
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 212
+        },
+        "metallicRoughnessTexture": {
+          "index": 211
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Seat_Stiches_Decal",
+      "normalTexture": {
+        "index": 213
+      },
+      "occlusionTexture": {
+        "index": 214
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 215
+        },
+        "metallicRoughnessTexture": {
+          "index": 214
+        }
+      }
+    },
+    {
+      "name": "SF50_Seat_01_Family",
+      "normalTexture": {
+        "index": 216,
+        "scale": 0.20000000298023224
+      },
+      "occlusionTexture": {
+        "index": 217
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 218
+        },
+        "metallicRoughnessTexture": {
+          "index": 217
+        }
+      }
+    },
+    {
+      "name": "SF50_Seat_03_Family",
+      "normalTexture": {
+        "index": 219,
+        "scale": 0.20000000298023224
+      },
+      "occlusionTexture": {
+        "index": 220
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 221
+        },
+        "metallicRoughnessTexture": {
+          "index": 220
+        }
+      }
+    },
+    {
+      "name": "SF50_FuelCap",
+      "normalTexture": {
+        "index": 222
+      },
+      "occlusionTexture": {
+        "index": 223
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 224
+        },
+        "metallicRoughnessTexture": {
+          "index": 223
+        }
+      }
+    },
+    {
+      "alphaMode": "BLEND",
+      "name": "SF50_Livery_Color_1",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          0,
+          0,
+          1
+        ]
+      }
+    }
+  ],
+  "images": 186,
+  "skins": 1,
+  "animations": 1,
+  "material_features": {
+    "normalTexture": 71,
+    "occlusionTexture": 71,
+    "emissiveTexture": 6,
+    "metallicRoughnessTexture": 71,
+    "clearcoat": 8
+  },
+  "texture_resizes": [
+    {
+      "image": "shared/ext_engine_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_03_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_02_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_07_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door01_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_decal_02",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/cockpit_ribbons_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/exteriorparts_03_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/visionjet_interior_10_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/lights_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/decals_02_base_color",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_stitches_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_details_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_14_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/floor01_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door03_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_04_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/ext_engine_base_color",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_doors/door04_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_15_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door_support_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/common_rivets_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_08_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_04_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/interior_12_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/cockpit_ribbons_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/tail_1_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_01_base_color",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_03_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_details_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_13_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/floor01_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door03_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_04_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/stitches_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_doors/door04_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_15_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_decals01_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_03_family_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_02_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_02_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door01_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/cockpit_ribbons_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/rlgear_tyre_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/interior_decal_02_base_color",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_decal_01_e",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_06_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_details_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_13_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/stitches_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_10_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_doors/door02_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_decals01_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_03_family_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/common_rivets_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_08_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_04_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/interior_12_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_11_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/tail_1_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "seats_cockpit/seat_01_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/floor02_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/rlgear_wheelbreak_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_carbon_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_13_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/exteriorparts_03_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_10_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_doors/door02_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_15_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_bolt02_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/floor02_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_03_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/pedals_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_carbon_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/caps_panels_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/interior_decal_01_emis",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_02_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/rlgear_tyre_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_01_family_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/decals_02_emissive",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_06_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/exteriorparts_03_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "seats_cockpit/seat_01_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_09_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_doors/cockpit_dashboard_02_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_bolt02_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/floor02_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/common_rivets_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_08_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_04_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_11_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_01_family_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "seats_cockpit/seat_01_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_carbon_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/exteriorparts_01_occlusion_roughness_metallic",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_09_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_doors/cockpit_dashboard_02_base_color",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/pedals_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "landing_gear_nose/flgear_bolt02_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/pedals_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_doors/door04_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door_support_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/detail01_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/caps_panels_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/tail_2_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/interior_decal_01_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_02_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/rlgear_tyre_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_01_family_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/exteriorparts_01_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_09_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/yoke_detail_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/stitches_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/panel02_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/panel01_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "fuselage_details/exteriorparts_02_base_color",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        2048,
+        2048
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_03_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_02_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/common_decal_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_07_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door01_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_10_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/lights_emis",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_05_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/exteriorparts_01_base_color",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_decal_01",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/yoke_detail_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_stitches_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_paint_and_floor_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_14_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/panel02_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/panel01_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/rlgear_wheelbreak_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_05_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/ext_engine_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_16_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_01_occlusion_roughness_metallic",
+      "old": [
+        4096,
+        4096
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/caps_carbon_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/door_support_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/detail01_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/interior_12_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/tail_2_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_16_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/yoke_detail_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/seat_stitches_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cargo_compartment/cargo_paint_and_floor_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/panel02_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_14_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/panel01_base_color",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "shared/rlgear_wheelbreak_normal_opengl",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/floor01_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "image": "cabin_and_cockpit/interior_04_occlusion_roughness_metallic",
+      "old": [
+        2048,
+        2048
+      ],
+      "new": [
+        1024,
+        1024
+      ]
+    }
+  ],
+  "glass_approximation": [
+    "SF50_Engine_Glass",
+    "SF50_Ext_Glass_mat",
+    "SF50_Red_Glass",
+    "SF50_SunVisor01"
+  ],
+  "occlusion_connections": 71,
+  "extensions_used": [
+    "KHR_materials_clearcoat"
+  ],
+  "material_limitations": "Core PBR plus specular/IOR and clearcoat. Fresnel windows use alpha blend; no transmission or procedural-shader baking.",
+  "source_fps": 24.0,
+  "triangles": 2273442,
+  "vertices": 1697349,
+  "primitives": 161,
+  "clip_duration_seconds": 4.625,
+  "rig_bones": 126
+}
