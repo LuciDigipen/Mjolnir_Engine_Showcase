@@ -501,6 +501,13 @@ if(BUILD_TESTING)
             -Repository "${CMAKE_SOURCE_DIR}" -BuildDirectory "${CMAKE_BINARY_DIR}"
             -Publisher "$<TARGET_FILE:ShaderPublisher>" -Compiler "$<TARGET_FILE:shader_compiler_driver>"
             -CxxCompiler "${CMAKE_CXX_COMPILER}" -MakeProgram "${CMAKE_MAKE_PROGRAM}")
+    # The nested Ninja configure needs the same compiler and SDK environment as this configure.
+    foreach(variable PATH INCLUDE LIB LIBPATH)
+        if(DEFINED ENV{${variable}})
+            string(REPLACE ";" "\\;" value "$ENV{${variable}}")
+            set_property(TEST shader_publication_fixture APPEND PROPERTY ENVIRONMENT "${variable}=${value}")
+        endif()
+    endforeach()
     add_test(NAME surface_material_discovery
         COMMAND "${CMAKE_COMMAND}" -DSLANGC_EXECUTABLE=${SLANGC_EXECUTABLE}
                 -P "${CMAKE_SOURCE_DIR}/tools/tests/SurfaceMaterialDiscovery.cmake")
