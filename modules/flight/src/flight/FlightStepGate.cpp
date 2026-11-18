@@ -9,6 +9,7 @@
 #include <flight/FlightStepGate.h>
 
 #include <flight/AircraftRuntime.h>
+#include <flight/FlightActuators.h>
 #include <flight/FlightEnvironment.h>
 #include <flight/FlightFrames.h>
 #include <flight/components/Aircraft.h>
@@ -78,7 +79,14 @@ namespace mir
         runtime.additionalWind = glm::vec3{ 0.0f };
     }
 
-    void FlightStepGate::RunActuators(Aircraft &, float) {}
+    void FlightStepGate::RunActuators(Aircraft &aircraft, float dt)
+    {
+        if (aircraft.runtime.config == nullptr)
+            return;
+
+        AircraftRuntime &runtime = aircraft.runtime;
+        StepActuators(*runtime.config, runtime.controls, runtime.commands, runtime.actuators, dt);
+    }
 
     void FlightStepGate::RunPropulsion(Aircraft &, float) {}
 

@@ -49,7 +49,15 @@ namespace
         "inertia": { "diagonal": [1000.0, 2000.0, 2500.0] },
         "centerOfMass": [0.5, 0.0, 0.2],
         "reference": { "area": 16.0, "span": 11.0, "chord": 1.5 },
-        "camera": { "eye": [0.8, 0.0, -0.4], "chaseDistance": 12.0, "chaseHeight": 3.0 }
+        "camera": { "eye": [0.8, 0.0, -0.4], "chaseDistance": 12.0, "chaseHeight": 3.0 },
+        "throttleRate": 0.5,
+        "actuators": {
+            "elevator": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+            "aileron": { "maxDeflectionDeg": 20.0, "rateDegPerSec": 80.0, "delay": 0.05 },
+            "rudder": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+            "flaps": { "detentsDeg": [0.0, 10.0, 20.0, 30.0], "rateDegPerSec": 5.0 },
+            "trim": { "stepDeg": 0.5, "maxDeg": 10.0 }
+        }
     })";
 
     struct RawConfig

@@ -16,8 +16,11 @@ target_sources(engine_flight PRIVATE
     src/flight/AircraftConfigSystem.cpp
     src/flight/AirData.cpp
     src/flight/ComponentRegistration.cpp
+    src/flight/FlightActuators.cpp
     src/flight/FlightEnvironment.cpp
     src/flight/FlightFrames.cpp
+    src/flight/FlightInput.cpp
+    src/flight/FlightInputSystem.cpp
     src/flight/FlightModule.cpp
     src/flight/FlightStepGate.cpp
 )

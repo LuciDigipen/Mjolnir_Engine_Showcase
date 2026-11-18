@@ -33,6 +33,7 @@ namespace mir
         // Relative to the game's assets root.
         char config[kFieldStringCapacity] = {};
         AerodynamicTier tier = AerodynamicTier::L2;
+        bool playerInput = true;
 
         AircraftRuntime runtime;
     };
@@ -43,6 +44,7 @@ namespace mir
         { .mName = "config", .mKind = FieldKind::String, .mOffset = offsetof(Aircraft, config) },
         { .mName = "tier", .mKind = FieldKind::Int, .mOffset = offsetof(Aircraft, tier),
          .mWidget = FieldWidget::Enum, .mEnumNames = kAerodynamicTierNames },
+        { .mName = "playerInput", .mKind = FieldKind::Bool, .mOffset = offsetof(Aircraft, playerInput) },
     };
 
     // runtime is this run's live state, never saved.

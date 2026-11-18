@@ -40,6 +40,34 @@ namespace mir
             std::string model;
         };
 
+        struct Actuator
+        {
+            float maxDeflection = 0.0f; // radians
+            float rate = 0.0f;          // radians per second
+            float delay = 0.0f;         // seconds
+        };
+
+        struct Flaps
+        {
+            std::vector<float> detents; // radians, strictly increasing
+            float rate = 0.0f;          // radians per second
+        };
+
+        struct Trim
+        {
+            float step = 0.0f; // radians
+            float max = 0.0f;  // radians
+        };
+
+        struct Actuators
+        {
+            Actuator elevator;
+            Actuator aileron;
+            Actuator rudder;
+            Flaps flaps;
+            Trim trim;
+        };
+
         int version = 0;
         float mass = 0.0f;
         glm::vec3 inertiaDiagonal{0.0f};
@@ -49,6 +77,8 @@ namespace mir
         Reference reference;
         Camera camera;
         std::vector<Node> nodes;
+        float throttleRate = 0.0f; // per second
+        Actuators actuators;
     };
 
     // On failure error is "<json path>: <reason>", or the parser message for malformed JSON.

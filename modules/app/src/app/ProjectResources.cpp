@@ -10,6 +10,7 @@
 
 #include <core/ecs/World.h>
 #include <core/fs/Paths.h>
+#include <flight/FlightInput.h>
 #include <input/DefaultInputMap.h>
 #include <physics_layers/PhysicsLayerSettings.h>
 
@@ -21,6 +22,7 @@ namespace mir
         {
             InputMap map = InputMap::LoadFile(settingsPath).value_or(InputMap{});
             AddDefaultActions(map);
+            AddFlightDefaultActions(map);
             return map;
         }
     } // namespace

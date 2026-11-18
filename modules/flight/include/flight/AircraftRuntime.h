@@ -17,9 +17,66 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 
+#include <cstddef>
+#include <cstdint>
+
 namespace mir
 {
     struct AircraftConfig;
+
+    enum class FlightCommand : uint8_t
+    {
+        FlapsUp,
+        FlapsDown,
+        TrimUp,
+        TrimDown,
+    };
+
+    inline constexpr std::size_t kFlightCommandCapacity = 16;
+
+    // Discrete presses collected during a frame, applied in order by the next fixed step.
+    struct FlightCommandQueue
+    {
+        FlightCommand commands[kFlightCommandCapacity]{};
+        std::size_t count = 0;
+
+        bool Push(FlightCommand command)
+        {
+            if (count == kFlightCommandCapacity)
+                return false;
+            commands[count++] = command;
+            return true;
+        }
+
+        void Clear() { count = 0; }
+    };
+
+    // Analog controls held at the end of the frame.
+    struct FlightControls
+    {
+        float pitch = 0.0f;
+        float roll = 0.0f;
+        float yaw = 0.0f;
+        bool throttleUp = false;
+        bool throttleDown = false;
+        bool brake = false;
+    };
+
+    // Actuator deflections in radians, throttle in 0..1.
+    struct ActuatorState
+    {
+        float elevator = 0.0f;
+        float aileron = 0.0f;
+        float rudder = 0.0f;
+        float flaps = 0.0f;
+        float elevatorLag = 0.0f;
+        float aileronLag = 0.0f;
+        float rudderLag = 0.0f;
+        int flapDetent = 0;
+        float trim = 0.0f;
+        float throttle = 0.0f;
+        bool brake = false;
+    };
 
     struct AircraftState
     {
@@ -46,6 +103,9 @@ namespace mir
         // Script- and system-written wind, consumed and cleared by the environment stage.
         glm::vec3 additionalWind{ 0.0f };
         AirData airData;
+        FlightControls controls;
+        FlightCommandQueue commands;
+        ActuatorState actuators;
         // The path the RigidBody was last written for, and its decoded configuration; null until one loads.
         char appliedConfig[kFieldStringCapacity] = {};
         const AircraftConfig *config = nullptr;

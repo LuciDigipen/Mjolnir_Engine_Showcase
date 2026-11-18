@@ -20,7 +20,14 @@ aircraft whose config did not load.
 model (ISA by default, or a constant density) and the global wind. The environment stage samples the
 atmosphere at the body position, adds the aircraft's `additionalWind` to the global wind and writes the
 result into `AircraftRuntime::airData`, then clears `additionalWind`. The gate reads the resource once per
-step and uses the defaults when it is missing. The later pipeline stage functions are still empty.
+step and uses the defaults when it is missing. The actuator stage consumes the queued commands and the held
+controls; the propulsion, gear and aerodynamic stages are still empty.
+
+`FlightInputSystem` runs in Update, after PreUpdate's `InputSystem` and before the frame's fixed steps. For
+every `Aircraft` with `playerInput` it copies the pitch, roll, yaw, throttle and brake actions into
+`AircraftRuntime::controls` and appends one command per fresh flap or trim press to
+`AircraftRuntime::commands`. The actuator stage drains that queue on the first fixed step after the frame, so
+a frame without a fixed step keeps its commands for the next one.
 
 ```cpp
 mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver));
@@ -34,8 +41,12 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `AircraftConfig`, `ParseAircraftConfig`, `AircraftConfigDecoder` | `<flight/AircraftConfig.h>` | the file's values, its parser and the raw-blob decoder |
 | `AircraftConfigStore`, `MakeAircraftConfigSource` | `<flight/AircraftConfigStore.h>` | cached decode by path, fed by the asset cache |
 | `AircraftConfigSystem`, `WriteMassProperties` | `<flight/AircraftConfigSystem.h>` | FixedUpdate system that writes mass properties |
-| `FlightModule` | `<flight/FlightModule.h>` | registers components, the config system and the step gate |
+| `FlightModule` | `<flight/FlightModule.h>` | registers components, the input system, the config system and the step gate |
 | `FlightStepGate` | `<flight/FlightStepGate.h>` | the before/after step pipeline |
+| `FlightInput`, `AddFlightDefaultActions` | `<flight/FlightInput.h>` | the flight action names and their default keyboard and gamepad bindings |
+| `FlightInputSystem` | `<flight/FlightInputSystem.h>` | Update system that reads the flight actions and queues discrete commands |
+| `StepActuators` | `<flight/FlightActuators.h>` | the pure actuator stage over an `ActuatorState` |
+| `FlightControls`, `FlightCommandQueue`, `ActuatorState` | `<flight/AircraftRuntime.h>` | held controls, the discrete-command FIFO and the actuator state |
 | `FlightEnvironment`, `DensityModel`, `AtmosphereSample`, `SampleAtmosphere` | `<flight/FlightEnvironment.h>` | the World's air resource and the density/sound sample at an altitude |
 | `AirData`, `ComputeAirData`, `kAirDataMinSpeed` | `<flight/AirData.h>` | body-frame velocity relative to the air and the quantities derived from it |
 | `BodyToLocal`, `LocalToBody`, `InertiaBodyToLocal` | `<flight/FlightFrames.h>` | the one body/local conversion |
@@ -64,19 +75,52 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   the constant model returns `constantDensity` and a fixed speed of sound at every altitude.
 - Products of inertia in the file use the `RigidBody` convention: the file holds `Ixy, Ixz, Iyz` and the tensor
   holds their negatives. The parser rejects non-finite values and reports every error as `<json path>: <reason>`.
+- `FlightInputSystem` only writes aircraft with `playerInput`; input never reaches an AI or parked aircraft.
+  A frame's analog controls are the latest values, and its fresh presses are appended to a 16-command FIFO in
+  action-table order: `FlightFlapsUp`, `FlightFlapsDown`, `FlightTrimUp`, `FlightTrimDown`. Further presses that
+  frame are dropped.
+- The actuator stage drains the FIFO on the first fixed step after the frame and applies the commands in order:
+  flaps move the detent index by -1/+1 inside its list, trim adds +/-`stepDeg` clamped to +/-`maxDeg`, then
+  throttle changes by `(up - down) * throttleRate * dt` clamped to 0..1.
+- A surface target is the command times `maxDeflectionDeg`; the elevator target adds trim and is clamped to its
+  own maximum. The command passes a first-order lag with time constant `delay` (exact `1 - exp(-dt/delay)`,
+  0 = pass through), then the actual deflection moves toward the lagged value by at most `rateDegPerSec * dt`.
+  Flaps move toward `detentsDeg[flapDetent]` at their own rate.
 
 ## State
 
 *As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
-resource and air data work. `FlightStepGate` is attached and reads state and air data, but the actuator,
+resource, air data and actuator stage work. `FlightStepGate` is attached and reads state and air data, but the
 propulsion, gear and aerodynamic stages are stubs. There is no hot reload yet; the store is cleared only with
 the module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
 aircraft, rest and reverse flow, ISA and constant density, the additional wind through a fixed step),
-`FlightFrames` (axis mapping, round trip, gravity, air angles) and `FlightStepGate` (control-moment signs,
-state from the step, detach).
+`FlightFrames` (axis mapping, round trip, gravity, air angles), `FlightInput` (action names and types, default
+bindings, idempotent merge, a rebound action kept), `FlightActuators` (rate limit and settle, lag, trim and flap
+commands in order, throttle, surface signs, a frame with no fixed step, input through the physics fixture) and
+`FlightStepGate` (control-moment signs, state from the step, detach).
+
+## Flight input
+
+| Action | Type | Gamepad | Keyboard |
+|---|---|---|---|
+| `FlightPitch` | Axis1D | Left stick Y | S +1, W -1 |
+| `FlightRoll` | Axis1D | Left stick X | D +1, A -1 |
+| `FlightYaw` | Axis1D | Right trigger +1, left trigger -1 | E +1, Q -1 |
+| `FlightThrottleUp` | Button | A | R |
+| `FlightThrottleDown` | Button | B | F |
+| `FlightBrake` | Button | X | B |
+| `FlightFlapsUp` | Button | D-pad up | Left bracket |
+| `FlightFlapsDown` | Button | D-pad down | Right bracket |
+| `FlightTrimUp` | Button | D-pad left | T |
+| `FlightTrimDown` | Button | D-pad right | G |
+| `FlightCameraToggle` | Button | Y | V |
+
+Triggers are remapped in the input module to 0 released and 1 fully pressed before the deadzone, and their
+`scale` applies, so one signed yaw axis can use both. Values are positive for stick back, stick right and
+right rudder.
 
 ## Configuration format
 
@@ -112,6 +156,8 @@ state from the step, detach).
 | `aero.L1` / `aero.L2` / `aero.L3` | object | #452 / #453 / #462 | per-tier aerodynamic profiles |
 
 ### `actuators` (#451)
+
+`throttleRate` and `actuators` are required. Angles are degrees here and radians inside the code.
 
 ```json
 "actuators": {

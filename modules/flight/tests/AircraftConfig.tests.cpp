@@ -27,6 +27,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/trigonometric.hpp>
+
 #include <algorithm>
 #include <cstring>
 #include <optional>
@@ -48,12 +50,49 @@ namespace
         "camera": { "eye": [0.8, 0.0, -0.4], "chaseDistance": 12.0, "chaseHeight": 3.0 },
         "nodes": { "aileronLeft": "Aileron_L", "elevator": "Elevator" },
         "throttleRate": 0.5,
-        "actuators": { "elevator": { "maxDeflectionDeg": 25 } },
+        "actuators": {
+            "elevator": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+            "aileron": { "maxDeflectionDeg": 20.0, "rateDegPerSec": 80.0, "delay": 0.05 },
+            "rudder": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+            "flaps": { "detentsDeg": [0.0, 10.0, 20.0, 30.0], "rateDegPerSec": 5.0 },
+            "trim": { "stepDeg": 0.5, "maxDeg": 10.0 }
+        },
         "engines": [],
         "gear": [],
         "stallWarningMarginDeg": 3.0,
         "aero": { "L1": {} }
     })";
+
+    constexpr std::string_view kActuators = R"({
+        "elevator": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+        "aileron": { "maxDeflectionDeg": 20.0, "rateDegPerSec": 80.0, "delay": 0.05 },
+        "rudder": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+        "flaps": { "detentsDeg": [0.0, 10.0, 20.0, 30.0], "rateDegPerSec": 5.0 },
+        "trim": { "stepDeg": 0.5, "maxDeg": 10.0 }
+    })";
+
+    std::string ConfigDocument(std::string_view throttleRate, std::string_view actuators)
+    {
+        std::string document = R"({
+            "version": 1, "mass": 10, "inertia": { "diagonal": [1, 2, 3] },
+            "centerOfMass": [0, 0, 0], "reference": { "area": 1, "span": 1, "chord": 1 },
+            "camera": { "eye": [0, 0, 0], "chaseDistance": 0, "chaseHeight": 0 },
+        )";
+        document += throttleRate;
+        if (actuators.empty())
+        {
+            while (!document.empty()
+                && (document.back() == ' ' || document.back() == '\n' || document.back() == ','))
+                document.pop_back();
+        }
+        else
+        {
+            document += R"( "actuators": )";
+            document += actuators;
+        }
+        document += "}";
+        return document;
+    }
 
     std::vector<std::byte> RawBlob(std::string_view text)
     {
@@ -162,6 +201,19 @@ TEST_CASE("A full aircraft config parses", "[flight][config]")
     CHECK(config.nodes[0].model == "Aileron_L");
     CHECK(config.nodes[1].component == "elevator");
     CHECK(config.nodes[1].model == "Elevator");
+    CHECK(config.throttleRate == Catch::Approx(0.5f));
+    CHECK(config.actuators.elevator.maxDeflection == Catch::Approx(glm::radians(25.0f)));
+    CHECK(config.actuators.elevator.rate == Catch::Approx(glm::radians(60.0f)));
+    CHECK(config.actuators.elevator.delay == Catch::Approx(0.05f));
+    CHECK(config.actuators.aileron.maxDeflection == Catch::Approx(glm::radians(20.0f)));
+    CHECK(config.actuators.aileron.rate == Catch::Approx(glm::radians(80.0f)));
+    CHECK(config.actuators.rudder.maxDeflection == Catch::Approx(glm::radians(25.0f)));
+    REQUIRE(config.actuators.flaps.detents.size() == 4);
+    CHECK(config.actuators.flaps.detents[0] == Catch::Approx(0.0f));
+    CHECK(config.actuators.flaps.detents[3] == Catch::Approx(glm::radians(30.0f)));
+    CHECK(config.actuators.flaps.rate == Catch::Approx(glm::radians(5.0f)));
+    CHECK(config.actuators.trim.step == Catch::Approx(glm::radians(0.5f)));
+    CHECK(config.actuators.trim.max == Catch::Approx(glm::radians(10.0f)));
 }
 
 TEST_CASE("Aircraft config errors name the JSON path", "[flight][config]")
@@ -235,6 +287,96 @@ TEST_CASE("Aircraft config errors name the JSON path", "[flight][config]")
         })",
             config, error));
         CHECK(error == "mass: must be finite");
+    }
+
+    SECTION("missing throttleRate")
+    {
+        const std::string document = ConfigDocument("", kActuators);
+        REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
+        CHECK(error == "throttleRate: missing");
+    }
+
+    SECTION("a non-positive throttleRate is rejected")
+    {
+        const std::string document = ConfigDocument(R"("throttleRate": 0,)", kActuators);
+        REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
+        CHECK(error == "throttleRate: must be > 0");
+    }
+
+    SECTION("missing actuators")
+    {
+        REQUIRE_FALSE(mir::ParseAircraftConfig(ConfigDocument(R"("throttleRate": 0.5,)", ""), config, error));
+        CHECK(error == "actuators: missing");
+    }
+
+    SECTION("an elevator without a delay is rejected")
+    {
+        const std::string document = ConfigDocument(R"("throttleRate": 0.5,)",
+            R"({
+                "elevator": { "maxDeflectionDeg": 25, "rateDegPerSec": 60 },
+                "aileron": { "maxDeflectionDeg": 20, "rateDegPerSec": 80, "delay": 0 },
+                "rudder": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "flaps": { "detentsDeg": [0], "rateDegPerSec": 5 },
+                "trim": { "stepDeg": 0.5, "maxDeg": 10 }
+            })");
+        REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
+        CHECK(error == "actuators.elevator.delay: missing");
+    }
+
+    SECTION("a non-positive surface rate is rejected")
+    {
+        const std::string document = ConfigDocument(R"("throttleRate": 0.5,)",
+            R"({
+                "elevator": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "aileron": { "maxDeflectionDeg": 20, "rateDegPerSec": 0, "delay": 0 },
+                "rudder": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "flaps": { "detentsDeg": [0], "rateDegPerSec": 5 },
+                "trim": { "stepDeg": 0.5, "maxDeg": 10 }
+            })");
+        REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
+        CHECK(error == "actuators.aileron.rateDegPerSec: must be > 0");
+    }
+
+    SECTION("an empty flap detent list is rejected")
+    {
+        const std::string document = ConfigDocument(R"("throttleRate": 0.5,)",
+            R"({
+                "elevator": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "aileron": { "maxDeflectionDeg": 20, "rateDegPerSec": 80, "delay": 0 },
+                "rudder": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "flaps": { "detentsDeg": [], "rateDegPerSec": 5 },
+                "trim": { "stepDeg": 0.5, "maxDeg": 10 }
+            })");
+        REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
+        CHECK(error == "actuators.flaps.detentsDeg: must not be empty");
+    }
+
+    SECTION("flap detents must be strictly increasing")
+    {
+        const std::string document = ConfigDocument(R"("throttleRate": 0.5,)",
+            R"({
+                "elevator": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "aileron": { "maxDeflectionDeg": 20, "rateDegPerSec": 80, "delay": 0 },
+                "rudder": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "flaps": { "detentsDeg": [0, 10, 10], "rateDegPerSec": 5 },
+                "trim": { "stepDeg": 0.5, "maxDeg": 10 }
+            })");
+        REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
+        CHECK(error == "actuators.flaps.detentsDeg: must be strictly increasing");
+    }
+
+    SECTION("a negative trim range is rejected")
+    {
+        const std::string document = ConfigDocument(R"("throttleRate": 0.5,)",
+            R"({
+                "elevator": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "aileron": { "maxDeflectionDeg": 20, "rateDegPerSec": 80, "delay": 0 },
+                "rudder": { "maxDeflectionDeg": 25, "rateDegPerSec": 60, "delay": 0 },
+                "flaps": { "detentsDeg": [0], "rateDegPerSec": 5 },
+                "trim": { "stepDeg": 0.5, "maxDeg": -1 }
+            })");
+        REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
+        CHECK(error == "actuators.trim.maxDeg: must be >= 0");
     }
 }
 
@@ -326,7 +468,15 @@ TEST_CASE("An aircraft takes its mass properties from its config", "[flight][con
         "inertia": { "diagonal": [3000.0, 4000.0, 5000.0] },
         "centerOfMass": [1.0, 0.0, 0.0],
         "reference": { "area": 20.0, "span": 12.0, "chord": 2.0 },
-        "camera": { "eye": [1.0, 0.0, 0.0], "chaseDistance": 14.0, "chaseHeight": 4.0 }
+        "camera": { "eye": [1.0, 0.0, 0.0], "chaseDistance": 14.0, "chaseHeight": 4.0 },
+        "throttleRate": 0.5,
+        "actuators": {
+            "elevator": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+            "aileron": { "maxDeflectionDeg": 20.0, "rateDegPerSec": 80.0, "delay": 0.05 },
+            "rudder": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
+            "flaps": { "detentsDeg": [0.0, 10.0, 20.0, 30.0], "rateDegPerSec": 5.0 },
+            "trim": { "stepDeg": 0.5, "maxDeg": 10.0 }
+        }
     })");
     REQUIRE(plane.view.has_value());
     REQUIRE(heavy.view.has_value());
