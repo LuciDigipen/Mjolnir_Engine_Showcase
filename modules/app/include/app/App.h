@@ -29,6 +29,7 @@
 #include <core/ecs/FixedTimestep.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
+#include <flight/FlightModule.h>
 #include <gameshell/GameShellModule.h>
 #include <gameui/GameUIModule.h>
 #include <gameui_imgui/GameUIImGuiModule.h>
@@ -367,6 +368,7 @@ namespace mir
                 ParticlesGpuModule &particlesGpu, RenderSystem &rendering);
 
             PhysicsModule physics;
+            FlightModule flight;
             TerrainModule terrainData;
             ScriptModule script;
             ParticlesRuntimeModule particlesRuntime;

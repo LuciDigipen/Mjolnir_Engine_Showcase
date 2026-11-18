@@ -7,6 +7,7 @@ target_link_libraries(engine_app
            mir::assets
            mir::camera
            mir::core
+           mir::flight
            mir::gameshell
            mir::gameui
            mir::gameui_imgui
