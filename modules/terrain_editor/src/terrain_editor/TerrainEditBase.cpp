@@ -86,13 +86,6 @@ namespace mir
         return mBase->Release().Layout();
     }
 
-    std::span<const std::string> TerrainBaseCache::ReleaseWeightLayers() const
-    {
-        if (!mBase)
-            return {};
-        return mBase->Release().Index().weightLayers;
-    }
-
     std::optional<TerrainLayout> TerrainBaseCache::Layout(TileCoord tile) const
     {
         if (!mBase)

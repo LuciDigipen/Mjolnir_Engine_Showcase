@@ -110,6 +110,16 @@ namespace mir
             return std::string(value, strnlen(value, kFieldStringCapacity));
         }
 
+        // Empty while the asset has no loaded release.
+        std::vector<std::string> LoadedWeightLayers(World &world, AssetId asset)
+        {
+            if (const TerrainWorld *terrain = world.TryResource<TerrainWorld>())
+                for (const TerrainWorld::AssetState &state : terrain->Assets())
+                    if (state.asset == asset && state.release)
+                        return state.release->Handle().Index().weightLayers;
+            return {};
+        }
+
         std::vector<std::string> ScanTerrainSurfaceMaterials(const std::filesystem::path &assetsRoot)
         {
             std::vector<std::string> materials;
@@ -188,7 +198,7 @@ namespace mir
             else
                 mWorkspace.Clear();
 
-            SyncTerrain();
+            SyncTerrain(context.mWorld);
             SyncMaterialDraft(context);
             if (mPainting && (SelectedAsset() != mStrokeAsset || mWorkspace.SelectedLayer() != mStrokeSequence))
                 FinishStroke(context.mHistory);
@@ -311,7 +321,7 @@ namespace mir
             return availability;
         }
 
-        void SyncTerrain()
+        void SyncTerrain(World &world)
         {
             const AssetId asset = SelectedAsset();
             if (!(asset == mStatusAsset))
@@ -371,8 +381,10 @@ namespace mir
                 return;
             }
 
-            const std::span<const std::string> releaseWeightLayers =
-                mBase.Ready() ? mBase.ReleaseWeightLayers() : mWeights.Layers();
+            // The loaded release names the layers; the base heights cache carries no weights.
+            std::vector<std::string> releaseWeightLayers = LoadedWeightLayers(world, asset);
+            if (releaseWeightLayers.empty())
+                releaseWeightLayers.assign(mWeights.Layers().begin(), mWeights.Layers().end());
             std::string reason;
             std::shared_ptr<const TerrainOverlay> overlay =
                 session.Build(asset, document->Layers(), mBase.Provider(), mWeights.Provider(), mWeights.Layers(),

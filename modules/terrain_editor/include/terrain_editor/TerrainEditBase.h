@@ -52,8 +52,6 @@ namespace mir
         std::optional<TerrainLayout> ReferenceLayout() const;
         // The tile's source grid in the release index.
         std::optional<TerrainLayout> Layout(TileCoord tile) const;
-        // Empty while no cache is open, or when the release carries no weight layers.
-        std::span<const std::string> ReleaseWeightLayers() const;
         TerrainBaseHeightsResult<TerrainBaseTile> ReadTile(TileCoord tile);
         TerrainBaseTileProvider Provider();
 
