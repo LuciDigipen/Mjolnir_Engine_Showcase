@@ -144,6 +144,30 @@ namespace mir
             return ReadVector3(*entry, path, out, error);
         }
 
+        bool ReadUnitInterval(const Json &value, const std::string &path, float &out, std::string &error)
+        {
+            if (!ReadNumber(value, path, out, error))
+                return false;
+            if (out < 0.0f || out > 1.0f)
+            {
+                error = std::format("{}: must be in 0..1", path);
+                return false;
+            }
+            return true;
+        }
+
+        bool ReadRequiredUnitInterval(const Json &object, const char *key, const std::string &path, float &out,
+            std::string &error)
+        {
+            const auto entry = object.find(key);
+            if (entry == object.end())
+            {
+                error = std::format("{}: missing", path);
+                return false;
+            }
+            return ReadUnitInterval(*entry, path, out, error);
+        }
+
         bool ParseActuator(const Json &actuators, const char *key, AircraftConfig::Actuator &out, std::string &error)
         {
             const std::string path = std::format("actuators.{}", key);
@@ -300,6 +324,189 @@ namespace mir
                 && ReadRequiredNonNegative(value, "Kn", "aero.L1.Kn", out.Kn, error);
         }
 
+        bool ParseL2PostStall(const Json &stall, L2Stall &out, std::string &error)
+        {
+            const auto entry = stall.find("postStall");
+            if (entry == stall.end())
+            {
+                error = "aero.L2.stall.postStall: missing";
+                return false;
+            }
+            if (!entry->is_array())
+            {
+                error = "aero.L2.stall.postStall: expected an array";
+                return false;
+            }
+            if (entry->size() < 2)
+            {
+                error = "aero.L2.stall.postStall: must have at least 2 rows";
+                return false;
+            }
+
+            float previous = 0.0f;
+            for (std::size_t i = 0; i < entry->size(); ++i)
+            {
+                const Json &row = (*entry)[i];
+                const std::string path = std::format("aero.L2.stall.postStall[{}]", i);
+                if (!row.is_array() || row.size() != 4)
+                {
+                    error = std::format("{}: expected [alphaDeg, CL, CD, Cm]", path);
+                    return false;
+                }
+
+                L2PostStallPoint point;
+                float alphaDegrees = 0.0f;
+                if (!ReadNumber(row[0], path + "[0]", alphaDegrees, error)
+                    || !ReadNumber(row[1], path + "[1]", point.CL, error)
+                    || !ReadNumber(row[2], path + "[2]", point.CD, error)
+                    || !ReadNumber(row[3], path + "[3]", point.Cm, error))
+                    return false;
+
+                point.alpha = glm::radians(alphaDegrees);
+                if (i > 0 && point.alpha <= previous)
+                {
+                    error = "aero.L2.stall.postStall: must be strictly increasing in alpha";
+                    return false;
+                }
+                previous = point.alpha;
+                out.postStall.push_back(point);
+            }
+            return true;
+        }
+
+        bool ParseL2Stall(const Json &value, L2Stall &out, std::string &error)
+        {
+            const auto entry = value.find("stall");
+            if (entry == value.end())
+            {
+                error = "aero.L2.stall: missing";
+                return false;
+            }
+            if (!entry->is_object())
+            {
+                error = "aero.L2.stall: expected an object";
+                return false;
+            }
+
+            float degrees = 0.0f;
+            if (!ReadRequiredPositive(*entry, "positiveDeg", "aero.L2.stall.positiveDeg", degrees, error))
+                return false;
+            out.positive = glm::radians(degrees);
+
+            if (!ReadRequiredNumber(*entry, "negativeDeg", "aero.L2.stall.negativeDeg", degrees, error))
+                return false;
+            if (degrees >= 0.0f)
+            {
+                error = "aero.L2.stall.negativeDeg: must be < 0";
+                return false;
+            }
+            out.negative = glm::radians(degrees);
+
+            if (!ReadRequiredPositive(*entry, "blendDeg", "aero.L2.stall.blendDeg", degrees, error))
+                return false;
+            out.blend = glm::radians(degrees);
+
+            if (!ReadRequiredUnitInterval(*entry, "controlScale", "aero.L2.stall.controlScale",
+                    out.controlScale, error)
+                || !ReadRequiredUnitInterval(*entry, "stabilityScale", "aero.L2.stall.stabilityScale",
+                    out.stabilityScale, error))
+                return false;
+
+            if (!ParseL2PostStall(*entry, out, error))
+                return false;
+
+            if (out.postStall.front().alpha > out.negative || out.postStall.back().alpha < out.positive + out.blend)
+            {
+                error = "aero.L2.stall.postStall: must cover negativeDeg to positiveDeg + blendDeg";
+                return false;
+            }
+            return true;
+        }
+
+        bool ParseL2Flaps(const Json &value, L2Profile &out, std::string &error)
+        {
+            const auto entry = value.find("flaps");
+            if (entry == value.end())
+            {
+                error = "aero.L2.flaps: missing";
+                return false;
+            }
+            if (!entry->is_array())
+            {
+                error = "aero.L2.flaps: expected an array";
+                return false;
+            }
+            if (entry->empty())
+            {
+                error = "aero.L2.flaps: must not be empty";
+                return false;
+            }
+
+            float previous = 0.0f;
+            for (std::size_t i = 0; i < entry->size(); ++i)
+            {
+                const Json &row = (*entry)[i];
+                const std::string path = std::format("aero.L2.flaps[{}]", i);
+                if (!row.is_array() || row.size() != 5)
+                {
+                    error = std::format("{}: expected [flapDeg, dCL, dCD, dCm, stallShiftDeg]", path);
+                    return false;
+                }
+
+                float values[5] = {};
+                for (std::size_t j = 0; j < 5; ++j)
+                {
+                    if (!ReadNumber(row[j], std::format("{}[{}]", path, j), values[j], error))
+                        return false;
+                }
+                if (values[0] < 0.0f)
+                {
+                    error = std::format("{}[0]: must be >= 0", path);
+                    return false;
+                }
+                if (i > 0 && values[0] <= previous)
+                {
+                    error = "aero.L2.flaps: must be strictly increasing in flapDeg";
+                    return false;
+                }
+                previous = values[0];
+                out.flaps.push_back(L2FlapPoint{ glm::radians(values[0]), values[1], values[2], values[3],
+                    glm::radians(values[4]) });
+            }
+            return true;
+        }
+
+        bool ParseL2Profile(const Json &value, L2Profile &out, std::string &error)
+        {
+            if (!value.is_object())
+            {
+                error = "aero.L2: expected an object";
+                return false;
+            }
+
+            if (!ReadRequiredNumber(value, "CL0", "aero.L2.CL0", out.CL0, error)
+                || !ReadRequiredNumber(value, "CLalpha", "aero.L2.CLalpha", out.CLalpha, error)
+                || !ReadRequiredNonNegative(value, "CD0", "aero.L2.CD0", out.CD0, error)
+                || !ReadRequiredNonNegative(value, "k", "aero.L2.k", out.k, error)
+                || !ReadRequiredNumber(value, "Cm0", "aero.L2.Cm0", out.Cm0, error)
+                || !ReadRequiredNumber(value, "Cmalpha", "aero.L2.Cmalpha", out.Cmalpha, error)
+                || !ReadRequiredNumber(value, "Cmq", "aero.L2.Cmq", out.Cmq, error)
+                || !ReadRequiredNumber(value, "Cmde", "aero.L2.Cmde", out.Cmde, error)
+                || !ReadRequiredNumber(value, "CYbeta", "aero.L2.CYbeta", out.CYbeta, error)
+                || !ReadRequiredNumber(value, "CYdr", "aero.L2.CYdr", out.CYdr, error)
+                || !ReadRequiredNumber(value, "Clbeta", "aero.L2.Clbeta", out.Clbeta, error)
+                || !ReadRequiredNumber(value, "Clp", "aero.L2.Clp", out.Clp, error)
+                || !ReadRequiredNumber(value, "Clda", "aero.L2.Clda", out.Clda, error)
+                || !ReadRequiredNumber(value, "Cnbeta", "aero.L2.Cnbeta", out.Cnbeta, error)
+                || !ReadRequiredNumber(value, "Cnr", "aero.L2.Cnr", out.Cnr, error)
+                || !ReadRequiredNumber(value, "Cndr", "aero.L2.Cndr", out.Cndr, error)
+                || !ReadRequiredNumber(value, "Cnda", "aero.L2.Cnda", out.Cnda, error)
+                || !ReadRequiredPositive(value, "minAirspeed", "aero.L2.minAirspeed", out.minAirspeed, error))
+                return false;
+
+            return ParseL2Stall(value, out.stall, error) && ParseL2Flaps(value, out, error);
+        }
+
         bool ParseAero(const Json &document, AerodynamicProfile &out, std::string &error)
         {
             const auto entry = document.find("aero");
@@ -311,14 +518,21 @@ namespace mir
                 return false;
             }
 
-            const auto l1 = entry->find("L1");
-            if (l1 == entry->end())
-                return true;
+            if (const auto l1 = entry->find("L1"); l1 != entry->end())
+            {
+                L1Profile profile;
+                if (!ParseL1Profile(*l1, profile, error))
+                    return false;
+                out.l1 = profile;
+            }
 
-            L1Profile profile;
-            if (!ParseL1Profile(*l1, profile, error))
-                return false;
-            out.l1 = profile;
+            if (const auto l2 = entry->find("L2"); l2 != entry->end())
+            {
+                L2Profile profile;
+                if (!ParseL2Profile(*l2, profile, error))
+                    return false;
+                out.l2 = profile;
+            }
             return true;
         }
 

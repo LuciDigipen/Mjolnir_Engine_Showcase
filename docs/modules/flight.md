@@ -23,7 +23,8 @@ result into `AircraftRuntime::airData`, then clears `additionalWind`. The gate r
 step and uses the defaults when it is missing. The actuator stage consumes the queued commands and the held
 controls; the aerodynamics stage evaluates the selected tier's profile into a body-frame `ForceMoment` and adds
 it to the accumulator. The propulsion and gear stages are still empty. A tier without a profile in the config
-adds nothing and warns once per aircraft config.
+adds nothing and warns once per aircraft config. L2 is the default playable model; `Aircraft::tier` defaults to
+it.
 
 `FlightInputSystem` runs in Update, after PreUpdate's `InputSystem` and before the frame's fixed steps. For
 every `Aircraft` with `playerInput` it copies the pitch, roll, yaw, throttle and brake actions into
@@ -51,8 +52,9 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `FlightControls`, `FlightCommandQueue`, `ActuatorState` | `<flight/AircraftRuntime.h>` | held controls, the discrete-command FIFO and the actuator state |
 | `FlightEnvironment`, `DensityModel`, `AtmosphereSample`, `SampleAtmosphere` | `<flight/FlightEnvironment.h>` | the World's air resource and the density/sound sample at an altitude |
 | `AirData`, `ComputeAirData`, `kAirDataMinSpeed` | `<flight/AirData.h>` | body-frame velocity relative to the air and the quantities derived from it |
-| `AeroInput`, `ForceMoment`, `AerodynamicProfile`, `L1Profile` | `<flight/AerodynamicModel.h>` | the model's input, its body-frame output and the per-tier coefficients |
+| `AeroInput`, `ForceMoment`, `AerodynamicProfile`, `L1Profile`, `L2Profile` | `<flight/AerodynamicModel.h>` | the model's input, its body-frame output and the per-tier coefficients |
 | `IAerodynamicModel`, `AerodynamicModelFor`, `WindAxesToBody` | `<flight/AerodynamicModel.h>` | the stateless model interface, the tier lookup and the wind-axis conversion |
+| `L2StallFraction`, `L2CriticalAngleOfAttack` | `<flight/AerodynamicModel.h>` | the post-stall blend weight and the positive critical angle of attack |
 | `BodyToLocal`, `LocalToBody`, `InertiaBodyToLocal` | `<flight/FlightFrames.h>` | the one body/local conversion |
 | `AngleOfAttack`, `Sideslip` | `<flight/FlightFrames.h>` | air-data angles from body velocity |
 
@@ -83,8 +85,12 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   `kAirDataMinSpeed`.
 - L1 gains use the normalised deflection (actual over maximum), so `Ka`, `Ke` and `Kr` are moments per pascal
   and stay independent of surface travel. Damping gains act on the body rates and do not depend on airspeed.
-- A tier with no profile in the config adds no aerodynamic force and warns once per aircraft config; L2 and L3
-  stay zero until their issues land.
+- L2 blends the linear coefficients into the post-stall table with a C1-continuous smoothstep of width
+  `blendDeg` after each critical alpha. `qbar` uses the true airspeed and the rate normalisation uses
+  `max(V, minAirspeed)`, so the force is zero at rest and the damping stays bounded at low speed. Post-stall
+  scales the control derivatives by `controlScale` and `Cmalpha`, `Clbeta`, `Cnbeta` by `stabilityScale`.
+- A tier with no profile in the config adds no aerodynamic force and warns once per aircraft config; L3
+  stays zero until its issue lands.
 - `SampleAtmosphere` reports the true altitude `worldY - seaLevelY` and clamps it to the model's range only
   inside the ISA formula. ISA is the troposphere lapse up to the tropopause and an isothermal layer above;
   the constant model returns `constantDensity` and a fixed speed of sound at every altitude.
@@ -107,10 +113,10 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 ## State
 
 *As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
-resource, air data, actuator stage and the L1 aerodynamic model work. `FlightStepGate` is attached, reads state
-and air data, and adds the selected tier's aerodynamic force and moment. The propulsion and gear stages are
-stubs; L2 and L3 yield zero with a warning until their issues land. There is no hot reload yet; the store is
-cleared only with the module.
+resource, air data, actuator stage and the L1 and L2 aerodynamic models work. L2 is the default tier and includes
+the stall blend and flap table. `FlightStepGate` is attached, reads state and air data, and adds the selected
+tier's aerodynamic force and moment. The propulsion and gear stages are stubs; L3 yields zero with a warning
+until its issue lands. There is no hot reload yet; the store is cleared only with the module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
@@ -119,8 +125,9 @@ aircraft, rest and reverse flow, ISA and constant density, the additional wind t
 bindings, idempotent merge, a rebound action kept), `FlightActuators` (rate limit and settle, lag, trim and flap
 commands in order, throttle, surface signs, a frame with no fixed step, input through the physics fixture),
 `Aerodynamics` (wind-axis directions, determinism, dynamic-pressure scaling, control and damping signs, sources,
-missing profiles, an L1 aircraft through the physics fixture) and `FlightStepGate` (control-moment signs, state
-from the step, detach).
+missing profiles, an L1 aircraft through the physics fixture), `AerodynamicsL2` (stall continuity, flap lift,
+trim and control signs, adverse yaw, post-stall scaling, the low-speed bound, zero-airspeed rest, determinism,
+`aero.L2` parsing and its error paths) and `FlightStepGate` (control-moment signs, state from the step, detach).
 
 ## Flight input
 
@@ -247,6 +254,88 @@ velocity. The control terms use the sign convention in `actuators` above, so a p
 rudder gives a positive moment about its body axis. A tier without a profile in the file yields no force or
 moment and the gate warns once.
 
-### `aero.L2` (#453) and `aero.L3` (#462)
+### `aero.L2` (#453)
 
-Defined by their issues; each must add its section here.
+Optional. The default playable model (`Aircraft::tier` defaults to L2). Every key is required when `aero.L2`
+is present; `CD0` and `k` must be `>= 0`, `minAirspeed` must be `> 0`, and angles in the file are degrees.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `CL0` | number | lift coefficient at zero alpha |
+| `CLalpha` | number | lift slope per radian |
+| `CD0` | number >= 0 | parasite drag |
+| `k` | number >= 0 | induced drag factor, `CD = CD0 + k CL^2` |
+| `Cm0` | number | pitching moment at zero alpha |
+| `Cmalpha` | number | pitch stiffness per radian, negative is stable |
+| `Cmq` | number | pitch damping per normalised pitch rate, negative is stable |
+| `Cmde` | number | elevator control moment per radian |
+| `CYbeta` | number | side force per radian of beta |
+| `CYdr` | number | side force per radian of rudder |
+| `Clbeta` | number | roll moment from beta per radian, negative is stable |
+| `Clp` | number | roll damping per normalised roll rate, negative is stable |
+| `Clda` | number | aileron control moment per radian |
+| `Cnbeta` | number | yaw moment from beta per radian, positive is stable |
+| `Cnr` | number | yaw damping per normalised yaw rate, negative is stable |
+| `Cndr` | number | rudder control moment per radian |
+| `Cnda` | number | yaw moment from aileron per radian; negative is adverse yaw |
+| `minAirspeed` | number > 0 | m/s, lower bound of the rate normalisation |
+| `stall.positiveDeg` | number > 0 | positive critical alpha before the flap shift |
+| `stall.negativeDeg` | number < 0 | negative critical alpha |
+| `stall.blendDeg` | number > 0 | width of the smooth transition after each critical alpha |
+| `stall.controlScale` | number 0..1 | control derivative multiplier when fully stalled |
+| `stall.stabilityScale` | number 0..1 | multiplier for `Cmalpha`, `Clbeta` and `Cnbeta` when fully stalled |
+| `stall.postStall` | array | `[alphaDeg, CL, CD, Cm]` rows, at least 2, strictly increasing alpha; must cover `[negativeDeg, positiveDeg + blendDeg]` |
+| `flaps` | array | `[flapDeg, dCL, dCD, dCm, stallShiftDeg]` rows, at least 1, strictly increasing flap angle; the first row may be 0 |
+
+```json
+"aero": { "L2": {
+  "CL0": 0.25, "CLalpha": 5.0, "CD0": 0.03, "k": 0.05,
+  "Cm0": 0.05, "Cmalpha": -0.6, "Cmq": -12, "Cmde": 1.2,
+  "CYbeta": -0.4, "CYdr": -0.1, "Clbeta": -0.1, "Clp": -0.5, "Clda": 0.08,
+  "Cnbeta": 0.12, "Cnr": -0.15, "Cndr": 0.08, "Cnda": -0.02,
+  "minAirspeed": 10,
+  "stall": {
+    "positiveDeg": 15, "negativeDeg": -15, "blendDeg": 6,
+    "controlScale": 0.4, "stabilityScale": 0.3,
+    "postStall": [[-15, -0.9, 0.2, -0.15], [0, 0.25, 0.05, 0.05],
+                  [15, 1.35, 0.16, -0.1], [21, 1.02, 0.24, -0.13]]
+  },
+  "flaps": [[0, 0, 0, 0, 0], [10, 0.25, 0.005, -0.01, -0.5],
+            [20, 0.5, 0.012, -0.02, -1], [30, 0.7, 0.02, -0.03, -1]]
+} }
+```
+
+The flap row is interpolated linearly at the actual flap angle and clamped at both ends. With the
+interpolated `dCL`, `dCD`, `dCm` and `stallShift`:
+
+- `CLlin = CL0 + CLalpha alpha + dCL`, `CDlin = CD0 + k CLlin^2 + dCD`,
+  `Cmlin = Cm0 + Cmalpha_eff alpha + dCm`
+- `alphaPos = positiveDeg + stallShift`, `alphaNeg = negativeDeg`
+- `w = max(smoothstep(alphaPos, alphaPos + blend, alpha), smoothstep(-alphaNeg, -alphaNeg + blend, -alpha))`
+- `CL = lerp(CLlin, CLpost(alpha), w)`, and the same blend for `CD` and the static `Cm`; the post-stall
+  table is interpolated linearly in alpha and clamped at its ends
+- `ctl = lerp(1, controlScale, w)`, and `Cmalpha`, `Clbeta` and `Cnbeta` use `lerp(1, stabilityScale, w)`
+
+smoothstep is `t^2 (3 - 2t)` on the clamped `t = (x - edge0) / (edge1 - edge0)`, so `CL`, `CD` and `Cm`
+are C1-continuous through the transition. `L2StallFraction` and `L2CriticalAngleOfAttack` expose `w` and
+`alphaPos` for telemetry and the stall warning.
+
+The forces and moments use `qbar = 0.5 rho V^2` with the true `V`; the rates are normalised with
+`Veff = max(V, minAirspeed)`. The model yields nothing below `kAirDataMinSpeed`.
+
+- `Y = qbar S (CYbeta beta + CYdr dr)`
+- `Mx = qbar S b (Clbeta_eff beta + Clp p_hat + ctl Clda da)`
+- `My = qbar S c (Cm_static + Cmq q_hat + ctl Cmde de)`
+- `Mz = qbar S b (Cnbeta_eff beta + Cnr r_hat + ctl (Cndr dr + Cnda da))`
+
+with `p_hat = p b / (2 Veff)`, `q_hat = q c / (2 Veff)`, `r_hat = r b / (2 Veff)` and `da`, `de`, `dr`
+the actual deflections in radians. The wind-axis helper carries lift, drag and side force; the control
+terms form `controlMoment`, the rate terms `dampingMoment` and the rest `stabilityMoment`.
+
+Sign notes under the `actuators` convention: `Cmalpha < 0`, `Cnbeta > 0` and `Clbeta < 0` are stable;
+`Cmde`, `Clda` and `Cndr` are positive; `Cnda < 0` is adverse yaw; `CYdr` is negative for a conventional
+tail. `Clp`, `Cmq` and `Cnr` are negative for damping.
+
+### `aero.L3` (#462)
+
+Defined by its issue; it must add its section here.

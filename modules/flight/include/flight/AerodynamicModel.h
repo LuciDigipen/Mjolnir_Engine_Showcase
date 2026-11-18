@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace mir
 {
@@ -77,9 +78,66 @@ namespace mir
         float Kn = 0.0f;
     };
 
+    struct L2PostStallPoint
+    {
+        float alpha = 0.0f; // radians
+        float CL = 0.0f;
+        float CD = 0.0f;
+        float Cm = 0.0f;
+    };
+
+    struct L2FlapPoint
+    {
+        float flap = 0.0f; // radians
+        float dCL = 0.0f;
+        float dCD = 0.0f;
+        float dCm = 0.0f;
+        float stallShift = 0.0f; // radians, positive stall angle shift
+    };
+
+    struct L2Stall
+    {
+        float positive = 0.0f; // radians
+        float negative = 0.0f; // radians, below zero
+        float blend = 0.0f;    // radians, width after the critical angle
+        float controlScale = 1.0f;
+        float stabilityScale = 1.0f;
+        std::vector<L2PostStallPoint> postStall;
+    };
+
+    struct L2Profile
+    {
+        float CL0 = 0.0f;
+        float CLalpha = 0.0f;
+        float CD0 = 0.0f;
+        float k = 0.0f;
+        float Cm0 = 0.0f;
+        float Cmalpha = 0.0f;
+        float Cmq = 0.0f;
+        float Cmde = 0.0f;
+        float CYbeta = 0.0f;
+        float CYdr = 0.0f;
+        float Clbeta = 0.0f;
+        float Clp = 0.0f;
+        float Clda = 0.0f;
+        float Cnbeta = 0.0f;
+        float Cnr = 0.0f;
+        float Cndr = 0.0f;
+        float Cnda = 0.0f;
+        float minAirspeed = 0.0f;
+        L2Stall stall;
+        std::vector<L2FlapPoint> flaps;
+    };
+
+    // Post-stall blend weight in 0..1 for the given angle of attack and flap angle.
+    float L2StallFraction(const L2Profile &profile, float alpha, float flaps);
+    // Positive critical angle of attack, flaps already applied.
+    float L2CriticalAngleOfAttack(const L2Profile &profile, float flaps);
+
     struct AerodynamicProfile
     {
         std::optional<L1Profile> l1;
+        std::optional<L2Profile> l2;
     };
 
     bool HasAerodynamicProfile(const AerodynamicProfile &profile, AerodynamicTier tier);
@@ -91,6 +149,6 @@ namespace mir
         virtual ForceMoment Evaluate(const AeroInput &input, const AerodynamicProfile &profile) const = 0;
     };
 
-    // Stateless models; L2 and L3 yield zero until their issues land.
+    // Stateless models; L3 yields zero until its issue lands.
     const IAerodynamicModel &AerodynamicModelFor(AerodynamicTier tier);
 }
