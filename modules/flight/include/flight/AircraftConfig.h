@@ -10,6 +10,8 @@
 
 #include <assets/AssetDecoder.h>
 
+#include <flight/AerodynamicModel.h>
+
 #include <glm/vec3.hpp>
 
 #include <string>
@@ -79,6 +81,7 @@ namespace mir
         std::vector<Node> nodes;
         float throttleRate = 0.0f; // per second
         Actuators actuators;
+        AerodynamicProfile aero;
     };
 
     // On failure error is "<json path>: <reason>", or the parser message for malformed JSON.

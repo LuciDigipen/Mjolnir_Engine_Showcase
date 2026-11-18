@@ -21,7 +21,9 @@ model (ISA by default, or a constant density) and the global wind. The environme
 atmosphere at the body position, adds the aircraft's `additionalWind` to the global wind and writes the
 result into `AircraftRuntime::airData`, then clears `additionalWind`. The gate reads the resource once per
 step and uses the defaults when it is missing. The actuator stage consumes the queued commands and the held
-controls; the propulsion, gear and aerodynamic stages are still empty.
+controls; the aerodynamics stage evaluates the selected tier's profile into a body-frame `ForceMoment` and adds
+it to the accumulator. The propulsion and gear stages are still empty. A tier without a profile in the config
+adds nothing and warns once per aircraft config.
 
 `FlightInputSystem` runs in Update, after PreUpdate's `InputSystem` and before the frame's fixed steps. For
 every `Aircraft` with `playerInput` it copies the pitch, roll, yaw, throttle and brake actions into
@@ -49,6 +51,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `FlightControls`, `FlightCommandQueue`, `ActuatorState` | `<flight/AircraftRuntime.h>` | held controls, the discrete-command FIFO and the actuator state |
 | `FlightEnvironment`, `DensityModel`, `AtmosphereSample`, `SampleAtmosphere` | `<flight/FlightEnvironment.h>` | the World's air resource and the density/sound sample at an altitude |
 | `AirData`, `ComputeAirData`, `kAirDataMinSpeed` | `<flight/AirData.h>` | body-frame velocity relative to the air and the quantities derived from it |
+| `AeroInput`, `ForceMoment`, `AerodynamicProfile`, `L1Profile` | `<flight/AerodynamicModel.h>` | the model's input, its body-frame output and the per-tier coefficients |
+| `IAerodynamicModel`, `AerodynamicModelFor`, `WindAxesToBody` | `<flight/AerodynamicModel.h>` | the stateless model interface, the tier lookup and the wind-axis conversion |
 | `BodyToLocal`, `LocalToBody`, `InertiaBodyToLocal` | `<flight/FlightFrames.h>` | the one body/local conversion |
 | `AngleOfAttack`, `Sideslip` | `<flight/FlightFrames.h>` | air-data angles from body velocity |
 
@@ -70,11 +74,24 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   reading it, so a script or system must write it again every fixed step.
 - Below `kAirDataMinSpeed` the flow direction is undefined, so `angleOfAttack` and `sideslip` read 0 while
   `trueAirspeed`, `dynamicPressure` and `mach` still follow the speed.
+- The aerodynamic stage builds an `AeroInput` from the step's air data, body rates, actual actuator deflections
+  and the config's reference area, span and chord, then evaluates `AerodynamicModelFor(Aircraft::tier)` and
+  stores the result in `AircraftRuntime::aero`. It only adds force and moment to the accumulator; it never
+  writes position, velocity, attitude or angular velocity.
+- `WindAxesToBody` is the one wind-axis conversion: drag opposes the relative velocity, lift is perpendicular to
+  it in the body X-Z plane (`alpha = 0` gives body -Z), side force is body +Y. All three are zero below
+  `kAirDataMinSpeed`.
+- L1 gains use the normalised deflection (actual over maximum), so `Ka`, `Ke` and `Kr` are moments per pascal
+  and stay independent of surface travel. Damping gains act on the body rates and do not depend on airspeed.
+- A tier with no profile in the config adds no aerodynamic force and warns once per aircraft config; L2 and L3
+  stay zero until their issues land.
 - `SampleAtmosphere` reports the true altitude `worldY - seaLevelY` and clamps it to the model's range only
   inside the ISA formula. ISA is the troposphere lapse up to the tropopause and an isothermal layer above;
   the constant model returns `constantDensity` and a fixed speed of sound at every altitude.
 - Products of inertia in the file use the `RigidBody` convention: the file holds `Ixy, Ixz, Iyz` and the tensor
   holds their negatives. The parser rejects non-finite values and reports every error as `<json path>: <reason>`.
+- `aero` and `aero.L1` are optional. When `aero.L1` is present every coefficient is required and `CD`, `Ka`,
+  `Ke`, `Kr`, `Kp`, `Kq`, `Kn` must be `>= 0`; a negative or missing value is reported with its path.
 - `FlightInputSystem` only writes aircraft with `playerInput`; input never reaches an AI or parked aircraft.
   A frame's analog controls are the latest values, and its fresh presses are appended to a 16-command FIFO in
   action-table order: `FlightFlapsUp`, `FlightFlapsDown`, `FlightTrimUp`, `FlightTrimDown`. Further presses that
@@ -90,17 +107,20 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 ## State
 
 *As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
-resource, air data and actuator stage work. `FlightStepGate` is attached and reads state and air data, but the
-propulsion, gear and aerodynamic stages are stubs. There is no hot reload yet; the store is cleared only with
-the module.
+resource, air data, actuator stage and the L1 aerodynamic model work. `FlightStepGate` is attached, reads state
+and air data, and adds the selected tier's aerodynamic force and moment. The propulsion and gear stages are
+stubs; L2 and L3 yield zero with a warning until their issues land. There is no hot reload yet; the store is
+cleared only with the module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
 aircraft, rest and reverse flow, ISA and constant density, the additional wind through a fixed step),
 `FlightFrames` (axis mapping, round trip, gravity, air angles), `FlightInput` (action names and types, default
 bindings, idempotent merge, a rebound action kept), `FlightActuators` (rate limit and settle, lag, trim and flap
-commands in order, throttle, surface signs, a frame with no fixed step, input through the physics fixture) and
-`FlightStepGate` (control-moment signs, state from the step, detach).
+commands in order, throttle, surface signs, a frame with no fixed step, input through the physics fixture),
+`Aerodynamics` (wind-axis directions, determinism, dynamic-pressure scaling, control and damping signs, sources,
+missing profiles, an L1 aircraft through the physics fixture) and `FlightStepGate` (control-moment signs, state
+from the step, detach).
 
 ## Flight input
 
@@ -198,10 +218,34 @@ right rudder.
 
 ### `aero.L1` (#452)
 
+Optional. Every key is required when `aero.L1` is present; `CD` and the four `K` gains must be `>= 0`.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `CL` | number | lift coefficient |
+| `CD` | number >= 0 | drag coefficient |
+| `Ka` | number >= 0 | aileron control moment per pascal and unit normalised deflection |
+| `Ke` | number >= 0 | elevator control moment per pascal and unit normalised deflection |
+| `Kr` | number >= 0 | rudder control moment per pascal and unit normalised deflection |
+| `Kp` | number >= 0 | roll damping moment per rad/s |
+| `Kq` | number >= 0 | pitch damping moment per rad/s |
+| `Kn` | number >= 0 | yaw damping moment per rad/s |
+
 ```json
-{ "CL": 0.4, "CD": 0.04, "Ka": 3.0, "Ke": 4.0, "Kr": 2.0, "Kp": 2000, "Kq": 4000, "Kr_damp": 2000 }
+{ "CL": 0.4, "CD": 0.04, "Ka": 3.0, "Ke": 4.0, "Kr": 2.0, "Kp": 2000, "Kq": 4000, "Kn": 2000 }
 ```
-Owner issue may refine the key names; it must update this file.
+
+Lift `L = q S CL` acts along the wind-axis lift direction and drag `D = q S CD` along the relative velocity;
+both act at the centre of mass, so L1 has no stability moment. The control and damping moments are
+
+- `Mx = q Ka da - Kp p`
+- `My = q Ke de - Kq q`
+- `Mz = q Kr dr - Kn r`
+
+with the normalised deflection `d* = actual deflection / max deflection` in -1..1 and `p, q, r` the body angular
+velocity. The control terms use the sign convention in `actuators` above, so a positive elevator, aileron or
+rudder gives a positive moment about its body axis. A tier without a profile in the file yields no force or
+moment and the gate warns once.
 
 ### `aero.L2` (#453) and `aero.L3` (#462)
 

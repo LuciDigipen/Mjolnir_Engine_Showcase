@@ -8,6 +8,7 @@
  */
 #include <flight/FlightStepGate.h>
 
+#include <flight/AircraftConfig.h>
 #include <flight/AircraftRuntime.h>
 #include <flight/FlightActuators.h>
 #include <flight/FlightEnvironment.h>
@@ -16,6 +17,7 @@
 
 #include <core/ecs/Query.h>
 #include <core/ecs/World.h>
+#include <core/log/Log.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
 
@@ -92,5 +94,40 @@ namespace mir
 
     void FlightStepGate::RunLandingGear(Aircraft &, float) {}
 
-    void FlightStepGate::RunAerodynamics(Aircraft &, float) {}
+    void FlightStepGate::RunAerodynamics(Aircraft &aircraft, float)
+    {
+        AircraftRuntime &runtime = aircraft.runtime;
+        if (runtime.config == nullptr)
+            return;
+
+        const AircraftConfig &config = *runtime.config;
+        if (!HasAerodynamicProfile(config.aero, aircraft.tier))
+        {
+            if (runtime.aeroMissingConfig != runtime.config)
+            {
+                runtime.aeroMissingConfig = runtime.config;
+                MIR_LOG_WARN("Aircraft '{}': no {} aerodynamic profile, so it gets no aerodynamic force",
+                    aircraft.config, kAerodynamicTierNames[static_cast<int>(aircraft.tier)]);
+            }
+            return;
+        }
+
+        AeroInput input;
+        input.air = runtime.airData;
+        input.angularVelocityBody = runtime.state.angularVelocityBody;
+        input.elevator = runtime.actuators.elevator;
+        input.aileron = runtime.actuators.aileron;
+        input.rudder = runtime.actuators.rudder;
+        input.flaps = runtime.actuators.flaps;
+        input.elevatorMax = config.actuators.elevator.maxDeflection;
+        input.aileronMax = config.actuators.aileron.maxDeflection;
+        input.rudderMax = config.actuators.rudder.maxDeflection;
+        input.area = config.reference.area;
+        input.span = config.reference.span;
+        input.chord = config.reference.chord;
+
+        runtime.aero = AerodynamicModelFor(aircraft.tier).Evaluate(input, config.aero);
+        runtime.accumulator.force += runtime.aero.force;
+        runtime.accumulator.moment += runtime.aero.moment;
+    }
 }

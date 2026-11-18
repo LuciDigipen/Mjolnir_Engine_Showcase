@@ -108,6 +108,30 @@ namespace mir
             return ReadPositiveNumber(*entry, path, out, error);
         }
 
+        bool ReadRequiredNumber(const Json &object, const char *key, const std::string &path, float &out,
+            std::string &error)
+        {
+            const auto entry = object.find(key);
+            if (entry == object.end())
+            {
+                error = std::format("{}: missing", path);
+                return false;
+            }
+            return ReadNumber(*entry, path, out, error);
+        }
+
+        bool ReadRequiredNonNegative(const Json &object, const char *key, const std::string &path, float &out,
+            std::string &error)
+        {
+            const auto entry = object.find(key);
+            if (entry == object.end())
+            {
+                error = std::format("{}: missing", path);
+                return false;
+            }
+            return ReadNonNegativeNumber(*entry, path, out, error);
+        }
+
         bool ReadRequiredVector3(const Json &object, const char *key, const std::string &path, glm::vec3 &out,
             std::string &error)
         {
@@ -258,6 +282,46 @@ namespace mir
                 && ParseTrim(*entry, out.trim, error);
         }
 
+        bool ParseL1Profile(const Json &value, L1Profile &out, std::string &error)
+        {
+            if (!value.is_object())
+            {
+                error = "aero.L1: expected an object";
+                return false;
+            }
+
+            return ReadRequiredNumber(value, "CL", "aero.L1.CL", out.CL, error)
+                && ReadRequiredNonNegative(value, "CD", "aero.L1.CD", out.CD, error)
+                && ReadRequiredNonNegative(value, "Ka", "aero.L1.Ka", out.Ka, error)
+                && ReadRequiredNonNegative(value, "Ke", "aero.L1.Ke", out.Ke, error)
+                && ReadRequiredNonNegative(value, "Kr", "aero.L1.Kr", out.Kr, error)
+                && ReadRequiredNonNegative(value, "Kp", "aero.L1.Kp", out.Kp, error)
+                && ReadRequiredNonNegative(value, "Kq", "aero.L1.Kq", out.Kq, error)
+                && ReadRequiredNonNegative(value, "Kn", "aero.L1.Kn", out.Kn, error);
+        }
+
+        bool ParseAero(const Json &document, AerodynamicProfile &out, std::string &error)
+        {
+            const auto entry = document.find("aero");
+            if (entry == document.end())
+                return true;
+            if (!entry->is_object())
+            {
+                error = "aero: expected an object";
+                return false;
+            }
+
+            const auto l1 = entry->find("L1");
+            if (l1 == entry->end())
+                return true;
+
+            L1Profile profile;
+            if (!ParseL1Profile(*l1, profile, error))
+                return false;
+            out.l1 = profile;
+            return true;
+        }
+
         bool ParseDocument(const Json &document, AircraftConfig &out, std::string &error)
         {
             AircraftConfig config;
@@ -377,6 +441,9 @@ namespace mir
                 return false;
 
             if (!ParseActuators(document, config.actuators, error))
+                return false;
+
+            if (!ParseAero(document, config.aero, error))
                 return false;
 
             const auto nodes = document.find("nodes");

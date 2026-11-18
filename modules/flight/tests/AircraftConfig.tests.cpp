@@ -60,7 +60,8 @@ namespace
         "engines": [],
         "gear": [],
         "stallWarningMarginDeg": 3.0,
-        "aero": { "L1": {} }
+        "aero": { "L1": { "CL": 0.4, "CD": 0.04, "Ka": 3.0, "Ke": 4.0, "Kr": 2.0,
+                           "Kp": 2000.0, "Kq": 4000.0, "Kn": 2000.0 } }
     })";
 
     constexpr std::string_view kActuators = R"({
@@ -90,6 +91,20 @@ namespace
             document += R"( "actuators": )";
             document += actuators;
         }
+        document += "}";
+        return document;
+    }
+
+    std::string AeroDocument(std::string_view aero)
+    {
+        std::string document = R"({
+            "version": 1, "mass": 10, "inertia": { "diagonal": [1, 2, 3] },
+            "centerOfMass": [0, 0, 0], "reference": { "area": 1, "span": 1, "chord": 1 },
+            "camera": { "eye": [0, 0, 0], "chaseDistance": 0, "chaseHeight": 0 },
+            "throttleRate": 0.5, "actuators": )";
+        document += kActuators;
+        document += R"(, "aero": )";
+        document += aero;
         document += "}";
         return document;
     }
@@ -214,6 +229,42 @@ TEST_CASE("A full aircraft config parses", "[flight][config]")
     CHECK(config.actuators.flaps.rate == Catch::Approx(glm::radians(5.0f)));
     CHECK(config.actuators.trim.step == Catch::Approx(glm::radians(0.5f)));
     CHECK(config.actuators.trim.max == Catch::Approx(glm::radians(10.0f)));
+    REQUIRE(config.aero.l1.has_value());
+    CHECK(config.aero.l1->CL == Catch::Approx(0.4f));
+    CHECK(config.aero.l1->CD == Catch::Approx(0.04f));
+    CHECK(config.aero.l1->Ka == Catch::Approx(3.0f));
+    CHECK(config.aero.l1->Ke == Catch::Approx(4.0f));
+    CHECK(config.aero.l1->Kr == Catch::Approx(2.0f));
+    CHECK(config.aero.l1->Kp == Catch::Approx(2000.0f));
+    CHECK(config.aero.l1->Kq == Catch::Approx(4000.0f));
+    CHECK(config.aero.l1->Kn == Catch::Approx(2000.0f));
+}
+
+TEST_CASE("The aerodynamic profile is optional", "[flight][config]")
+{
+    mir::AircraftConfig config;
+    std::string error;
+
+    SECTION("without an aero object")
+    {
+        REQUIRE(mir::ParseAircraftConfig(ConfigDocument(R"("throttleRate": 0.5,)", kActuators), config, error));
+        CHECK_FALSE(config.aero.l1.has_value());
+    }
+
+    SECTION("an empty aero object has no tier profile")
+    {
+        REQUIRE(mir::ParseAircraftConfig(AeroDocument("{}"), config, error));
+        CHECK_FALSE(config.aero.l1.has_value());
+    }
+
+    SECTION("a negative lift coefficient is accepted")
+    {
+        REQUIRE(mir::ParseAircraftConfig(
+            AeroDocument(R"({ "L1": { "CL": -0.2, "CD": 0, "Ka": 0, "Ke": 0, "Kr": 0, "Kp": 0, "Kq": 0, "Kn": 0 } })"),
+            config, error));
+        REQUIRE(config.aero.l1.has_value());
+        CHECK(config.aero.l1->CL == Catch::Approx(-0.2f));
+    }
 }
 
 TEST_CASE("Aircraft config errors name the JSON path", "[flight][config]")
@@ -377,6 +428,42 @@ TEST_CASE("Aircraft config errors name the JSON path", "[flight][config]")
             })");
         REQUIRE_FALSE(mir::ParseAircraftConfig(document, config, error));
         CHECK(error == "actuators.trim.maxDeg: must be >= 0");
+    }
+
+    SECTION("aero must be an object")
+    {
+        REQUIRE_FALSE(mir::ParseAircraftConfig(AeroDocument("3"), config, error));
+        CHECK(error == "aero: expected an object");
+    }
+
+    SECTION("aero.L1 must be an object")
+    {
+        REQUIRE_FALSE(mir::ParseAircraftConfig(AeroDocument(R"({ "L1": 3 })"), config, error));
+        CHECK(error == "aero.L1: expected an object");
+    }
+
+    SECTION("a missing drag coefficient names its path")
+    {
+        REQUIRE_FALSE(mir::ParseAircraftConfig(
+            AeroDocument(R"({ "L1": { "CL": 0.4, "Ka": 0, "Ke": 0, "Kr": 0, "Kp": 0, "Kq": 0, "Kn": 0 } })"), config,
+            error));
+        CHECK(error == "aero.L1.CD: missing");
+    }
+
+    SECTION("a negative drag coefficient is rejected")
+    {
+        REQUIRE_FALSE(mir::ParseAircraftConfig(
+            AeroDocument(R"({ "L1": { "CL": 0.4, "CD": -1, "Ka": 0, "Ke": 0, "Kr": 0, "Kp": 0, "Kq": 0, "Kn": 0 } })"),
+            config, error));
+        CHECK(error == "aero.L1.CD: must be >= 0");
+    }
+
+    SECTION("a negative damping gain is rejected")
+    {
+        const std::string aero =
+            R"({ "L1": { "CL": 0.4, "CD": 0.04, "Ka": 0, "Ke": 0, "Kr": 0, "Kp": 0, "Kq": -1, "Kn": 0 } })";
+        REQUIRE_FALSE(mir::ParseAircraftConfig(AeroDocument(aero), config, error));
+        CHECK(error == "aero.L1.Kq: must be >= 0");
     }
 }
 

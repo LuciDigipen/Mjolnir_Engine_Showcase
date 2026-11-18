@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include <flight/AirData.h>
+#include <flight/AerodynamicModel.h>
 
 #include <core/ecs/ComponentFields.h>
 #include <core/math/WorldReal.h>
@@ -103,11 +103,14 @@ namespace mir
         // Script- and system-written wind, consumed and cleared by the environment stage.
         glm::vec3 additionalWind{ 0.0f };
         AirData airData;
+        ForceMoment aero;
         FlightControls controls;
         FlightCommandQueue commands;
         ActuatorState actuators;
         // The path the RigidBody was last written for, and its decoded configuration; null until one loads.
         char appliedConfig[kFieldStringCapacity] = {};
         const AircraftConfig *config = nullptr;
+        // The config already warned about for its missing tier profile.
+        const AircraftConfig *aeroMissingConfig = nullptr;
     };
 }

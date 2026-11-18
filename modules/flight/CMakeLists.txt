@@ -11,6 +11,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 target_link_libraries(engine_flight PRIVATE nlohmann_json::nlohmann_json)
 
 target_sources(engine_flight PRIVATE
+    src/flight/AerodynamicModel.cpp
     src/flight/AircraftConfig.cpp
     src/flight/AircraftConfigStore.cpp
     src/flight/AircraftConfigSystem.cpp
