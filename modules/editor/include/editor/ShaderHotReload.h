@@ -44,6 +44,8 @@ namespace mir
             ShaderReloadBackend backend, JobExecutor &jobs);
         void Shutdown();
         void Update();
+        // Completion runs on the editor thread after publication, with an empty diagnostic on success.
+        void QueueTerrainMaterial(const std::filesystem::path &path, std::function<void(std::string)> completion);
         bool Enabled() const { return mEnabled; }
         const std::string &LastDiagnostic() const { return mLastDiagnostic; }
         uint64_t LastRevision() const { return mLastRevision; }
@@ -74,6 +76,7 @@ namespace mir
         void PollJob();
         bool PublishJob(Job &job);
         void Requeue(const Job &job);
+        void CompleteMaterial(const std::string &name, const std::string &error);
         void DropReady();
 
         std::filesystem::path mProjectRoot, mShaderDir, mReadDirectory;
@@ -81,6 +84,7 @@ namespace mir
         ShaderManifest mManifest;
         ShaderDependencyIndex mDependencies;
         std::set<std::string> mPendingSources, mPendingMaterials;
+        std::map<std::string, std::vector<std::function<void(std::string)>>> mMaterialRequests;
         std::map<std::string, ShaderGenerationFile> mMaterialFiles;
         bool mMaterialsScanned = false;
         std::chrono::steady_clock::time_point mPendingSince{};

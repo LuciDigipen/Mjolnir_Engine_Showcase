@@ -11,6 +11,7 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <renderer/VulkanRenderer.h>
+#include <renderer/TerrainMaterialAsset.h>
 #include <jobs/BackgroundJobQueue.h>
 
 #include <nlohmann/json.hpp>
@@ -39,6 +40,18 @@ namespace mir
         {
             const auto relative = path.lexically_relative(root);
             return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
+        }
+        std::filesystem::path FindAsset(std::string_view logical, const std::vector<std::filesystem::path> &roots)
+        {
+            const auto relative = std::filesystem::u8path(logical);
+            if (!relative.is_absolute() && std::none_of(relative.begin(), relative.end(),
+                [](const auto &part) { return part == ".."; }))
+                for (const auto &root : roots)
+                {
+                    const auto candidate = std::filesystem::weakly_canonical(root / relative);
+                    if (Within(candidate, root) && std::filesystem::is_regular_file(candidate)) return candidate;
+                }
+            throw std::runtime_error("asset is missing under approved roots: " + std::string(logical));
         }
         std::string Name(const std::string &path) { return Utf8(std::filesystem::u8path(path).filename()); }
         void RemoveJob(const std::filesystem::path &path)
@@ -95,6 +108,8 @@ namespace mir
         DropReady();
         mPendingSources.clear();
         mPendingMaterials.clear();
+        while (!mMaterialRequests.empty())
+            CompleteMaterial(mMaterialRequests.begin()->first, "Shader publication stopped.");
         mMaterialFiles.clear();
         mMaterialsScanned = false;
         mMaterialEpoch = 0;
@@ -182,6 +197,34 @@ namespace mir
         mMaterialFiles = std::move(found);
         mMaterialsScanned = true;
     }
+    void ShaderHotReload::QueueTerrainMaterial(const std::filesystem::path &path,
+        std::function<void(std::string)> completion)
+    {
+        if (!mEnabled || !mBackend.available())
+        {
+            completion("Shader publication is unavailable. " + mLastDiagnostic);
+            return;
+        }
+        std::error_code error;
+        const auto canonical = std::filesystem::weakly_canonical(path, error);
+        if (error || !IsTerrainMaterialPath(Utf8(canonical)) ||
+            !std::ranges::any_of(ApprovedRoots(), [&](const auto &root) { return Within(canonical, root); }))
+        {
+            completion("The layered material is outside the shader manifest's asset roots.");
+            return;
+        }
+        const auto key = Utf8(canonical);
+        mMaterialRequests[key].push_back(std::move(completion));
+        mPendingMaterials.insert(key);
+        ++mMaterialEpoch;
+        mPendingSince = std::chrono::steady_clock::now();
+    }
+    void ShaderHotReload::CompleteMaterial(const std::string &name, const std::string &error)
+    {
+        auto requests = mMaterialRequests.extract(name);
+        if (!requests.empty())
+            for (auto &complete : requests.mapped()) complete(error);
+    }
     void ShaderHotReload::Requeue(const Job &job)
     {
         mPendingSources.insert(job.changedSources.begin(), job.changedSources.end());
@@ -238,12 +281,17 @@ namespace mir
         {
             mLastDiagnostic = job.error.substr(0, 4000);
             MIR_LOG_ERROR("Shader reload rejected: {}", mLastDiagnostic);
+            CompleteMaterial(job.materialName, mLastDiagnostic);
             DropReady();
             return;
         }
         mPublishBusy = false;
         if (PublishJob(job)) mLastDiagnostic.clear();
-        if (!mPublishBusy) DropReady();
+        if (!mPublishBusy)
+        {
+            if (!mPendingMaterials.contains(job.materialName)) CompleteMaterial(job.materialName, mLastDiagnostic);
+            DropReady();
+        }
     }
     void ShaderHotReload::Update()
     {
@@ -274,7 +322,11 @@ namespace mir
             {
                 job.materialName = *mPendingMaterials.begin();
                 mPendingMaterials.erase(mPendingMaterials.begin());
-                if (!ExpandMaterial(std::filesystem::u8path(job.materialName), job)) return;
+                if (!ExpandMaterial(std::filesystem::u8path(job.materialName), job))
+                {
+                    CompleteMaterial(job.materialName, mLastDiagnostic);
+                    return;
+                }
             }
             else
             {
@@ -373,11 +425,6 @@ namespace mir
             job.inputs.push_back(*source);
             const auto material = Json::parse(*text);
             if (material.at("version") != 1) throw std::runtime_error("unsupported material version");
-            const auto type = material.at("shader").at("type").get<std::string>();
-            const auto shaderFile = material.at("shader").at("file").get<std::string>();
-            const auto shaderRelative = std::filesystem::u8path(shaderFile);
-            if (shaderRelative.is_absolute() || std::any_of(shaderRelative.begin(), shaderRelative.end(),
-                [](const auto &part) { return part == ".."; })) throw std::runtime_error("shader path leaves approved roots");
             const auto roots = ApprovedRoots();
             std::filesystem::path owner;
             std::string nameSpace;
@@ -388,13 +435,6 @@ namespace mir
                 if (Resolve(Utf8(root.root), mManifest.workingDirectory) == owner) nameSpace = root.nameSpace;
             std::vector<std::filesystem::path> search{owner};
             for (const auto &root : roots) if (root != owner) search.push_back(root);
-            std::filesystem::path shader;
-            for (const auto &root : search)
-            {
-                const auto candidate = std::filesystem::weakly_canonical(root / shaderRelative);
-                if (Within(candidate, root) && std::filesystem::is_regular_file(candidate)) { shader = candidate; break; }
-            }
-            if (shader.empty()) throw std::runtime_error("material shader is missing under approved roots");
             const auto catalogPath = mReadDirectory / "surface_materials.json";
             const auto catalogSnapshot = SnapshotShaderFile(catalogPath, Utf8(catalogPath));
             const auto catalogText = ReadText(catalogPath);
@@ -402,8 +442,52 @@ namespace mir
             job.inputs.push_back(*catalogSnapshot);
             auto catalog = Json::parse(*catalogText);
             const auto asset = Utf8(path.lexically_relative(mManifest.workingDirectory));
-            const auto shaderIdentity = Utf8(shader.lexically_relative(mManifest.workingDirectory));
-            for (const auto &frontendValue : material.at("frontends"))
+            std::string type, shaderIdentity;
+            std::vector<std::string> shaders;
+            Json layers = Json::array(), parameters = Json::object(), frontends;
+            if (IsTerrainMaterialPath(asset))
+            {
+                std::string diagnostic;
+                const auto layered = ReadTerrainMaterial(*text, asset, nullptr, &diagnostic);
+                if (!layered) throw std::runtime_error(diagnostic);
+                type = "Layered" + std::to_string(layered->layers.size()) + "<";
+                shaderIdentity = asset;
+                frontends = Json::array({"terrain"});
+                parameters = {{"blendMode", TerrainLayerBlendModeValue(layered->blend)},
+                    {"heightContrast", layered->heightContrast}};
+                for (const auto &layer : layered->layers)
+                {
+                    const auto child = FindAsset(layer.material, search);
+                    const auto logical = Utf8(child.lexically_relative(mManifest.workingDirectory));
+                    const auto &materials = catalog.at("materials");
+                    const auto registration = std::find_if(materials.begin(), materials.end(), [&](const auto &entry)
+                        { return entry.value("asset", "") == logical && entry.value("frontend", "") == "terrain"; });
+                    if (registration == materials.end())
+                        throw std::runtime_error("Layer '" + layer.name + "' has no terrain shader registration: " + logical);
+                    const auto childType = registration->at("type").get<std::string>();
+                    const auto childShader = registration->at("shader").get<std::string>();
+                    const auto sourcePath = Resolve(childShader, mManifest.workingDirectory);
+                    if (std::ranges::none_of(roots, [&](const auto &root) { return Within(sourcePath, root); }))
+                        throw std::runtime_error("Layer shader is outside approved roots: " + childShader);
+                    if (!layers.empty()) type += ", ";
+                    type += childType;
+                    parameters["layerOffset" + std::to_string(layers.size())] = 0;
+                    layers.push_back({{"name", layer.name}, {"asset", logical}, {"type", childType}, {"shader", childShader}});
+                    const auto shader = Utf8(sourcePath);
+                    if (std::ranges::find(shaders, shader) == shaders.end()) shaders.push_back(shader);
+                }
+                type += ">";
+            }
+            else
+            {
+                type = material.at("shader").at("type").get<std::string>();
+                const auto shader = FindAsset(material.at("shader").at("file").get<std::string>(), search);
+                shaderIdentity = Utf8(shader.lexically_relative(mManifest.workingDirectory));
+                shaders.push_back(Utf8(shader));
+                parameters = material.value("parameters", Json::object());
+                frontends = material.at("frontends");
+            }
+            for (const auto &frontendValue : frontends)
             {
                 const auto frontend = frontendValue.get<std::string>();
                 const auto templateIt = std::find_if(mManifest.frontendTemplates.begin(), mManifest.frontendTemplates.end(),
@@ -411,13 +495,22 @@ namespace mir
                 if (templateIt == mManifest.frontendTemplates.end()) throw std::runtime_error("no registered frontend template for " + frontend);
                 auto stem = MaterialShaderStem(nameSpace, type, shaderIdentity, frontend);
                 for (const auto &existing : catalog.at("materials"))
-                    if (existing.value("type", "") == type && existing.value("frontend", "") == frontend &&
-                        Resolve(existing.at("shader").get<std::string>(), mManifest.workingDirectory) == shader)
-                    { stem = existing.at("stem").get<std::string>(); break; }
+                {
+                    if (existing.value("frontend", "") != frontend) continue;
+                    const bool sameShader = existing.value("type", "") == type &&
+                        Resolve(existing.at("shader").get<std::string>(), mManifest.workingDirectory) ==
+                            Resolve(shaderIdentity, mManifest.workingDirectory);
+                    // A live layered pipeline retains its stem when the editor changes its child types.
+                    if (sameShader || (!layers.empty() && existing.value("asset", "") == asset))
+                    {
+                        stem = existing.at("stem").get<std::string>();
+                        break;
+                    }
+                }
                 const auto replace = [&](std::string argument)
                     {
                         const std::pair<std::string, std::string> tokens[]{
-                            {"{materialSource}", Utf8(shader)}, {"{type}", type}, {"{stem}", stem}};
+                            {"{type}", type}, {"{stem}", stem}};
                         for (const auto &[token, value] : tokens)
                             for (auto position = argument.find(token); position != std::string::npos; position = argument.find(token))
                                 argument.replace(position, token.size(), value);
@@ -441,13 +534,21 @@ namespace mir
                     output.stage = kinds[stage];
                     output.entry = stage == 3 ? "layoutMain" : entries[stage];
                     output.specialize = stage == 0 ? "" : type;
-                    output.sources = {Utf8(shader)};
                     output.arguments = {Utf8(mManifest.slangc)};
                     output.arguments.insert(output.arguments.end(), mManifest.commonArguments.begin(), mManifest.commonArguments.end());
                     bool materialSource = false;
                     for (const auto &argument : *stages[stage])
                     {
-                        materialSource |= argument == "{materialSource}";
+                        if (argument == "{materialSource}")
+                        {
+                            materialSource = true;
+                            if (stage != 0 || layers.empty())
+                            {
+                                output.sources.insert(output.sources.end(), shaders.begin(), shaders.end());
+                                output.arguments.insert(output.arguments.end(), shaders.begin(), shaders.end());
+                            }
+                            continue;
+                        }
                         auto expanded = replace(argument);
                         if (expanded.ends_with(".slang")) output.sources.push_back(Utf8(Resolve(expanded, mManifest.workingDirectory)));
                         output.arguments.push_back(std::move(expanded));
@@ -459,8 +560,9 @@ namespace mir
                         job.outputs.push_back(std::move(output));
                 }
                 Json entry{{"stem", stem}, {"type", type}, {"frontend", frontend}, {"asset", asset},
-                    {"shader", shaderIdentity}, {"parameters", material.value("parameters", Json::object())},
+                    {"shader", shaderIdentity}, {"parameters", parameters},
                     {"reflection", stem + ".layout.spv.reflection.json"}};
+                if (!layers.empty()) entry["layers"] = layers;
                 auto &materials = catalog.at("materials");
                 auto existing = std::find_if(materials.begin(), materials.end(), [&](const auto &candidate)
                     { return candidate.value("asset", "") == asset && candidate.value("frontend", "") == frontend; });
@@ -471,8 +573,7 @@ namespace mir
             materials.erase(std::remove_if(materials.begin(), materials.end(), [&](const auto &entry)
                 {
                     return entry.value("asset", "") == asset &&
-                        std::find(material.at("frontends").begin(), material.at("frontends").end(), entry.at("frontend")) ==
-                            material.at("frontends").end();
+                        std::find(frontends.begin(), frontends.end(), entry.at("frontend")) == frontends.end();
                 }), materials.end());
             job.catalogText = catalog.dump(2);
             return true;

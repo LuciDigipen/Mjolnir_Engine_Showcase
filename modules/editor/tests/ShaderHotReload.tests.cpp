@@ -7,10 +7,12 @@
  */
 #include <editor/ShaderHotReload.h>
 #include <core/fs/FileIO.h>
+#include <core/fs/Paths.h>
 #include <jobs/BackgroundJobQueue.h>
 #include <jobs/JobExecutor.h>
 #include <renderer/MaterialReflection.h>
 #include <renderer/ShaderReload.h>
+#include <renderer/TerrainMaterialAsset.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -430,4 +432,43 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
     const auto after = layout();
     CHECK(after.size > before.size);
     CHECK(after.fields.size() == before.fields.size() + 1);
+
+    if (frontend == "terrain")
+    {
+        const auto layeredPath = content / "relief.terrainmaterial.json";
+        const std::string layered = R"({"version":1,"blend":"height","layers":[
+            {"name":"base","material":"new.material.json"},{"name":"grass","material":"new.material.json"}]})";
+        REQUIRE(mir::WriteText(layeredPath, layered));
+        std::optional<std::string> result;
+        watcher.QueueTerrainMaterial(layeredPath, [&](std::string diagnostic) { result = std::move(diagnostic); });
+        REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+        INFO(*result);
+        REQUIRE(result->empty());
+        REQUIRE(fixture.commits == 3);
+        const auto published = store.CurrentId();
+        REQUIRE(published);
+        struct RestoreShaderRoot
+        {
+            std::filesystem::path previous = mir::ShaderRootOverride();
+            ~RestoreShaderRoot() { mir::SetShaderRootOverride(std::move(previous)); }
+        } restore;
+        mir::SetShaderRootOverride(store.GenerationPath(*published));
+        const auto catalog = mir::LoadSurfaceMaterialCatalog(&error);
+        INFO(error);
+        REQUIRE(catalog);
+        const auto *registration = catalog->FindByAsset("content/relief.terrainmaterial.json", "terrain");
+        REQUIRE(registration);
+        CHECK(registration->type == "Layered2<DefaultMaterial, DefaultMaterial>");
+        CHECK(mir::ReadTerrainMaterial(layered, registration->asset, &*catalog, &error));
+        CHECK(mir::PackSurfaceMaterialRecord(*registration, &error));
+        CHECK(std::filesystem::is_regular_file(mir::ShaderPath(registration->stem + ".fragmentMain.spv")));
+        CHECK(std::filesystem::is_regular_file(mir::ShaderPath(registration->stem + ".closestHitSurface.spv")));
+
+        REQUIRE(mir::WriteText(layeredPath, "{}"));
+        result.reset();
+        watcher.QueueTerrainMaterial(layeredPath, [&](std::string diagnostic) { result = std::move(diagnostic); });
+        REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+        CHECK_FALSE(result->empty());
+        CHECK(store.CurrentId() == published);
+    }
 }

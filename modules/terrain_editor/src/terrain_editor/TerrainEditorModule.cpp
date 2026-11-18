@@ -29,6 +29,7 @@
 #include <core/ecs/GroundQuery.h>
 #include <core/ecs/World.h>
 #include <core/fs/FileIO.h>
+#include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <project/GameProject.h>
 #include <renderer/CameraMath.h>
@@ -54,6 +55,7 @@
 #include <filesystem>
 #include <format>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -137,7 +139,7 @@ namespace mir
                     continue;
 
                 const std::filesystem::path path = it->path();
-                const std::string name = path.filename().string();
+                const std::string name = GenericPathUtf8(path.filename());
                 if (!name.ends_with(".material.json") || name.ends_with(".terrainmaterial.json"))
                     continue;
 
@@ -169,7 +171,7 @@ namespace mir
                 std::error_code relativeError;
                 const std::filesystem::path relative = std::filesystem::relative(path, assetsRoot, relativeError);
                 if (!relativeError)
-                    materials.push_back(relative.generic_string());
+                    materials.push_back(GenericPathUtf8(relative));
             }
             std::ranges::sort(materials);
             return materials;
@@ -181,9 +183,9 @@ namespace mir
     public:
         Extension(TerrainEditMode &mode, TerrainEditPanel &panel, TerrainLayerWorkspace &workspace,
             std::filesystem::path releasesRoot, TerrainBakeProject bakeProject, TerrainOverlayApplier overlay,
-            std::function<bool(const std::filesystem::path &)> queueCook)
+            EditorModule &editor)
             : mMode(mode), mPanel(panel), mWorkspace(workspace), mReleasesRoot(std::move(releasesRoot)),
-              mBakeProject(std::move(bakeProject)), mApplyOverlay(std::move(overlay)), mQueueCook(std::move(queueCook))
+              mBakeProject(std::move(bakeProject)), mApplyOverlay(std::move(overlay)), mEditor(editor)
         {
         }
 
@@ -200,6 +202,13 @@ namespace mir
 
             SyncTerrain(context.mWorld);
             SyncMaterialDraft(context);
+            if (mMaterialPublication.valid() &&
+                mMaterialPublication.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            {
+                const std::string error = mMaterialPublication.get();
+                if (error.empty()) SucceedMaterial("Shader published and material queued for import." + mBindingNote);
+                else FailMaterial("Material files saved. " + error + mBindingNote);
+            }
             if (mPainting && (SelectedAsset() != mStrokeAsset || mWorkspace.SelectedLayer() != mStrokeSequence))
                 FinishStroke(context.mHistory);
         }
@@ -449,6 +458,7 @@ namespace mir
             {
                 mMaterialStatus.clear();
                 mMaterialFailed = false;
+                mMaterialPublication = {};
             }
             mMaterialDraftAsset = asset;
             mMaterialReload = false;
@@ -466,7 +476,7 @@ namespace mir
 
             TerrainMaterialLayersInput input;
             input.assetsRoot = mWorkspace.AssetsDir();
-            input.recipePath = input.assetsRoot / assets[index].recipePath;
+            input.recipePath = input.assetsRoot / std::filesystem::u8path(assets[index].recipePath);
             input.boundMaterial = BoundMaterial(context.mWorld, assets[index].recipePath);
 
             std::string error;
@@ -599,10 +609,6 @@ namespace mir
             }
             mMaterialRecipeHasMaterials = true;
             MigrateTerrainMaterialChannels(*document, mMaterialDraft.MakePlan());
-            // The runtime only sees the layered material once it is cooked; auto import may be off.
-            if (!written.layeredMaterial.empty() && mQueueCook)
-                mQueueCook(mWorkspace.AssetsDir() / written.layeredMaterial);
-
             const std::string binding = written.layeredMaterial.empty() ? mMaterialDraft.Layers().front().material
                                                                         : written.layeredMaterial;
             std::string note;
@@ -621,7 +627,16 @@ namespace mir
             }
 
             mMaterialReload = true;
-            SucceedMaterial("Applied." + note);
+            mMaterialPublication = {};
+            if (written.layeredMaterial.empty())
+                SucceedMaterial("Applied." + note);
+            else
+            {
+                mBindingNote = std::move(note);
+                mMaterialPublication = mEditor.ImportTerrainMaterial(
+                    mWorkspace.AssetsDir() / std::filesystem::u8path(written.layeredMaterial));
+                SucceedMaterial("Material files saved. Publishing shader..." + mBindingNote);
+            }
             StartBake();
         }
 
@@ -890,7 +905,9 @@ namespace mir
         std::filesystem::path mReleasesRoot;
         TerrainBakeProject mBakeProject;
         TerrainOverlayApplier mApplyOverlay;
-        std::function<bool(const std::filesystem::path &)> mQueueCook;
+        EditorModule &mEditor;
+        std::future<std::string> mMaterialPublication;
+        std::string mBindingNote;
         TerrainBaseCache mBase;
         TerrainBaseWeightsCache mWeights;
         std::map<uint64_t, TerrainEditOverlaySession> mOverlays;
@@ -1020,8 +1037,7 @@ namespace mir
         : mWorkspace(project.mAssetsDir),
           mExtension(std::make_unique<Extension>(mMode, mPanel, mWorkspace, TerrainReleasesRoot(project.mRootDir),
               TerrainBakeProject{ project.mRootDir, project.mAssetsDir, project.mAssetIdRoot, TerrainToolPath() },
-              std::move(overlay),
-              [&editor](const std::filesystem::path &path) { return editor.Import().QueueChanged(path); }))
+              std::move(overlay), editor))
     {
         mRegistration = editor.Get().AddExtension(*mExtension);
     }

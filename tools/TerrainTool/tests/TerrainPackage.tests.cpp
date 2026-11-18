@@ -13,6 +13,7 @@
 
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainRelease.h>
+#include <terrain/TerrainReleaseLock.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -63,7 +64,6 @@ namespace
         return report;
     }
 
-    // Without the lock files: the publish lock exists only while held, the reader locks only for open handles.
     std::vector<std::string> AssetDirNames(const fs::path &assetDir)
     {
         std::vector<std::string> names = FileNames(assetDir);
@@ -114,6 +114,7 @@ TEST_CASE("Package copies only the current release, then does nothing while it m
     CHECK(first.publish->releasesRoot == outRoot);
 
     CHECK(AssetDirNames(TerrainAssetReleasesDir(outRoot, asset)) == CurrentAnd(a));
+    CHECK(fs::is_regular_file(TerrainReleaseLockPath(TerrainAssetReleasesDir(outRoot, asset), a)));
     CHECK(Snapshot(TerrainReleaseDir(outRoot, asset, a)) == Snapshot(TerrainReleaseDir(TerrainReleasesRoot(gameDir), asset, a)));
     const TerrainResult<TerrainReleaseHandle> shipped = OpenCurrentTerrainRelease(outRoot, asset);
     const TerrainResult<TerrainReleaseHandle> published = OpenCurrentTerrainRelease(TerrainReleasesRoot(gameDir), asset);

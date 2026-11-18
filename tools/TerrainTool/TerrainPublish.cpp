@@ -376,6 +376,10 @@ namespace mir::terrainbake
                              releaseHex, PathUtf8(finalDir), previousText));
             return false;
         };
+        // Readers may only have permission to open the lock file the publisher creates.
+        const TerrainResult<TerrainReleaseHandle> opened = OpenTerrainRelease(root, asset, release);
+        if (!opened)
+            return pointerFailed(opened.error.message);
         if (!WriteText(pending, EncodeTerrainCurrentPointer(release)) || !FlushToDisk(pending))
             return pointerFailed(std::format("cannot write {}", PathUtf8(pending)));
         if (faults.At(TerrainPublishStep::Pointer))
@@ -395,12 +399,10 @@ namespace mir::terrainbake
         }
 
         const std::optional<TerrainReleaseId> readBack = PeekTerrainCurrent(root, asset);
-        const TerrainResult<TerrainReleaseHandle> opened = OpenCurrentTerrainRelease(root, asset);
-        if (readBack != release || !opened || opened.value->Info().release != release)
+        if (readBack != release)
         {
             Fail(report, check::kPointer, std::string(kTerrainCurrentPointerFileName),
-                 std::format("current was replaced but does not open release {}{}", releaseHex,
-                             opened ? "" : ": " + opened.error.message));
+                 std::format("current was replaced but does not name release {}", releaseHex));
             return false;
         }
         report.publish->published = true;

@@ -63,6 +63,7 @@ namespace mir
         const std::filesystem::path &RecipePath() const { return mInput.recipePath; }
         const std::filesystem::path &AssetsRoot() const { return mInput.assetsRoot; }
         bool RecipeHasMaterials() const { return mRecipeHasMaterials; }
+        bool HasBoundLayeredMaterial() const { return mBoundLayered; }
 
         const std::vector<TerrainMaterialLayerRow> &Layers() const { return mLayers; }
         TerrainMaterialLayerRow &Row(std::size_t index) { return mLayers[index]; }
@@ -105,7 +106,7 @@ namespace mir
         std::string error;
     };
 
-    // Replaces the recipe's materials section, then writes the layered material for two or more layers.
+    // Publishes the recipe's materials and its optional layered material together.
     TerrainMaterialLayersWriteResult WriteTerrainMaterialLayersFiles(const TerrainMaterialLayersDraft &draft);
 
     struct TerrainMaterialChannelMigration

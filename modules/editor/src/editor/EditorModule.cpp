@@ -168,6 +168,18 @@ namespace mir
         }
     }
 
+    std::future<std::string> EditorModule::ImportTerrainMaterial(const std::filesystem::path &path)
+    {
+        auto completion = std::make_shared<std::promise<std::string>>();
+        auto result = completion->get_future();
+        mShaderHotReload.QueueTerrainMaterial(path, [this, path, completion](std::string error) {
+            if (error.empty() && !mImport.QueueChanged(path))
+                error = "The shader was published, but the layered material could not be queued for import.";
+            completion->set_value(std::move(error));
+        });
+        return result;
+    }
+
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
         AsyncAssetService *assetService, const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs,

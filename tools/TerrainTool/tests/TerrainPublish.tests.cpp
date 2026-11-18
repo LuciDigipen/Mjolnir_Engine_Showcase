@@ -11,6 +11,7 @@
 #include <TerrainPublish.h>
 
 #include <terrain/TerrainRelease.h>
+#include <terrain/TerrainReleaseLock.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -45,7 +46,6 @@ namespace
         return MakeAssetId(ExampleAssetPath());
     }
 
-    // Without the lock files: the publish lock exists only while held, the reader locks only for open handles.
     std::vector<std::string> AssetDirNames(const fs::path &assetDir)
     {
         std::vector<std::string> names = FileNames(assetDir);
@@ -233,6 +233,7 @@ TEST_CASE("A fault at any publish step leaves the previous current release compl
     const fs::path bPartial = assetDir / (TerrainIdHex(b.value) + ".partial");
     if (step == TerrainPublishStep::Pointer)
     {
+        CHECK(fs::is_regular_file(TerrainReleaseLockPath(assetDir, b)));
         const TerrainResult<TerrainReleaseHandle> orphan = OpenTerrainRelease(releases, asset, b);
         REQUIRE(orphan);
         CHECK(orphan.value->VerifyAllPacks().code == TerrainPackErrorCode::None);

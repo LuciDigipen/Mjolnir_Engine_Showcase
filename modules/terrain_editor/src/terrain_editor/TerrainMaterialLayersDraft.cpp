@@ -11,6 +11,7 @@
 #include <terrain_editor/TerrainLayerDocument.h>
 
 #include <core/fs/FileIO.h>
+#include <core/fs/Paths.h>
 #include <renderer/TerrainMaterialAsset.h>
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainEditLayer.h>
@@ -48,15 +49,69 @@ namespace mir
             return rules.height.has_value() || rules.slope.has_value() || rules.noise.has_value();
         }
 
-        std::string RecipeStem(const std::filesystem::path &recipePath)
+        namespace fs = std::filesystem;
+
+        std::string RecipeLogicalPath(const TerrainMaterialLayersDraft &draft)
         {
-            std::string name = recipePath.filename().string();
-            if (name.ends_with(kTerrainRecipeSuffix))
-                name.resize(name.size() - kTerrainRecipeSuffix.size());
-            else
-                name = recipePath.stem().string();
-            return name;
+            return GenericPathUtf8(draft.RecipePath().lexically_normal().lexically_relative(
+                draft.AssetsRoot().lexically_normal()));
         }
+
+        bool IsAssetRelative(const fs::path &path)
+        {
+            const fs::path normalized = path.lexically_normal();
+            return !normalized.empty() && !normalized.has_root_path() && *normalized.begin() != "..";
+        }
+
+        // The sibling directory reserves the destination for this Apply and keeps renames on its filesystem.
+        struct StagedFile
+        {
+            explicit StagedFile(const fs::path &path) : target(path), directory(path) { directory += ".applying"; }
+            StagedFile(const StagedFile &) = delete;
+            StagedFile &operator=(const StagedFile &) = delete;
+
+            ~StagedFile()
+            {
+                if (reserved)
+                {
+                    std::error_code ignored;
+                    fs::remove_all(directory, ignored);
+                }
+            }
+
+            bool Reserve(std::string &error)
+            {
+                std::error_code ec;
+                fs::create_directories(target.parent_path(), ec);
+                if (!ec)
+                    reserved = fs::create_directory(directory, ec);
+                if (!reserved)
+                    error = std::format("Cannot stage {} in {} ({}).", GenericPathUtf8(target),
+                        GenericPathUtf8(directory), ec ? ec.message() : "another or interrupted Apply");
+                return reserved;
+            }
+
+            bool Stage(std::string_view text, std::string &error) const
+            {
+                if (WriteText(directory / "next", text))
+                    return true;
+                error = std::format("Cannot stage {}.", GenericPathUtf8(target));
+                return false;
+            }
+
+            bool Publish(std::string &error) const
+            {
+                std::error_code ec;
+                fs::rename(directory / "next", target, ec);
+                if (ec)
+                    error = std::format("Cannot replace {} ({}).", GenericPathUtf8(target), ec.message());
+                return !ec;
+            }
+
+            fs::path target;
+            fs::path directory;
+            bool reserved = false;
+        };
     } // namespace
 
     bool TerrainMaterialLayersDraft::Load(const TerrainMaterialLayersInput &input, std::string &error)
@@ -67,7 +122,7 @@ namespace mir
         const std::optional<std::string> text = ReadText(input.recipePath);
         if (!text)
         {
-            error = std::format("{}: the recipe cannot be read", input.recipePath.generic_string());
+            error = std::format("{}: the recipe cannot be read", GenericPathUtf8(input.recipePath));
             return false;
         }
 
@@ -78,13 +133,13 @@ namespace mir
         }
         catch (const nlohmann::json::exception &exception)
         {
-            error = std::format("{}: the recipe is not valid JSON ({})", input.recipePath.generic_string(),
+            error = std::format("{}: the recipe is not valid JSON ({})", GenericPathUtf8(input.recipePath),
                 exception.what());
             return false;
         }
         if (!root.is_object())
         {
-            error = std::format("{}: the recipe must be a JSON object", input.recipePath.generic_string());
+            error = std::format("{}: the recipe must be a JSON object", GenericPathUtf8(input.recipePath));
             return false;
         }
 
@@ -105,7 +160,7 @@ namespace mir
         mBoundLayered = IsTerrainMaterialPath(input.boundMaterial);
         if (mBoundLayered)
         {
-            if (const std::optional<std::string> json = ReadText(input.assetsRoot / input.boundMaterial))
+            if (const std::optional<std::string> json = ReadText(input.assetsRoot / fs::u8path(input.boundMaterial)))
             {
                 if (const std::optional<TerrainMaterialAsset> material =
                         ReadTerrainMaterial(*json, input.boundMaterial, nullptr))
@@ -209,6 +264,11 @@ namespace mir
     {
         if (!mLoaded)
             return "The recipe has not loaded.";
+        const std::string recipe = RecipeLogicalPath(*this);
+        if (!IsAssetRelative(fs::u8path(recipe)) || !recipe.ends_with(kTerrainRecipeSuffix))
+            return "The terrain recipe must be under the assets root.";
+        if (mBoundLayered && !IsAssetRelative(fs::u8path(mInput.boundMaterial)))
+            return "The layered material must be under the assets root.";
         if (mLayers.empty() || mLayers.size() > kMaxTerrainLayers)
             return std::format("A terrain needs between 1 and {} material layers.", kMaxTerrainLayers);
 
@@ -231,7 +291,8 @@ namespace mir
             if (row.material.empty())
                 return std::format("Layer '{}' needs a surface material.", row.name);
             std::error_code ignored;
-            if (!std::filesystem::is_regular_file(mInput.assetsRoot / row.material, ignored))
+            const fs::path material = fs::u8path(row.material);
+            if (!IsAssetRelative(material) || !fs::is_regular_file(mInput.assetsRoot / material, ignored))
                 return std::format("Surface material '{}' does not exist under the assets root.", row.material);
         }
         return {};
@@ -264,7 +325,10 @@ namespace mir
     {
         if (mBoundLayered)
             return mInput.boundMaterial;
-        return "materials/" + RecipeStem(mInput.recipePath) + ".terrainmaterial.json";
+        std::string recipe = RecipeLogicalPath(*this);
+        if (recipe.ends_with(kTerrainRecipeSuffix))
+            recipe.resize(recipe.size() - kTerrainRecipeSuffix.size());
+        return "materials/" + recipe + ".terrainmaterial.json";
     }
 
     TerrainMaterialLayersWriteResult WriteTerrainMaterialLayersFiles(const TerrainMaterialLayersDraft &draft)
@@ -276,10 +340,13 @@ namespace mir
             return result;
         }
 
-        const std::optional<std::string> text = ReadText(draft.RecipePath());
+        StagedFile recipe(draft.RecipePath());
+        if (!recipe.Reserve(result.error))
+            return result;
+        const std::optional<std::string> text = ReadText(recipe.target);
         if (!text)
         {
-            result.error = std::format("{}: the recipe cannot be read", draft.RecipePath().generic_string());
+            result.error = std::format("{}: the recipe cannot be read", GenericPathUtf8(recipe.target));
             return result;
         }
 
@@ -290,18 +357,56 @@ namespace mir
             result.error = replaced.error;
             return result;
         }
-        if (!WriteTextAtomic(draft.RecipePath(), *replaced.text))
+        if (!recipe.Stage(*replaced.text, result.error))
+            return result;
+        if (draft.Layers().size() < 2)
         {
-            result.error = std::format("{}: the recipe cannot be written", draft.RecipePath().generic_string());
+            recipe.Publish(result.error);
             return result;
         }
 
-        if (draft.Layers().size() < 2)
-            return result;
-
         const std::string relative = draft.LayeredMaterialPath();
+        StagedFile material(draft.AssetsRoot() / fs::u8path(relative));
+        if (!material.Reserve(result.error))
+            return result;
+        const std::string owner = RecipeLogicalPath(draft);
+        bool generated = !draft.HasBoundLayeredMaterial();
+        std::error_code ec;
+        const bool exists = fs::exists(material.target, ec);
+        if (ec || (exists && !fs::is_regular_file(material.target, ec)))
+        {
+            result.error = std::format("{}: cannot inspect the layered material.", relative);
+            return result;
+        }
+        if (exists)
+        {
+            const auto content = ReadText(material.target);
+            const auto previous = content ? nlohmann::json::parse(*content, nullptr, false) : nlohmann::json{};
+            if (!previous.is_object())
+            {
+                result.error = std::format("{}: cannot read the existing material's ownership.", relative);
+                return result;
+            }
+            const auto source = previous.find("sourceRecipe");
+            if (source != previous.end())
+            {
+                if (*source != owner)
+                {
+                    result.error = std::format("{}: this material belongs to a different terrain recipe.", relative);
+                    return result;
+                }
+                generated = true;
+            }
+            else if (generated)
+            {
+                result.error = std::format("{}: an existing material already uses this generated path.", relative);
+                return result;
+            }
+        }
         nlohmann::ordered_json root;
         root["version"] = 1;
+        if (generated)
+            root["sourceRecipe"] = owner;
         root["blend"] = BlendText(draft.Blend());
         root["heightContrast"] = draft.HeightContrast();
         nlohmann::ordered_json materialLayers = nlohmann::ordered_json::array();
@@ -309,12 +414,25 @@ namespace mir
             materialLayers.push_back({ { "name", row.name }, { "material", row.material } });
         root["layers"] = std::move(materialLayers);
 
-        const std::filesystem::path path = draft.AssetsRoot() / relative;
-        std::error_code ignored;
-        std::filesystem::create_directories(path.parent_path(), ignored);
-        if (!WriteTextAtomic(path, root.dump(2) + "\n"))
+        if (!material.Stage(root.dump(2) + "\n", result.error))
+            return result;
+        const fs::path backup = recipe.directory / "previous";
+        if (!fs::copy_file(recipe.target, backup, ec))
         {
-            result.error = std::format("{}: the layered material cannot be written", path.generic_string());
+            result.error = std::format("Cannot back up {} ({}).", GenericPathUtf8(recipe.target), ec.message());
+            return result;
+        }
+        if (!recipe.Publish(result.error))
+            return result;
+        if (!material.Publish(result.error))
+        {
+            fs::rename(backup, recipe.target, ec);
+            if (ec)
+            {
+                recipe.reserved = false;
+                result.error += std::format(" Recipe restore failed ({}). Its original is at {}.",
+                    ec.message(), GenericPathUtf8(backup));
+            }
             return result;
         }
 

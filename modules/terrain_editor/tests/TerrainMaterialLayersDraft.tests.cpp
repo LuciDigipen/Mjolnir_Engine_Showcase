@@ -16,6 +16,7 @@
 
 #include <core/ecs/Entity.h>
 #include <core/ecs/World.h>
+#include <core/fs/Paths.h>
 #include <terrain/TerrainEditLayer.h>
 
 #include <catch2/catch_approx.hpp>
@@ -33,6 +34,11 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#include <cstdio>
+#include <share.h>
+#endif
 
 namespace
 {
@@ -330,7 +336,7 @@ TEST_CASE("Writing replaces only the recipe materials and writes the layered mat
     const TerrainMaterialLayersWriteResult written = mir::WriteTerrainMaterialLayersFiles(draft);
     INFO(written.error);
     REQUIRE(written.error.empty());
-    CHECK(written.layeredMaterial == "materials/hills.terrainmaterial.json");
+    CHECK(written.layeredMaterial == "materials/terrain/hills.terrainmaterial.json");
 
     const nlohmann::json recipe = nlohmann::json::parse(ReadFile(fixture.RecipePath()));
     CHECK(recipe.at("parameters").at("keepMe") == 7);
@@ -342,6 +348,7 @@ TEST_CASE("Writing replaces only the recipe materials and writes the layered mat
 
     const nlohmann::json layered = nlohmann::json::parse(ReadFile(fixture.AssetPath(written.layeredMaterial)));
     CHECK(layered.at("version") == 1);
+    CHECK(layered.at("sourceRecipe") == "terrain/hills.terrain.json");
     CHECK(layered.at("blend") == "height");
     CHECK(layered.at("heightContrast") == Catch::Approx(0.1f));
     REQUIRE(layered.at("layers").size() == 2);
@@ -361,7 +368,7 @@ TEST_CASE("A single layer writes no layered material file", "[terrain_editor][ma
     INFO(written.error);
     REQUIRE(written.error.empty());
     CHECK(written.layeredMaterial.empty());
-    CHECK_FALSE(std::filesystem::exists(fixture.AssetPath("materials/hills.terrainmaterial.json")));
+    CHECK_FALSE(std::filesystem::exists(fixture.AssetPath(draft.LayeredMaterialPath())));
 
     const nlohmann::json recipe = nlohmann::json::parse(ReadFile(fixture.RecipePath()));
     REQUIRE(recipe.at("materials").at("layers").size() == 1);
@@ -388,6 +395,7 @@ TEST_CASE("Writing keeps the bound layered material's blend and contrast", "[ter
 
     const nlohmann::json layered = nlohmann::json::parse(ReadFile(fixture.AssetPath(written.layeredMaterial)));
     CHECK(layered.at("blend") == "alpha");
+    CHECK_FALSE(layered.contains("sourceRecipe"));
     CHECK(layered.at("heightContrast") == Catch::Approx(0.25f));
     REQUIRE(layered.at("layers").size() == 4);
     CHECK(layered.at("layers")[1].at("name") == "rock");
@@ -395,6 +403,98 @@ TEST_CASE("Writing keeps the bound layered material's blend and contrast", "[ter
     CHECK(layered.at("layers")[2].at("material") == "materials/sand.material.json");
     CHECK(layered.at("layers")[3].at("name") == "layer_3");
 }
+
+TEST_CASE("Generated material paths distinguish recipe directories and preserve Unicode",
+    "[terrain_editor][materiallayers]")
+{
+    namespace fs = std::filesystem;
+    DraftFixture fixture("nested");
+    const fs::path first = fixture.mAssets / u8"terrain/north/\U0001F30B.terrain.json";
+    const fs::path second = fixture.mAssets / u8"terrain/south/\U0001F30B.terrain.json";
+    WriteFile(first, kTwoLayerRecipe);
+    WriteFile(second, kTwoLayerRecipe);
+    TerrainMaterialLayersDraft draft;
+    std::string error;
+    REQUIRE(draft.Load({fixture.mAssets, first, "materials/sand.material.json"}, error));
+    auto north = mir::WriteTerrainMaterialLayersFiles(draft);
+    INFO(north.error);
+    REQUIRE(north.error.empty());
+    const fs::path northPath = fixture.mAssets / fs::u8path(north.layeredMaterial);
+    const auto before = ReadFile(northPath);
+    CHECK(nlohmann::json::parse(before).at("sourceRecipe") ==
+          mir::GenericPathUtf8(first.lexically_relative(fixture.mAssets)));
+
+    REQUIRE(draft.Load({fixture.mAssets, second, "materials/sand.material.json"}, error));
+    draft.Row(1).name = "clay";
+    auto south = mir::WriteTerrainMaterialLayersFiles(draft);
+    REQUIRE(south.error.empty());
+    CHECK(north.layeredMaterial != south.layeredMaterial);
+    CHECK(ReadFile(northPath) == before);
+}
+
+TEST_CASE("Generated materials can be reused by their recipe and foreign assets are preserved",
+    "[terrain_editor][materiallayers]")
+{
+    DraftFixture fixture("ownership");
+    fixture.Recipe(kTwoLayerRecipe).Bound("materials/sand.material.json");
+    TerrainMaterialLayersDraft draft = fixture.Load();
+    const auto material = draft.LayeredMaterialPath();
+    SECTION("the same recipe can re-add its second layer")
+    {
+        REQUIRE(mir::WriteTerrainMaterialLayersFiles(draft).error.empty());
+        draft = fixture.Bound(material).Load();
+        draft.RemoveLayer(1);
+        REQUIRE(mir::WriteTerrainMaterialLayersFiles(draft).error.empty());
+        draft = fixture.Bound("materials/sand.material.json").Load();
+        REQUIRE(draft.AddLayer());
+        const auto written = mir::WriteTerrainMaterialLayersFiles(draft);
+        REQUIRE(written.error.empty());
+        CHECK(written.layeredMaterial == material);
+    }
+    SECTION("a generated path is occupied by a hand-authored asset")
+    {
+        fixture.Material(material, kBoundLayers);
+        draft.Row(1).name = "clay";
+        CHECK_FALSE(mir::WriteTerrainMaterialLayersFiles(draft).error.empty());
+        CHECK(ReadFile(fixture.RecipePath()) == kTwoLayerRecipe);
+        CHECK(ReadFile(fixture.AssetPath(material)) == kBoundLayers);
+    }
+    SECTION("a bound generated asset records a different owner")
+    {
+        auto foreign = nlohmann::json::parse(kBoundLayers);
+        foreign["sourceRecipe"] = "terrain/another.terrain.json";
+        const auto before = foreign.dump();
+        fixture.Material(material, before);
+        draft = fixture.Bound(material).Load();
+        draft.Row(1).name = "clay";
+        CHECK_FALSE(mir::WriteTerrainMaterialLayersFiles(draft).error.empty());
+        CHECK(ReadFile(fixture.RecipePath()) == kTwoLayerRecipe);
+        CHECK(ReadFile(fixture.AssetPath(material)) == before);
+    }
+}
+
+#ifdef _WIN32
+TEST_CASE("A locked layered material rolls the recipe back after a rename",
+    "[terrain_editor][materiallayers]")
+{
+    DraftFixture fixture("rollback");
+    const std::string material = "materials/custom.terrainmaterial.json";
+    fixture.Recipe(kTwoLayerRecipe).Material(material, kBoundLayers).Bound(material);
+    TerrainMaterialLayersDraft draft = fixture.Load();
+    draft.Row(1).name = "clay";
+    {
+        const std::unique_ptr<FILE, decltype(&fclose)> held(
+            _wfsopen(fixture.AssetPath(material).c_str(), L"rb", _SH_DENYNO), fclose);
+        REQUIRE(held);
+        const auto failed = mir::WriteTerrainMaterialLayersFiles(draft);
+        REQUIRE_FALSE(failed.error.empty());
+        CHECK(failed.error.find("Cannot replace") != std::string::npos);
+        CHECK(ReadFile(fixture.RecipePath()) == kTwoLayerRecipe);
+        CHECK(ReadFile(fixture.AssetPath(material)) == kBoundLayers);
+    }
+    CHECK(mir::WriteTerrainMaterialLayersFiles(draft).error.empty());
+}
+#endif
 
 TEST_CASE("Channel migration renames and deletes painted weights on every layer",
     "[terrain_editor][materiallayers][migration]")
