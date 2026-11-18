@@ -83,15 +83,7 @@ float4 SurfaceLayeredNeeded(float4 weights, uint count, uint blendMode)
 
 SurfaceOutput SurfaceLayeredEmpty()
 {
-    SurfaceOutput output;
-    output.albedo = float3(0.0, 0.0, 0.0);
-    output.normalWS = float3(0.0, 0.0, 0.0);
-    output.roughness = 0.0;
-    output.f0 = 0.0;
-    output.ao = 0.0;
-    output.height = 0.0;
-    output.emissive = float3(0.0, 0.0, 0.0);
-    return output;
+    return (SurfaceOutput)0;
 }
 
 SurfaceOutput SurfaceLayeredCombine(const SurfaceOutput outputs[4], float4 factors, uint count)
@@ -99,17 +91,30 @@ SurfaceOutput SurfaceLayeredCombine(const SurfaceOutput outputs[4], float4 facto
     const float f[4] = { factors.x, factors.y, factors.z, factors.w };
     SurfaceOutput blended = SurfaceLayeredEmpty();
     float3 normal = float3(0.0, 0.0, 0.0);
+    float3 coatNormal = float3(0.0, 0.0, 0.0);
+    float unlitWeight = 0.0;
     for (uint index = 0; index < count; ++index)
     {
         blended.albedo += outputs[index].albedo * f[index];
         normal += outputs[index].normalWS * f[index];
         blended.roughness += outputs[index].roughness * f[index];
         blended.f0 += outputs[index].f0 * f[index];
+        blended.f90 += outputs[index].f90 * f[index];
+        blended.dielectricF0 += outputs[index].dielectricF0 * f[index];
+        blended.dielectricF90 += outputs[index].dielectricF90 * f[index];
+        blended.metallic += outputs[index].metallic * f[index];
+        blended.clearcoat += outputs[index].clearcoat * f[index];
+        blended.clearcoatRoughness += outputs[index].clearcoatRoughness * f[index];
+        coatNormal += outputs[index].clearcoatNormalWS * (outputs[index].clearcoat * f[index]);
+        if (outputs[index].unlit)
+            unlitWeight += f[index];
         blended.ao += outputs[index].ao * f[index];
         blended.height += outputs[index].height * f[index];
         blended.emissive += outputs[index].emissive * f[index];
     }
     blended.normalWS = dot(normal, normal) > 0.0 ? normalize(normal) : outputs[0].normalWS;
+    blended.clearcoatNormalWS = dot(coatNormal, coatNormal) > 0.0 ? normalize(coatNormal) : blended.normalWS;
+    blended.unlit = unlitWeight > 0.5;
     return blended;
 }
 

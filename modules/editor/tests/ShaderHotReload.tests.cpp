@@ -5,12 +5,18 @@
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  */
+#include <editor/ImageDecode.h>
 #include <editor/ShaderHotReload.h>
 #include <core/fs/FileIO.h>
 #include <core/fs/Paths.h>
 #include <jobs/BackgroundJobQueue.h>
 #include <jobs/JobExecutor.h>
+#include <renderer/CameraMath.h>
 #include <renderer/MaterialReflection.h>
+#include <renderer/Shapes.h>
+#include <renderer/TerrainDrawData.h>
+#include <renderer/VulkanRenderer.h>
+#include <window/Window.h>
 #include <renderer/ShaderReload.h>
 #include <renderer/TerrainMaterialAsset.h>
 
@@ -18,6 +24,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <thread>
 #include <future>
 
@@ -471,4 +478,157 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
         CHECK_FALSE(result->empty());
         CHECK(store.CurrentId() == published);
     }
+}
+
+TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][editor][shader]")
+{
+    namespace fs = std::filesystem;
+    using namespace mir;
+    const fs::path build = fs::u8path(MIR_EDITOR_SHADER_MANIFEST).parent_path().parent_path();
+    ShaderGenerationStore original(build / "shaders");
+    const auto base = original.CurrentId();
+    REQUIRE(base);
+    const auto seed = original.GenerationPath(*base);
+    auto manifest = LoadShaderManifest(seed / "shader_manifest.json");
+    REQUIRE(manifest);
+    const auto repo = manifest->workingDirectory;
+    const auto fixture = UniqueShaderJobDirectory(repo / "builds" / "gpu465");
+    struct Cleanup
+    {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove_all(path, ec); }
+    } cleanup{fixture};
+    const auto shaders = fixture / "shaders";
+    const auto materials = fixture / "materials";
+    fs::create_directories(materials);
+    fs::copy(seed, shaders, fs::copy_options::recursive);
+    manifest->assetRoots.push_back({materials, "terraincheck"});
+    REQUIRE(WriteText(shaders / "shader_manifest.json", SerializeShaderManifest(*manifest)));
+    fs::copy_file(repo / "assets/materials/default.slang", materials / "paint.slang");
+
+    SetShaderRootOverride(shaders);
+    auto window = Window::Create({.mWidth = 320, .mHeight = 180, .mTitle = "Terrain layer regression",
+        .mStartHidden = true});
+    REQUIRE(window);
+    VulkanRenderer renderer;
+    struct Shutdown
+    {
+        VulkanRenderer &renderer;
+        ~Shutdown() { renderer.Shutdown(); ClearShaderRootOverride(); }
+    } shutdown{renderer};
+    REQUIRE(renderer.Initialize({window.get(), "Terrain layer regression", true, false}));
+    renderer.SetSkyVisible(false);
+    renderer.SetAmbientColor({1.0f, 1.0f, 1.0f});
+    PostProcessingState post;
+    post.antiAliasing.mode = AntiAliasingMode::Off;
+    renderer.SetPostProcessing(post);
+
+    JobExecutor jobs(1);
+    ShaderHotReload watcher;
+    watcher.Initialize(repo, shaders, {
+        [&] { return renderer.ShaderReloadAvailable(); },
+        [&](const auto &dir, auto *error) { return renderer.PrepareShaderReload(dir, error); },
+        [&] { renderer.CommitPreparedShaderReload(); }, [&] { renderer.DiscardPreparedShaderReload(); }}, jobs);
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(watcher.Enabled());
+
+    const auto materialPath = materials / "paint.material.json";
+    REQUIRE(WriteText(materialPath, R"({"version":1,"shader":{"file":"paint.slang","type":"DefaultMaterial"},
+        "frontends":["terrain"],"parameters":{"albedoRoughness":[0.9,0.04,0.04,1.0],"surfaceParams":[0,1,0,0]}})"));
+    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration == 1 || !watcher.LastDiagnostic().empty(); }));
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(renderer.ReloadStats().mGeneration == 1);
+
+    const auto createMaterial = [&](const fs::path &path, const nlohmann::json &parameters,
+        std::span<const MaterialHandle> layers = {})
+    {
+        const auto logical = GenericPathUtf8(path.lexically_relative(repo));
+        const auto *registration = renderer.SurfaceMaterials().FindByAsset(logical, "terrain");
+        REQUIRE(registration);
+        auto authored = *registration;
+        auto merged = nlohmann::json::parse(authored.parametersJson);
+        merged.update(parameters);
+        std::string error;
+        const auto schema = LoadSurfaceMaterialSchema(authored, &error);
+        INFO(error);
+        REQUIRE(schema);
+        std::vector<std::byte> record(schema->layout.size);
+        for (size_t layer = 0; layer < layers.size(); ++layer)
+        {
+            const auto child = renderer.MaterialRecord(layers[layer]);
+            REQUIRE(child);
+            const size_t offset = (record.size() + 15u) & ~size_t{15};
+            merged["layerOffset" + std::to_string(layer)] = offset;
+            record.resize(offset);
+            record.insert(record.end(), child->mBytes.begin(), child->mBytes.end());
+        }
+        authored.parametersJson = merged.dump();
+        const auto header = PackSurfaceMaterialRecord(authored, &error);
+        INFO(error);
+        REQUIRE(header);
+        std::ranges::copy(*header, record.begin());
+        auto handle = renderer.CreateMaterial({.shaderName = registration->stem, .cullMode = VK_CULL_MODE_NONE,
+            .record = record, .surfaceMaterial = true, .surfaceAsset = logical});
+        REQUIRE_FALSE(handle.IsNull());
+        REQUIRE(handle != renderer.ErrorMaterial());
+        return handle;
+    };
+    const auto red = createMaterial(materialPath, nlohmann::json::object());
+    const auto cube = MakeCube();
+    DrawItem item;
+    item.mesh = renderer.CreateMesh(cube.vertices, cube.indices);
+    REQUIRE_FALSE(item.mesh.IsNull());
+    item.model[3].z = -3.0f;
+    item.previousModel = item.model;
+    item.material = red;
+    RenderView view;
+    view.items = std::span(&item, 1);
+    view.viewProj = MakeViewProjection(glm::mat4(1.0f), Camera{}, 320.0f / 180.0f);
+    view.nearZ = 0.1f;
+    view.farZ = 100.0f;
+    const auto capture = [&](const fs::path &image)
+    {
+        for (int frame = 0; frame < 3; ++frame)
+        {
+            if (frame == 2)
+                renderer.CaptureNextFrame(image);
+            window->PollEvents();
+            renderer.DrawFrame(std::span(&view, 1));
+        }
+        DecodedImage pixels;
+        std::string diagnostic;
+        const bool decoded = ReadImage(image, 1024, pixels, diagnostic);
+        INFO(diagnostic);
+        REQUIRE(decoded);
+        const auto center = (static_cast<size_t>(pixels.mHeight / 2) * pixels.mWidth + pixels.mWidth / 2) * 4;
+        const auto *rgb = pixels.mPixels.get() + center;
+        return std::array<int, 3>{rgb[0], rgb[1], rgb[2]};
+    };
+    const auto before = capture(fixture / "single.png");
+    const auto green = createMaterial(materialPath, {{"albedoRoughness", {0.04, 0.9, 0.04, 1.0}}});
+
+    const auto layeredPath = materials / "paint.terrainmaterial.json";
+    REQUIRE(WriteText(layeredPath, R"({"version":1,"blend":"weight","layers":[
+        {"name":"base","material":"paint.material.json"},{"name":"top","material":"paint.material.json"}]})"));
+    std::optional<std::string> result;
+    watcher.QueueTerrainMaterial(layeredPath, [&](std::string error) { result = std::move(error); });
+    REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+    INFO(*result);
+    REQUIRE(result->empty());
+    const std::array layers{red, green};
+    item.material = createMaterial(layeredPath, nlohmann::json::object(), layers);
+    const std::array weight{std::byte{255}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const auto texture = renderer.CreateTexture({.width = 1, .height = 1, .pixels = weight, .srgb = false});
+    REQUIRE_FALSE(texture.IsNull());
+    item.terrain = TerrainDrawData{texture.mIndex, renderer.MaterialSamplerRow({}),
+        {1, kTerrainSlotUnused, kTerrainSlotUnused, kTerrainSlotUnused}, 1.0f}.Pack();
+    const auto after = capture(fixture / "layered.png");
+    item.material = green;
+    item.terrain = {};
+    const auto expected = capture(fixture / "green.png");
+    CAPTURE(before, after, expected);
+    CHECK(before[0] > before[1] + 30);
+    CHECK(after[1] > after[0] + 30);
+    for (size_t channel = 0; channel < after.size(); ++channel)
+        CHECK(std::abs(after[channel] - expected[channel]) <= 2);
 }
