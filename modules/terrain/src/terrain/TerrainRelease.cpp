@@ -459,6 +459,9 @@ namespace mir
             return Fail<TerrainReleaseHandle>(Code::NotFound,
                                               "{}: release {} is being removed (a pruner holds its lock)",
                                               dir.generic_string(), Hex(release.value));
+        if (status == TerrainReleaseLockStatus::Unavailable)
+            return Fail<TerrainReleaseHandle>(Code::Io, "{}: cannot acquire the reader lock for release {}",
+                                              dir.generic_string(), Hex(release.value));
         source->HoldLock(std::move(lock));
 
         TerrainResult<TerrainReleaseHandle> opened = TerrainReleaseHandle::Open(source);

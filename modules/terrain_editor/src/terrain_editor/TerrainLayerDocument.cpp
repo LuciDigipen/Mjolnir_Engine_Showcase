@@ -9,6 +9,7 @@
 #include <terrain_editor/TerrainLayerDocument.h>
 
 #include <core/fs/FileIO.h>
+#include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <terrain/TerrainEditStore.h>
 
@@ -25,7 +26,20 @@ namespace mir
     {
         std::filesystem::path Sibling(const std::filesystem::path &directory, std::string_view suffix)
         {
-            return directory.parent_path() / (directory.filename().string() + std::string(suffix));
+            auto path = directory;
+            path += suffix;
+            return path;
+        }
+        std::error_code RecoverSavedDirectory(const std::filesystem::path &directory)
+        {
+            std::error_code error;
+            if (!std::filesystem::exists(directory, error) && !error)
+            {
+                const auto backup = Sibling(directory, ".old");
+                if (std::filesystem::exists(backup, error))
+                    std::filesystem::rename(backup, directory, error);
+            }
+            return error;
         }
     } // namespace
 
@@ -36,6 +50,14 @@ namespace mir
 
     void TerrainLayerDocument::Load()
     {
+        if (const auto error = RecoverSavedDirectory(mDirectory))
+        {
+            mLoadError = std::format("{}: cannot recover the saved Edit Layers ({})",
+                GenericPathUtf8(mDirectory), error.message());
+            mLayers.clear();
+            mSavedLayers.clear();
+            return;
+        }
         const TerrainResult<std::vector<TerrainEditLayer>> loaded = LoadTerrainEditStack(mDirectory);
         if (!loaded)
         {
@@ -158,19 +180,23 @@ namespace mir
         };
 
         if (!Editable())
-            return fail(std::format("{}: the Edit Layers did not load", mDirectory.generic_string()));
+            return fail(std::format("{}: the Edit Layers did not load", GenericPathUtf8(mDirectory)));
+
+        if (const auto error = RecoverSavedDirectory(mDirectory))
+            return fail(std::format("{}: cannot recover the saved Edit Layers ({})",
+                GenericPathUtf8(mDirectory), error.message()));
 
         const std::filesystem::path saving = Sibling(mDirectory, ".saving");
         const std::filesystem::path aside = Sibling(mDirectory, ".old");
         std::error_code ec;
         std::filesystem::remove_all(saving, ec);
         if (ec)
-            return fail(std::format("{}: cannot remove the interrupted save ({})", saving.generic_string(),
+            return fail(std::format("{}: cannot remove the interrupted save ({})", GenericPathUtf8(saving),
                 ec.message()));
 
         std::filesystem::remove_all(aside, ec);
         if (ec)
-            return fail(std::format("{}: cannot remove the replaced Edit Layers ({})", aside.generic_string(),
+            return fail(std::format("{}: cannot remove the replaced Edit Layers ({})", GenericPathUtf8(aside),
                 ec.message()));
 
         const auto removeSaving = [&saving]() {
@@ -183,7 +209,7 @@ namespace mir
             std::filesystem::remove_all(mDirectory, ec);
             if (ec)
                 return fail(std::format("{}: cannot remove the Edit Layer directory ({})",
-                    mDirectory.generic_string(), ec.message()));
+                    GenericPathUtf8(mDirectory), ec.message()));
             mSavedLayers.clear();
             return true;
         }
@@ -195,7 +221,7 @@ namespace mir
         std::filesystem::create_directories(saving, ec);
         if (ec)
             return fail(std::format("{}: cannot create the new Edit Layer directory ({})",
-                saving.generic_string(), ec.message()));
+                GenericPathUtf8(saving), ec.message()));
 
         for (const TerrainEditStackFile &file : *planned.value)
         {
@@ -205,12 +231,12 @@ namespace mir
             {
                 removeSaving();
                 return fail(std::format("{}: cannot create the Edit Layer directory ({})",
-                    path.parent_path().generic_string(), ec.message()));
+                    GenericPathUtf8(path.parent_path()), ec.message()));
             }
             if (!WriteBytes(path, file.bytes))
             {
                 removeSaving();
-                return fail(std::format("{}: cannot write the Edit Layer file", path.generic_string()));
+                return fail(std::format("{}: cannot write the Edit Layer file", GenericPathUtf8(path)));
             }
         }
 
@@ -221,7 +247,7 @@ namespace mir
             {
                 removeSaving();
                 return fail(std::format("{}: cannot move the current Edit Layers aside ({})",
-                    mDirectory.generic_string(), ec.message()));
+                    GenericPathUtf8(mDirectory), ec.message()));
             }
         }
 
@@ -232,7 +258,7 @@ namespace mir
             if (std::filesystem::exists(aside, restore))
                 std::filesystem::rename(aside, mDirectory, restore);
             removeSaving();
-            return fail(std::format("{}: cannot move the new Edit Layers in ({})", mDirectory.generic_string(),
+            return fail(std::format("{}: cannot move the new Edit Layers in ({})", GenericPathUtf8(mDirectory),
                 ec.message()));
         }
 

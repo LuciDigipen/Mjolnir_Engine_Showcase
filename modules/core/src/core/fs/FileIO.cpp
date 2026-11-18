@@ -7,6 +7,7 @@
  *
  */
 #include "core/fs/FileIO.h"
+#include "core/fs/Paths.h"
 
 #include "core/log/Log.h"
 
@@ -23,14 +24,14 @@ namespace mir
             std::ifstream file(path, std::ios::binary | std::ios::ate);
             if (!file)
             {
-                MIR_LOG_ERROR("{}: cannot open {}", who, path.string());
+                MIR_LOG_ERROR("{}: cannot open {}", who, GenericPathUtf8(path));
                 return std::nullopt;
             }
 
             const std::streamsize size = file.tellg();
             if (size < 0)
             {
-                MIR_LOG_ERROR("{}: cannot determine size of {}", who, path.string());
+                MIR_LOG_ERROR("{}: cannot determine size of {}", who, GenericPathUtf8(path));
                 return std::nullopt;
             }
             file.seekg(0);
@@ -38,7 +39,7 @@ namespace mir
             std::vector<std::byte> bytes(static_cast<std::size_t>(size));
             if (!bytes.empty() && !file.read(reinterpret_cast<char *>(bytes.data()), size))
             {
-                MIR_LOG_ERROR("{}: short read on {}", who, path.string());
+                MIR_LOG_ERROR("{}: short read on {}", who, GenericPathUtf8(path));
                 return std::nullopt;
             }
 
@@ -50,20 +51,20 @@ namespace mir
             std::ofstream file(path, std::ios::binary);
             if (!file)
             {
-                MIR_LOG_ERROR("{}: cannot open {}", who, path.string());
+                MIR_LOG_ERROR("{}: cannot open {}", who, GenericPathUtf8(path));
                 return false;
             }
 
             if (size != 0 && !file.write(data, static_cast<std::streamsize>(size)))
             {
-                MIR_LOG_ERROR("{}: short write on {}", who, path.string());
+                MIR_LOG_ERROR("{}: short write on {}", who, GenericPathUtf8(path));
                 return false;
             }
 
             file.flush();
             if (!file.good())
             {
-                MIR_LOG_ERROR("{}: flush failed on {}", who, path.string());
+                MIR_LOG_ERROR("{}: flush failed on {}", who, GenericPathUtf8(path));
                 return false;
             }
 
@@ -97,27 +98,27 @@ namespace mir
         if (length > kMaxEnd || offset > kMaxEnd - length)
         {
             MIR_LOG_ERROR("ReadByteRange: range at offset {} of {} bytes overflows on {}", offset, length,
-                          path.string());
+                          GenericPathUtf8(path));
             return std::nullopt;
         }
 
         std::ifstream file(path, std::ios::binary | std::ios::ate);
         if (!file)
         {
-            MIR_LOG_ERROR("ReadByteRange: cannot open {}", path.string());
+            MIR_LOG_ERROR("ReadByteRange: cannot open {}", GenericPathUtf8(path));
             return std::nullopt;
         }
 
         const std::streamoff size = file.tellg();
         if (size < 0)
         {
-            MIR_LOG_ERROR("ReadByteRange: cannot determine size of {}", path.string());
+            MIR_LOG_ERROR("ReadByteRange: cannot determine size of {}", GenericPathUtf8(path));
             return std::nullopt;
         }
         if (offset + length > static_cast<std::uint64_t>(size))
         {
             MIR_LOG_ERROR("ReadByteRange: range [{}, {}) is past the end of {} ({} bytes)", offset, offset + length,
-                          path.string(), size);
+                          GenericPathUtf8(path), size);
             return std::nullopt;
         }
 
@@ -125,7 +126,7 @@ namespace mir
         file.seekg(static_cast<std::streamoff>(offset));
         if (length != 0 && !file.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(length)))
         {
-            MIR_LOG_ERROR("ReadByteRange: short read of [{}, {}) on {}", offset, offset + length, path.string());
+            MIR_LOG_ERROR("ReadByteRange: short read of [{}, {}) on {}", offset, offset + length, GenericPathUtf8(path));
             return std::nullopt;
         }
 
@@ -138,13 +139,13 @@ namespace mir
         std::error_code ec;
         if (!std::filesystem::is_regular_file(path, ec))
         {
-            MIR_LOG_ERROR("FileSize: {} is missing or not a regular file", path.string());
+            MIR_LOG_ERROR("FileSize: {} is missing or not a regular file", GenericPathUtf8(path));
             return std::nullopt;
         }
         const std::uintmax_t size = std::filesystem::file_size(path, ec);
         if (ec)
         {
-            MIR_LOG_ERROR("FileSize: cannot stat {} ({})", path.string(), ec.message());
+            MIR_LOG_ERROR("FileSize: cannot stat {} ({})", GenericPathUtf8(path), ec.message());
             return std::nullopt;
         }
         return static_cast<std::uint64_t>(size);
@@ -188,7 +189,7 @@ namespace mir
         std::filesystem::rename(temp, path, ec);
         if (ec)
         {
-            MIR_LOG_ERROR("WriteBytesAtomic: cannot replace {} ({})", path.string(), ec.message());
+            MIR_LOG_ERROR("WriteBytesAtomic: cannot replace {} ({})", GenericPathUtf8(path), ec.message());
             std::error_code removeEc;
             std::filesystem::remove(temp, removeEc); // don't leave a stray .tmp behind
             return false;

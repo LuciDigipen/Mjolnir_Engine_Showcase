@@ -25,12 +25,6 @@ namespace mir
         namespace fs = std::filesystem;
         using Json = nlohmann::json;
 
-        std::string PathText(const fs::path &path)
-        {
-            const std::u8string text = path.generic_u8string();
-            return { reinterpret_cast<const char *>(text.data()), text.size() };
-        }
-
         std::string Text(const Json &json, std::string_view key)
         {
             const auto it = json.find(std::string(key));
@@ -81,7 +75,7 @@ namespace mir
 
         TerrainBakeRequest request;
         request.mTool = project.mTool;
-        request.mRecipe = project.mAssetsDir / fs::path(std::string(recipePath));
+        request.mRecipe = project.mAssetsDir / fs::u8path(recipePath);
         request.mIdRoot = project.mIdRoot;
         request.mSourcePath = std::string(recipePath);
         request.mGameDir = project.mGameDir;
@@ -93,9 +87,9 @@ namespace mir
 
     std::vector<std::string> TerrainBakeArguments(const TerrainBakeRequest &request)
     {
-        return { "sync", "--recipe", PathText(request.mRecipe), "--id-root", request.mIdRoot, "--source-path",
-            request.mSourcePath, "--game-dir", PathText(request.mGameDir), "--candidate",
-            PathText(request.mCandidateDir), "--report", PathText(request.mReportFile) };
+        return { "sync", "--recipe", GenericPathUtf8(request.mRecipe), "--id-root", request.mIdRoot, "--source-path",
+            request.mSourcePath, "--game-dir", GenericPathUtf8(request.mGameDir), "--candidate",
+            GenericPathUtf8(request.mCandidateDir), "--report", GenericPathUtf8(request.mReportFile) };
     }
 
     std::filesystem::path ReadTerrainToolPath(const std::filesystem::path &workspaceFile)

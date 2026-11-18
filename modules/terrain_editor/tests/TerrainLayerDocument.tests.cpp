@@ -131,6 +131,33 @@ TEST_CASE("A saved Edit Layer stack loads back equal", "[terrain_editor][editlay
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Reopening an interrupted Edit Layer save restores the last committed stack",
+    "[terrain_editor][editlayersave]")
+{
+    const auto root = MakeScratchDir("recover");
+    const auto directory = mir::TerrainEditLayersDir(root / u8"\U0001F30B.terrain.json");
+    REQUIRE(directory == root / u8"\U0001F30B.terrain.layers");
+    TerrainLayerDocument original(directory);
+    original.Load();
+    original.Append(Layer("Saved ridge", 3, TerrainEditBlend::Additive));
+    REQUIRE(original.Save());
+
+    std::filesystem::rename(directory, root / u8"\U0001F30B.terrain.layers.old");
+    std::filesystem::create_directory(root / u8"\U0001F30B.terrain.layers.saving");
+
+    TerrainLayerDocument reopened(directory);
+    reopened.Load();
+    REQUIRE(reopened.Editable());
+    CHECK_FALSE(reopened.Unsaved());
+    REQUIRE(reopened.Layers() == original.Layers());
+    reopened.Append(EmptyLayer("Next", 4));
+    REQUIRE(reopened.Save());
+    const auto disk = LoadTerrainEditStack(directory);
+    REQUIRE(disk);
+    CHECK(*disk.value == reopened.Layers());
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Saving an empty Edit Layer stack removes its directory", "[terrain_editor][editlayersave]")
 {
     const std::filesystem::path root = MakeScratchDir("empty");

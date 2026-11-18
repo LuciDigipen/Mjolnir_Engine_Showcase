@@ -28,7 +28,8 @@ namespace mir
         Held,
         // Another process holds the other mode.
         Busy,
-        // No lock file could be opened; the caller goes on without a lock.
+        // The missing reader lock cannot be created on a read-only filesystem.
+        ReadOnly,
         Unavailable,
     };
 

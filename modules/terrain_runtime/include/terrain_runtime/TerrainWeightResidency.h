@@ -138,8 +138,7 @@ namespace mir
 
         uint64_t HeldBytes() const;
         void Retire(Entry &entry);
-        // Frees room by retiring entries that rank behind an incoming unit.
-        void MakeRoom(uint64_t bytes, TerrainUnitKind kind, float distance);
+        bool MakeRoom(uint64_t bytes, const TerrainWeightUnit *incoming = nullptr, float distance = 0.0f);
         bool QueueUpload(Entry &entry, uint32_t side, std::span<const std::byte> bytes);
         void StartRead(const TerrainWeightWant &want, uint32_t side, uint64_t identity,
                        const std::array<uint8_t, kTerrainDrawSlots> &recordSlots, float invFootprint, double now);
@@ -153,6 +152,7 @@ namespace mir
         std::unordered_map<TerrainWeightUnit, TerrainWeightWant, TerrainWeightUnit::Hash> mWants;
         std::unordered_map<TerrainWeightUnit, Entry, TerrainWeightUnit::Hash> mEntries;
         uint64_t mBudgetBytes = 0;
+        bool mBudgetReduced = false;
         double mRetainSeconds = 0.0;
         uint32_t mSamplerRow = UINT32_MAX;
         uint64_t mNextTicket = 1;

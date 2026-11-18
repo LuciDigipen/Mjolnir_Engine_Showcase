@@ -154,6 +154,7 @@ namespace mir
 
     void TerrainWeightResidency::ApplySettings(const TerrainStreamingSettings::Gpu &gpu)
     {
+        mBudgetReduced |= gpu.weightBudgetBytes < mBudgetBytes;
         mBudgetBytes = gpu.weightBudgetBytes;
         mRetainSeconds = gpu.meshRetainSeconds;
     }
@@ -194,27 +195,32 @@ namespace mir
         entry.texture = kNullTexture;
     }
 
-    void TerrainWeightResidency::MakeRoom(uint64_t bytes, TerrainUnitKind kind, float distance)
+    bool TerrainWeightResidency::MakeRoom(uint64_t bytes, const TerrainWeightUnit *incoming, float distance)
     {
-        const int incoming = RankOrder(kind);
-        while (HeldBytes() + bytes > mBudgetBytes)
+        if (bytes > mBudgetBytes)
+            return false;
+        uint64_t held = HeldBytes();
+        while (held > mBudgetBytes - bytes)
         {
             auto farthest = mEntries.end();
             for (auto it = mEntries.begin(); it != mEntries.end(); ++it)
             {
                 const int order = RankOrder(it->first.kind);
-                const bool behind = order > incoming || (order == incoming && it->second.distance > distance);
-                if (!behind)
+                if (it->second.state == WeightState::Failed)
+                    continue;
+                if (incoming && std::pair{order, it->second.distance} <= std::pair{RankOrder(incoming->kind), distance})
                     continue;
                 if (farthest == mEntries.end() || order > RankOrder(farthest->first.kind) ||
                     (order == RankOrder(farthest->first.kind) && it->second.distance > farthest->second.distance))
                     farthest = it;
             }
             if (farthest == mEntries.end())
-                return;
+                return false;
+            held -= farthest->second.bytes;
             Retire(farthest->second);
             mEntries.erase(farthest);
         }
+        return true;
     }
 
     bool TerrainWeightResidency::QueueUpload(Entry &entry, uint32_t side, std::span<const std::byte> bytes)
@@ -320,8 +326,7 @@ namespace mir
             mEntries.erase(found);
             if (mSamplerRow == UINT32_MAX)
                 continue;
-            MakeRoom(result.bytes.size(), result.unit.kind, entry.distance);
-            if (HeldBytes() + result.bytes.size() > mBudgetBytes)
+            if (!MakeRoom(result.bytes.size(), &result.unit, entry.distance))
             {
                 ++mSkippedBudget;
                 continue;
@@ -336,6 +341,13 @@ namespace mir
 
     void TerrainWeightResidency::Install(double now)
     {
+        if (std::exchange(mBudgetReduced, false))
+        {
+            for (auto &[key, entry] : mEntries)
+                if (const auto want = mWants.find(key); want != mWants.end())
+                    entry.distance = want->second.distance;
+            MakeRoom(0);
+        }
         TakeFinished();
 
         std::vector<TerrainWeightUnit> retired;
@@ -435,8 +447,7 @@ namespace mir
                 ++mSkippedBudget;
                 continue;
             }
-            MakeRoom(bytes, key.kind, want.distance);
-            if (HeldBytes() + bytes > mBudgetBytes)
+            if (!MakeRoom(bytes, &key, want.distance))
             {
                 ++mSkippedBudget;
                 continue;

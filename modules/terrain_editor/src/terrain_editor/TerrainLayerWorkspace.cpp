@@ -33,7 +33,7 @@ namespace mir
         std::vector<TerrainEditAsset> next;
         for (const TerrainInstanceState &instance : world.Instances())
         {
-            if (instance.recipePath.empty() || TerrainEditLayersDir(mAssetsDir / instance.recipePath).empty())
+            if (instance.recipePath.empty() || TerrainEditLayersDir(mAssetsDir / std::filesystem::u8path(instance.recipePath)).empty())
                 continue;
             if (std::ranges::any_of(next, [&instance](const TerrainEditAsset &asset) {
                     return asset.recipePath == instance.recipePath;
@@ -84,7 +84,7 @@ namespace mir
         if (found != mDocuments.end())
             return found->second.get();
 
-        auto document = std::make_unique<TerrainLayerDocument>(TerrainEditLayersDir(mAssetsDir / recipePath));
+        auto document = std::make_unique<TerrainLayerDocument>(TerrainEditLayersDir(mAssetsDir / std::filesystem::u8path(recipePath)));
         document->Load();
         TerrainLayerDocument *loaded = document.get();
         mDocuments.emplace(recipePath, std::move(document));

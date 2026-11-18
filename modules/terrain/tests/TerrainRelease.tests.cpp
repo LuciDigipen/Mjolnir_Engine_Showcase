@@ -318,7 +318,7 @@ TEST_CASE("A release handle shares its reader lock and keeps it while any copy l
     std::filesystem::remove_all(root);
 }
 
-TEST_CASE("A release open takes no lock from memory, nor where its lock file cannot be created",
+TEST_CASE("A release open from memory needs no lock and a disk open reports a broken lock directory",
           "[terrain][release][lock]")
 {
     const Fixture f;
@@ -340,10 +340,34 @@ TEST_CASE("A release open takes no lock from memory, nor where its lock file can
         const std::filesystem::path root = MakeScratchDir("release_lock_none");
         WriteRelease(root, f.info, Encode(f.info, f.layout, BuildTiles(f.layout), f.options));
         REQUIRE(WriteText(TerrainAssetReleasesDir(root, f.asset) / kTerrainReleaseLocksDirName, "not a directory"));
-        const TerrainReleaseHandle handle = OpenOk(OpenTerrainRelease(root, f.asset, f.info.release));
-        CHECK(handle.VerifyAllPacks().code == Code::None);
-        CHECK_FALSE(std::filesystem::exists(TerrainReleaseLockPath(TerrainAssetReleasesDir(root, f.asset),
-                                                                  f.info.release)));
+        const auto opened = OpenTerrainRelease(root, f.asset, f.info.release);
+        REQUIRE_FALSE(opened);
+        CHECK(opened.error.code == Code::Io);
+        CHECK(Mentions(opened.error, "reader lock"));
         std::filesystem::remove_all(root);
     }
 }
+
+#ifndef _WIN32
+TEST_CASE("A release reader can pin an existing read-only lock file", "[terrain][release][lock]")
+{
+    namespace fs = std::filesystem;
+    const fs::path root = MakeScratchDir("release_reader_permissions");
+    const Fixture f;
+    WriteRelease(root, f.info, Encode(f.info, f.layout, BuildTiles(f.layout), f.options));
+    const auto assetDir = TerrainAssetReleasesDir(root, f.asset);
+    const auto lockPath = TerrainReleaseLockPath(assetDir, f.info.release);
+    fs::create_directories(lockPath.parent_path());
+    REQUIRE(WriteText(lockPath, ""));
+    fs::permissions(lockPath, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read);
+    {
+        const auto reader = OpenTerrainRelease(root, f.asset, f.info.release);
+        REQUIRE(reader);
+        fs::permissions(lockPath, fs::perms::owner_write, fs::perm_options::add);
+        std::unique_ptr<TerrainReleaseLock> exclusive;
+        CHECK(TerrainReleaseLock::TryAcquireExclusive(assetDir, f.info.release, exclusive) ==
+              TerrainReleaseLockStatus::Busy);
+    }
+    fs::remove_all(root);
+}
+#endif

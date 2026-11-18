@@ -522,6 +522,62 @@ TEST_CASE("The weight budget goes to the nearest tiles and the rest draw without
     CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
 }
 
+TEST_CASE("Lowering the weight budget retires the farthest drawn tiles before a Region",
+          "[terrain_runtime][weights]")
+{
+    RegionWeightedRelease release(0xEE, {0.5f, 0.5f});
+    Rig rig(uint64_t(1) << 24);
+    const TerrainWeightUnit region = RegionUnit(release.asset, release.Region());
+    const TerrainWeightUnit nearTile = TileUnit(release.asset, {0, 0});
+    const TerrainWeightUnit farTile = TileUnit(release.asset, {-2, -1});
+    const TerrainSlotTable slots;
+
+    rig.Begin();
+    rig.residency.Request({release.handle, farTile, 100.0f});
+    rig.residency.Request({release.handle, nearTile, 1.0f});
+    rig.residency.Request({release.handle, region, 1000.0f});
+    rig.Install();
+    rig.FinishReads();
+    REQUIRE(rig.textures.mQueued == 3);
+    for (uint32_t row = 0; row < 3; ++row)
+        rig.textures.Complete(TextureHandle{row, 1});
+    rig.Install();
+    REQUIRE(rig.residency.Stats().ready == 3);
+
+    const uint64_t side = uint64_t(release.layout.IntervalsPerTile() + 1);
+    const uint64_t tileBytes = side * side * 4;
+    const uint64_t budget = rig.residency.Stats().residentBytes - tileBytes;
+    rig.residency.ApplySettings(WeightGpu(budget));
+    rig.Install();
+    CHECK(rig.residency.Stats().residentBytes == budget);
+    CHECK(rig.residency.Words(farTile, slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(nearTile, slots) != kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(region, slots) != kNoTerrainDrawWords);
+
+    rig.residency.ApplySettings(WeightGpu(budget - tileBytes));
+    rig.Install();
+    CHECK(rig.residency.Stats().residentBytes == budget - tileBytes);
+    CHECK(rig.residency.Words(nearTile, slots) == kNoTerrainDrawWords);
+    CHECK(rig.residency.Words(region, slots) != kNoTerrainDrawWords);
+    CHECK(rig.textures.mRetired.size() == 2);
+    CHECK(rig.executor->RunAll() == 0);
+}
+
+TEST_CASE("A finished read evicted by a smaller weight budget never queues an upload", "[terrain_runtime][weights]")
+{
+    WeightedRelease release(0xEC, {0.5f, 0.5f});
+    Rig rig(uint64_t(1) << 24);
+    rig.Draw(release.handle, {0, 0}, 1.0f);
+    REQUIRE(rig.executor->RunAll() == 1);
+    REQUIRE(rig.residency.Stats().reading == 1);
+
+    rig.residency.ApplySettings(WeightGpu(0));
+    rig.Install();
+    CHECK(rig.residency.Stats().residentBytes == 0);
+    CHECK(rig.residency.Stats().reading == 0);
+    CHECK(rig.textures.mQueued == 0);
+}
+
 TEST_CASE("Region images outrank tiles in the weight budget", "[terrain_runtime][weights]")
 {
     RegionWeightedRelease release(0xEE, {0.5f, 0.5f});
