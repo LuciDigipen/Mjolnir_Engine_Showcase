@@ -2,8 +2,8 @@
 
 The shared fixed-wing flight model: the `Aircraft` component, the `*.aircraft.json` configuration asset and the per-step pipeline that turns controls into forces on a Jolt body. Games use it through a Prefab, a configuration file and Lua; it owns no rendering or UI.
 
-`mir::flight` · depends `mir::core`, `mir::physics`, `mir::input`, `mir::assets`; `mir::renderer` private, for
-camera cuts · API `modules/flight/include/flight/` · maintainer Jackey Cen · reviewed 2026-11-18
+`mir::flight` · depends `mir::core`, `mir::physics`, `mir::input`, `mir::assets`; `mir::camera` and
+`mir::renderer` private, for the chase controller, `Camera` and camera cuts · API `modules/flight/include/flight/` · maintainer Jackey Cen · reviewed 2026-11-18
 
 ## Model
 
@@ -46,6 +46,12 @@ every `Aircraft` with `playerInput` it copies the pitch, roll, yaw, throttle and
 `AircraftRuntime::commands`. The actuator stage drains that queue on the first fixed step after the frame, so
 a frame without a fixed step keeps its commands for the next one.
 
+`FlightCameraSystem` runs in Update while simulating. When an aircraft's loaded config differs from the one its
+cameras were last set up for, it points every Follow `CameraController` targeting the aircraft at the config's
+chase distance and height, behind and above in the aircraft's heading only, and places the first direct child
+with a `Camera` at the config's cockpit eye with the identity rotation, inactive. `FlightCameraToggle` then
+switches a player aircraft between that chase camera and its cockpit camera, cutting the camera it activates.
+
 `modules/flight_script` is the Lua bridge: `world:aircraft_telemetry`, `set_aircraft_wind`, `reset_aircraft`,
 `aircraft_touchdowns` and `aircraft_controls` read the telemetry, add to the aircraft's additional wind, call
 the reset, and expose the published touchdown list and the held controls with their actuator state. Angles
@@ -69,6 +75,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `ResetAircraft` | `<flight/FlightReset.h>` | teleports an aircraft and resets its velocity, actuators, gear state and engines |
 | `FlightInput`, `AddFlightDefaultActions` | `<flight/FlightInput.h>` | the flight action names and their default keyboard and gamepad bindings |
 | `FlightInputSystem` | `<flight/FlightInputSystem.h>` | Update system that reads the flight actions and queues discrete commands |
+| `FlightCameraSystem` | `<flight/FlightCameraSystem.h>` | Update system that sets up the aircraft's cameras and switches the view |
+| `FlightCameraView` | `<flight/AircraftRuntime.h>` | the view the camera toggle last selected: `Chase` or `Cockpit` |
 | `StepActuators` | `<flight/FlightActuators.h>` | the pure actuator stage over an `ActuatorState` |
 | `FlightControls`, `FlightCommandQueue`, `ActuatorState` | `<flight/AircraftRuntime.h>` | held controls, the discrete-command FIFO and the actuator state |
 | `FlightEnvironment`, `DensityModel`, `AtmosphereSample`, `SampleAtmosphere` | `<flight/FlightEnvironment.h>` | the World's air resource and the density/sound sample at an altitude |
@@ -96,7 +104,7 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   A failed load is cached, logged once, leaves the body untouched and sets `runtime.config` to null; the gate
   then skips that aircraft.
 - `WriteMassProperties` never changes the motion type. It sets mass, the rotated custom inertia tensor, the
-  rotated custom centre of mass, zero damping, the gyroscopic force and `LinearCast`.
+  rotated custom centre of mass, zero damping, the gyroscopic force, `LinearCast` and `interpolate`.
 - `FlightEnvironment::wind` and `AircraftRuntime::additionalWind` are the velocity of the air in the world
   frame, not the direction it blows from. The gate computes with their sum and clears `additionalWind` after
   reading it, so a script or system must write it again every fixed step.
@@ -128,6 +136,15 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   A frame's analog controls are the latest values, and its fresh presses are appended to a 16-command FIFO in
   action-table order: `FlightFlapsUp`, `FlightFlapsDown`, `FlightTrimUp`, `FlightTrimDown`. Further presses that
   frame are dropped.
+- Camera setup runs only while simulating and only when `runtime.config` differs from `runtime.cameraConfig`, so
+  the derived values never reach the authored scene. Every Follow `CameraController` whose target is the
+  aircraft gets `mOffset = (0, chaseHeight, chaseDistance)`, `mOffsetInTargetSpace`, `mOffsetHeadingOnly` and
+  `mLookAtTarget`; behind is entity-local +Z. The cockpit is the first direct child with a `Camera`: its local
+  Transform becomes `BodyToLocal(camera.eye)` with the identity rotation, and its `Camera` is inactive while the
+  chase camera keeps its authored `mActive`. The view starts as chase.
+- `FlightCameraToggle` acts only for a `playerInput` aircraft that has both a chase camera (a `Camera` with a
+  Follow `CameraController` targeting it) and a cockpit camera. It flips the two `mActive` flags, cuts the
+  newly active camera and stores the view in `runtime.cameraView`; with only one of the two it does nothing.
 - The actuator stage drains the FIFO on the first fixed step after the frame and applies the commands in order:
   flaps move the detent index by -1/+1 inside its list, trim adds +/-`stepDeg` clamped to +/-`maxDeg`, then
   throttle changes by `(up - down) * throttleRate * dt` clamped to 0..1.
@@ -187,8 +204,9 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   trim, flap detent, gear contact state, command queue and pending touchdowns, sets each engine's rpm to
   `idleRpm + throttle * (maxRpm - idleRpm)` and cuts every active `Camera`. Cleared contact lets the next ground
   contact publish a touchdown.
-- `mir::renderer` is a private dependency, only for `CutCamera`: no renderer type appears in a flight public
-  header or in the pipeline.
+- `mir::camera` and `mir::renderer` are private dependencies: only the chase `CameraController`, the `Camera`
+  components and `CutCamera` are used. No flight public header includes a camera or renderer header; the camera
+  type is only forward-declared there.
 
 ## State
 
@@ -197,8 +215,9 @@ resource, air data, actuator stage, propulsion stage, landing gear stage and the
 work. L2 is the default tier and includes the stall blend and flap table. `FlightStepGate` is attached, reads
 state and air data, and adds the propulsion, the gear and the selected tier's aerodynamic force and moment;
 `AfterStep` fills the telemetry and `FlightTouchdownSystem` publishes the frame's touchdowns. `ResetAircraft`
-respawns an aircraft. L3 yields zero with a warning until its issue lands. There is no hot reload yet; the store
-is cleared only with the module.
+respawns an aircraft. `FlightCameraSystem` wires the chase and cockpit cameras from the config and the camera
+toggle switches between them. L3 yields zero with a warning until its issue lands. There is no hot reload yet;
+the store is cleared only with the module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
@@ -216,8 +235,9 @@ bouncing, roll and pitch, own-body exclusion, braking against free rolling, rudd
 touchdown publishing one event per gear and no repeats, no gear force without gear points, `gear` parsing and
 its error paths), `Telemetry` (the ground ray over flat ground and without ground, attitude from the body
 rotation, a one-g load factor, the stall margin and `stallWarningMarginDeg`, a reset's pose, velocity, controls
-and engine rpm, the camera cut and the refusal without `Aircraft`) and `FlightStepGate` (control-moment signs,
-state from the step, detach).
+and engine rpm, the camera cut and the refusal without `Aircraft`), `FlightCamera` (the chase and cockpit setup
+from the config, a re-run after the config changes, the toggle both ways with its cuts, edit mode, an aircraft
+missing one of the two cameras) and `FlightStepGate` (control-moment signs, state from the step, detach).
 
 ## Flight input
 

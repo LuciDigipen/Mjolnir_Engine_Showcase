@@ -13,6 +13,7 @@
 #include <flight/FlightTelemetry.h>
 
 #include <core/ecs/ComponentFields.h>
+#include <core/ecs/Entity.h>
 #include <core/math/WorldReal.h>
 #include <physics/PhysicsTypes.h>
 
@@ -33,6 +34,12 @@ namespace mir
     };
 
     inline constexpr std::size_t kFlightCommandCapacity = 16;
+
+    enum class FlightCameraView : uint8_t
+    {
+        Chase,
+        Cockpit,
+    };
 
     // Discrete presses collected during a frame, applied in order by the next fixed step.
     struct FlightCommandQueue
@@ -186,5 +193,10 @@ namespace mir
         const AircraftConfig *aeroMissingConfig = nullptr;
         // The config the engine rpm was last initialised for.
         const AircraftConfig *propulsionConfig = nullptr;
+        // The config the chase and cockpit cameras were last set up for, the cockpit camera child
+        // and the view the toggle last selected.
+        const AircraftConfig *cameraConfig = nullptr;
+        Entity cockpitCamera = kNullEntity;
+        FlightCameraView cameraView = FlightCameraView::Chase;
     };
 }

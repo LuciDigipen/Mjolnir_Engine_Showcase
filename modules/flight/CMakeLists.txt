@@ -5,7 +5,8 @@ target_link_libraries(engine_flight
            mir::physics
            mir::input
            mir::assets
-    PRIVATE mir::renderer
+    PRIVATE mir::camera
+            mir::renderer
 )
 
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -19,6 +20,7 @@ target_sources(engine_flight PRIVATE
     src/flight/AirData.cpp
     src/flight/ComponentRegistration.cpp
     src/flight/FlightActuators.cpp
+    src/flight/FlightCameraSystem.cpp
     src/flight/FlightCurve.cpp
     src/flight/FlightEnvironment.cpp
     src/flight/FlightFrames.cpp

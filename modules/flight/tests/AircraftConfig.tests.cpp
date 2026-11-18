@@ -545,6 +545,7 @@ TEST_CASE("WriteMassProperties moves the tensor and centre of mass to local axes
     CHECK(rigidBody.angularDamping == 0.0f);
     CHECK(rigidBody.gyroscopicForce);
     CHECK(rigidBody.motionQuality == mir::PhysicsMotionQuality::LinearCast);
+    CHECK(rigidBody.interpolate);
 }
 
 TEST_CASE("An aircraft takes its mass properties from its config", "[flight][config]")

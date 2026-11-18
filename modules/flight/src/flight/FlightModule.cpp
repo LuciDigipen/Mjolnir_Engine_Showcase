@@ -10,6 +10,7 @@
 
 #include <flight/AircraftConfigSystem.h>
 #include <flight/ComponentRegistration.h>
+#include <flight/FlightCameraSystem.h>
 #include <flight/FlightEnvironment.h>
 #include <flight/FlightInputSystem.h>
 #include <flight/FlightTouchdownSystem.h>
@@ -31,6 +32,9 @@ namespace mir
 
         // Update runs after PreUpdate's InputSystem and before any FixedUpdate substep
         context.scheduler.AddSystem<FlightInputSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
+
+        // sets the cameras up from the loaded config and switches the view on the camera toggle
+        context.scheduler.AddSystem<FlightCameraSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
 
         // once per frame, after every fixed step, so scripts see the frame's touchdowns in Update
         context.scheduler.AddSystem<FlightTouchdownSystem>(SystemPhase::LateUpdate,

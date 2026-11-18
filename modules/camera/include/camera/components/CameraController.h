@@ -38,6 +38,7 @@ namespace mir
         Entity mTarget = kNullEntity;
         glm::vec3 mOffset{ 0.0f, 3.0f, 8.0f };
         bool mOffsetInTargetSpace = false;
+        bool mOffsetHeadingOnly = false; // yaw only, together with mOffsetInTargetSpace
         float mStiffness = 6.0f;
         float mSnapDistance = 50.0f; //0 = never snaps
         bool mLookAtTarget = true;
@@ -64,6 +65,8 @@ namespace mir
         {.mName = "offset", .mKind = FieldKind::Vec3, .mOffset = offsetof(CameraController, mOffset)},
         {.mName = "offsetInTargetSpace", .mKind = FieldKind::Bool,
          .mOffset = offsetof(CameraController, mOffsetInTargetSpace)},
+        {.mName = "offsetHeadingOnly", .mKind = FieldKind::Bool,
+         .mOffset = offsetof(CameraController, mOffsetHeadingOnly)},
         {.mName = "stiffness", .mKind = FieldKind::Float, .mOffset = offsetof(CameraController, mStiffness),
          .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX},
         {.mName = "snapDistance", .mKind = FieldKind::Float, .mOffset = offsetof(CameraController, mSnapDistance),

@@ -42,6 +42,7 @@ namespace mir
         rigidBody.angularDamping = 0.0f;
         rigidBody.gyroscopicForce = true;
         rigidBody.motionQuality = PhysicsMotionQuality::LinearCast;
+        rigidBody.interpolate = true;
     }
 
     AircraftConfigSystem::AircraftConfigSystem(AircraftConfigStore::Source source) : mStore(std::move(source)) {}

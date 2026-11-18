@@ -4,6 +4,7 @@ engine_add_module_tests(flight
     AircraftConfig.tests.cpp
     AirData.tests.cpp
     FlightActuators.tests.cpp
+    FlightCamera.tests.cpp
     FlightFrames.tests.cpp
     FlightInput.tests.cpp
     FlightStepGate.tests.cpp
@@ -12,5 +13,6 @@ engine_add_module_tests(flight
     Telemetry.tests.cpp
 )
 
-# flight links renderer privately for camera cuts; the telemetry test adds a Camera and reads the cut list.
-target_link_libraries(engine_flight_tests PRIVATE mir::renderer)
+# flight links renderer and camera privately; the telemetry test adds a Camera and reads the cut list, and the
+# camera test registers the chase controller component.
+target_link_libraries(engine_flight_tests PRIVATE mir::renderer mir::camera)

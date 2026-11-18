@@ -136,6 +136,75 @@ TEST_CASE("A target-space offset turns with the target", "[camera][follow]")
     REQUIRE(Distance(mir::CameraFollowGoal(follow, WorldVec3(0.0), quarterTurn), WorldVec3(0.0, 0.0, 5.0)) < 1e-5);
 }
 
+TEST_CASE("A heading-only offset follows the target's yaw", "[camera][follow]")
+{
+    CameraController follow = MakeFollow();
+    follow.mOffset = glm::vec3(0.0f, 3.0f, 8.0f);
+    follow.mOffsetInTargetSpace = true;
+    follow.mOffsetHeadingOnly = true;
+
+    const glm::quat yaw = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const WorldVec3 target(2.0, -1.5, 4.0);
+    const WorldVec3 goal = mir::CameraFollowGoal(follow, target, yaw);
+
+    REQUIRE(std::abs(goal.x - (target.x + 8.0)) < 1e-4);
+    REQUIRE(std::abs(goal.y - (target.y + 3.0)) < 1e-4);
+    REQUIRE(std::abs(goal.z - target.z) < 1e-4);
+}
+
+TEST_CASE("A heading-only offset ignores the target's roll and pitch", "[camera][follow]")
+{
+    CameraController follow = MakeFollow();
+    follow.mOffset = glm::vec3(0.0f, 3.0f, 8.0f);
+    follow.mOffsetInTargetSpace = true;
+    follow.mOffsetHeadingOnly = true;
+
+    const glm::quat yaw = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const WorldVec3 target(2.0, -1.5, 4.0);
+    const WorldVec3 level = mir::CameraFollowGoal(follow, target, yaw);
+
+    const glm::quat rolled = yaw * glm::angleAxis(glm::radians(60.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::quat pitched = yaw * glm::angleAxis(glm::radians(30.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::quat both = pitched * glm::angleAxis(glm::radians(60.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    for (const glm::quat &rotation : { rolled, pitched, both })
+    {
+        const WorldVec3 goal = mir::CameraFollowGoal(follow, target, rotation);
+        REQUIRE(Distance(goal, level) < 1e-4);
+        REQUIRE(goal.y - target.y == 3.0);
+    }
+}
+
+TEST_CASE("A heading-only offset stays finite with the target pointed straight up", "[camera][follow]")
+{
+    CameraController follow = MakeFollow();
+    follow.mOffset = glm::vec3(0.0f, 3.0f, 8.0f);
+    follow.mOffsetInTargetSpace = true;
+    follow.mOffsetHeadingOnly = true;
+
+    const glm::quat straightUp = glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::quat yawedStraightUp = glm::angleAxis(glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f)) * straightUp;
+
+    for (const glm::quat &rotation : { straightUp, yawedStraightUp })
+    {
+        const WorldVec3 goal = mir::CameraFollowGoal(follow, WorldVec3(0.0), rotation);
+        REQUIRE(std::isfinite(goal.x));
+        REQUIRE(std::isfinite(goal.y));
+        REQUIRE(std::isfinite(goal.z));
+    }
+}
+
+TEST_CASE("Without heading only, a target-space offset turns with the target's roll", "[camera][follow]")
+{
+    CameraController follow = MakeFollow();
+    follow.mOffset = glm::vec3(0.0f, 3.0f, 8.0f);
+    follow.mOffsetInTargetSpace = true;
+    follow.mOffsetHeadingOnly = false;
+
+    const glm::quat roll = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    REQUIRE(Distance(mir::CameraFollowGoal(follow, WorldVec3(0.0), roll), WorldVec3(-3.0, 0.0, 8.0)) < 1e-4);
+}
+
 TEST_CASE("Looking straight down keeps the last rotation", "[camera][follow]")
 {
     const CameraController follow = MakeFollow();
