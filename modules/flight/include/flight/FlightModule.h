@@ -11,7 +11,10 @@
 #include <flight/AircraftConfigStore.h>
 #include <flight/FlightStepGate.h>
 
+#include <core/Registration.h>
 #include <core/ecs/ModuleContext.h>
+
+#include <functional>
 
 namespace mir
 {
@@ -20,7 +23,8 @@ namespace mir
     class FlightModule
     {
       public:
-        FlightModule(ModuleContext context, AircraftConfigStore::Source source);
+        FlightModule(ModuleContext context, AircraftConfigStore::Source source,
+            std::function<AircraftConfigStore::Source()> reloadSource = {});
         ~FlightModule();
 
         FlightModule(const FlightModule &) = delete;
@@ -28,6 +32,10 @@ namespace mir
 
       private:
         World *mWorld = nullptr;
+        AircraftConfigStore mStore;
+        std::function<AircraftConfigStore::Source()> mReloadSource;
         FlightStepGate mGate;
+        // Last-declared so they unregister before the store they call.
+        Registration mReloadStages[3];
     };
 }

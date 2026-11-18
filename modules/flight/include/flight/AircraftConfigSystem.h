@@ -24,13 +24,13 @@ namespace mir
     class AircraftConfigSystem final : public ISystem
     {
       public:
-        explicit AircraftConfigSystem(AircraftConfigStore::Source source);
+        explicit AircraftConfigSystem(AircraftConfigStore &store);
 
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
 
       private:
-        AircraftConfigStore mStore;
+        AircraftConfigStore &mStore;
         Query<Aircraft, RigidBody> *mQuery = nullptr;
     };
 }

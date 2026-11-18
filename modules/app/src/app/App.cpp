@@ -179,7 +179,12 @@ namespace mir
         AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
         ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
         : physics(context, &jobs),
+    #if MIR_WITH_EDITOR
+        flight(context, MakeAircraftConfigSource(assets.Cache(), resolver),
+            [&assets, &resolver] { return MakeAircraftConfigSource(assets.Candidate(), resolver); }),
+    #else
         flight(context, MakeAircraftConfigSource(assets.Cache(), resolver)),
+    #endif
         terrainData(context),
         script(context, assets, resolver),
         particlesRuntime(context, particles, particlesGpu, rendering),

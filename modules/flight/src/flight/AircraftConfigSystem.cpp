@@ -17,9 +17,9 @@
 
 #include <glm/mat3x3.hpp>
 
+#include <cstdint>
 #include <cstring>
 #include <string_view>
-#include <utility>
 
 namespace mir
 {
@@ -45,7 +45,7 @@ namespace mir
         rigidBody.interpolate = true;
     }
 
-    AircraftConfigSystem::AircraftConfigSystem(AircraftConfigStore::Source source) : mStore(std::move(source)) {}
+    AircraftConfigSystem::AircraftConfigSystem(AircraftConfigStore &store) : mStore(store) {}
 
     void AircraftConfigSystem::OnStart(SystemContext &context)
     {
@@ -62,14 +62,27 @@ namespace mir
             [this](Entity, Aircraft &aircraft, RigidBody &rigidBody)
             {
                 const std::string_view path = aircraft.config;
-                if (path == std::string_view(aircraft.runtime.appliedConfig))
+                const uint32_t generation = mStore.Generation();
+                const bool pathChanged = path != std::string_view(aircraft.runtime.appliedConfig);
+                const bool reloaded = aircraft.runtime.configGeneration != generation;
+                if (!pathChanged && !reloaded)
                     return;
 
-                std::memcpy(aircraft.runtime.appliedConfig, aircraft.config,
-                    sizeof(aircraft.runtime.appliedConfig));
+                if (pathChanged)
+                    std::memcpy(aircraft.runtime.appliedConfig, aircraft.config,
+                        sizeof(aircraft.runtime.appliedConfig));
                 aircraft.runtime.config = path.empty() ? nullptr : mStore.Get(path);
+                aircraft.runtime.configGeneration = generation;
                 if (aircraft.runtime.config == nullptr)
                     return;
+
+                if (reloaded)
+                {
+                    // Keep the stages that compare their config pointer re-running on the swapped config.
+                    aircraft.runtime.aeroMissingConfig = nullptr;
+                    aircraft.runtime.propulsionConfig = nullptr;
+                    aircraft.runtime.cameraConfig = nullptr;
+                }
 
                 WriteMassProperties(*aircraft.runtime.config, rigidBody);
             });

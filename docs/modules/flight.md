@@ -14,6 +14,16 @@ same step. `AircraftConfigStore` loads through `AssetResolver` and `AssetCache` 
 path once. The store keeps the decoded configs for the module's lifetime, and `AircraftRuntime::config` points
 into it.
 
+Editor builds hot-reload the configs through the engine's reload stages. `App` gives `FlightModule` a factory
+that resolves a staged path against `AssetsModule::Candidate()`; with no factory (every other build) the module
+registers nothing to reload. `ReloadPrepare` decodes every cached successful path through the candidate; a
+failure throws and vetoes the whole reload, while a cached failure that now decodes is staged to load. A commit
+assigns the staged configs into their existing objects, so the pointers in `AircraftRuntime::config` stay valid,
+clears those failures and bumps the store generation. Abort drops the staging. On the next fixed step the config
+system re-applies a config whose generation is newer than the aircraft's and clears the tracking pointers the
+propulsion, aerodynamic-warning and camera stages compare, so they initialise again; actuator deflections,
+throttle and the flap detent are kept.
+
 `FlightStepGate` is the per-step pipeline. It reads the body state before the physics step and skips any
 aircraft whose config did not load. After the step it re-reads the body, recomputes the air data with the wind
 that step used, raycasts the ground and fills `AircraftRuntime::telemetry`; the post-step body state never
@@ -58,7 +68,12 @@ the reset, and expose the published touchdown list and the held controls with th
 cross into Lua in degrees; see [script.md](script.md#flight).
 
 ```cpp
+#if MIR_WITH_EDITOR
+mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver),
+    [&assets, &resolver] { return mir::MakeAircraftConfigSource(assets.Candidate(), resolver); });
+#else
 mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver));
+#endif
 ```
 
 ## API
@@ -100,9 +115,20 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   so `Aircraft` remains trivially copyable and saveable; `runtime` is transient.
 - The config system runs only while simulating, so the derived mass properties never reach the authored scene;
   the Play snapshot restores the authored `RigidBody` on Stop.
-- The config system only writes a `RigidBody` when the path differs from `AircraftRuntime::appliedConfig`.
-  A failed load is cached, logged once, leaves the body untouched and sets `runtime.config` to null; the gate
-  then skips that aircraft.
+- The config system only writes a `RigidBody` when the path differs from `AircraftRuntime::appliedConfig` or
+  the store generation differs from `AircraftRuntime::configGeneration`. A failed load is cached, logged once,
+  leaves the body untouched and sets `runtime.config` to null; the gate then skips that aircraft.
+- Hot reload is editor-only, driven by `App::ApplyImportedAssets`: `FlightModule` registers the reload stages
+  only when it is given a source factory, and only the editor build passes one, resolving
+  `AssetsModule::Candidate()`. `PrepareReload` decodes every cached successful path and every cached failure
+  through the candidate source; if a cached success no longer decodes it throws
+  `aircraft config reload rejected: '<path>': <error>` and stages nothing. `CommitReload` assigns each staged
+  config into the existing heap object, so `AircraftConfig` pointers already held by aircraft stay valid, clears
+  the failures that now decode and bumps `Generation`; `AbortReload` drops the staging.
+- A config-generation change makes the config system re-apply `WriteMassProperties` and clear
+  `AircraftRuntime::propulsionConfig`, `cameraConfig` and `aeroMissingConfig`, so the propulsion stage restarts
+  each engine at `idleRpm`, the camera system re-runs its setup and the missing-tier warning can fire again.
+  Surface deflections, trim, throttle and the flap detent are kept.
 - `WriteMassProperties` never changes the motion type. It sets mass, the rotated custom inertia tensor, the
   rotated custom centre of mass, zero damping, the gyroscopic force, `LinearCast` and `interpolate`.
 - `FlightEnvironment::wind` and `AircraftRuntime::additionalWind` are the velocity of the air in the world
@@ -216,8 +242,8 @@ work. L2 is the default tier and includes the stall blend and flap table. `Fligh
 state and air data, and adds the propulsion, the gear and the selected tier's aerodynamic force and moment;
 `AfterStep` fills the telemetry and `FlightTouchdownSystem` publishes the frame's touchdowns. `ResetAircraft`
 respawns an aircraft. `FlightCameraSystem` wires the chase and cockpit cameras from the config and the camera
-toggle switches between them. L3 yields zero with a warning until its issue lands. There is no hot reload yet;
-the store is cleared only with the module.
+toggle switches between them. L3 yields zero with a warning until its issue lands. Editor builds hot-reload an
+edited config through the reload stages; other builds decode once and keep the result for the module's lifetime.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
@@ -237,7 +263,10 @@ its error paths), `Telemetry` (the ground ray over flat ground and without groun
 rotation, a one-g load factor, the stall margin and `stallWarningMarginDeg`, a reset's pose, velocity, controls
 and engine rpm, the camera cut and the refusal without `Aircraft`), `FlightCamera` (the chase and cockpit setup
 from the config, a re-run after the config changes, the toggle both ways with its cuts, edit mode, an aircraft
-missing one of the two cameras) and `FlightStepGate` (control-moment signs, state from the step, detach).
+missing one of the two cameras) and `FlightStepGate` (control-moment signs, state from the step, detach), and
+`HotReload` (an in-place swap with the mass re-applied after a step, a veto that leaves the old body and an
+abort, a cached failure that becomes valid, the generation only on commit, no stages without a factory, the
+camera setup re-run).
 
 ## Flight input
 

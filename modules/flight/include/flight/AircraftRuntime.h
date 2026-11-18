@@ -189,6 +189,8 @@ namespace mir
         // The path the RigidBody was last written for, and its decoded configuration; null until one loads.
         char appliedConfig[kFieldStringCapacity] = {};
         const AircraftConfig *config = nullptr;
+        // The store generation the config was applied with.
+        uint32_t configGeneration = 0;
         // The config already warned about for its missing tier profile.
         const AircraftConfig *aeroMissingConfig = nullptr;
         // The config the engine rpm was last initialised for.

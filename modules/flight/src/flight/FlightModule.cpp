@@ -23,12 +23,14 @@
 
 namespace mir
 {
-    FlightModule::FlightModule(ModuleContext context, AircraftConfigStore::Source source) : mWorld(&context.world)
+    FlightModule::FlightModule(ModuleContext context, AircraftConfigStore::Source source,
+        std::function<AircraftConfigStore::Source()> reloadSource)
+        : mWorld(&context.world), mStore(std::move(source)), mReloadSource(std::move(reloadSource))
     {
         RegisterFlightComponents();
         // before PhysicsSystem (kNormal), so its edit sync sees the mass properties on the same step
         context.scheduler.AddSystem<AircraftConfigSystem>(SystemPhase::FixedUpdate,
-            SystemOrder{SystemOrder::kEarly}, std::move(source));
+            SystemOrder{SystemOrder::kEarly}, mStore);
 
         // Update runs after PreUpdate's InputSystem and before any FixedUpdate substep
         context.scheduler.AddSystem<FlightInputSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
@@ -39,6 +41,16 @@ namespace mir
         // once per frame, after every fixed step, so scripts see the frame's touchdowns in Update
         context.scheduler.AddSystem<FlightTouchdownSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal});
+
+        if (mReloadSource)
+        {
+            mReloadStages[0] = context.scheduler.AddStage(Stage::ReloadPrepare,
+                [this](SystemContext &) { mStore.PrepareReload(mReloadSource()); });
+            mReloadStages[1] = context.scheduler.AddStage(Stage::ReloadCommit,
+                [this](SystemContext &) { mStore.CommitReload(); });
+            mReloadStages[2] = context.scheduler.AddStage(Stage::ReloadAbort,
+                [this](SystemContext &) { mStore.AbortReload(); });
+        }
 
         if (!context.world.TryResource<FlightEnvironment>())
             context.world.EmplaceResource<FlightEnvironment>();
