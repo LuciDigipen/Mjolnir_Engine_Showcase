@@ -35,6 +35,7 @@ namespace mir
         static constexpr float kMinRadius = 0.5f;
         static constexpr float kMaxRadius = 512.0f;
         static constexpr float kDefaultRadius = 8.0f;
+        static constexpr float kMaxStrength = 100.0f;
         static constexpr float kDefaultStrength = 0.5f;
         static constexpr float kDefaultFalloff = 0.5f;
 

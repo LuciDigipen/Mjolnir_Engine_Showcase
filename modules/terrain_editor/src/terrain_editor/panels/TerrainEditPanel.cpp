@@ -128,7 +128,7 @@ namespace mir
             }
 
             float strength = mode.Strength();
-            if (ImGui::SliderFloat("Strength", &strength, 0.0f, 1.0f))
+            if (ImGui::DragFloat("Strength", &strength, 0.01f, 0.0f, TerrainEditMode::kMaxStrength, "%.2f"))
                 mode.SetStrength(strength);
 
             float falloff = mode.Falloff();

@@ -104,7 +104,9 @@ TEST_CASE("Terrain brush settings stay inside their ranges", "[editor][terrain]"
     CHECK(mode.Radius() == TerrainEditMode::kMinRadius);
 
     mode.SetStrength(2.0f);
-    CHECK(mode.Strength() == 1.0f);
+    CHECK(mode.Strength() == 2.0f);
+    mode.SetStrength(TerrainEditMode::kMaxStrength * 2.0f);
+    CHECK(mode.Strength() == TerrainEditMode::kMaxStrength);
     mode.SetStrength(-1.0f);
     CHECK(mode.Strength() == 0.0f);
 

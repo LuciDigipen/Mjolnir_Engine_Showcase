@@ -99,7 +99,7 @@ namespace mir
     void TerrainEditMode::SetStrength(float strength)
     {
         if (std::isfinite(strength))
-            mStrength = std::clamp(strength, 0.0f, 1.0f);
+            mStrength = std::clamp(strength, 0.0f, kMaxStrength);
     }
 
     void TerrainEditMode::SetFalloff(float falloff)
