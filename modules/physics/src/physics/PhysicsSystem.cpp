@@ -111,11 +111,19 @@ namespace mir
         }
 
         // Spawns and teleports are already in the world, so they pass the gates like any move.
-        void RunStepGates(World &world, PhysicsWorld &physics, float dt)
+        void RunBeforeStepGates(World &world, PhysicsWorld &physics, float dt)
         {
             if (PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>())
                 for (PhysicsStepGate *gate : gates->mGates)
                     gate->BeforeStep(world, physics, dt);
+        }
+
+        // After the write-back, so a gate reads the body and the Transform as the step left them.
+        void RunAfterStepGates(World &world, PhysicsWorld &physics, float dt)
+        {
+            if (PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>())
+                for (PhysicsStepGate *gate : gates->mGates)
+                    gate->AfterStep(world, physics, dt);
         }
     }
 
@@ -136,9 +144,10 @@ namespace mir
 
         ApplyEdits(context.world, *physics);
         PushTransforms(context.world, *physics, context.dt);
-        RunStepGates(context.world, *physics, context.dt);
+        RunBeforeStepGates(context.world, *physics, context.dt);
         physics->Step(context.dt);
         PullPoses(context.world, *physics);
+        RunAfterStepGates(context.world, *physics, context.dt);
     }
 
     // An edit to a RigidBody, from the editor, Lua or code, reaches the live body here, before the step.

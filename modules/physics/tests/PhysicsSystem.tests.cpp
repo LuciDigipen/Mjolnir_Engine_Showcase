@@ -1631,6 +1631,95 @@ TEST_CASE("Step gates see new bodies and teleports before the step and can hold 
 
 namespace
 {
+    enum class StepCall
+    {
+        Before,
+        After,
+    };
+
+    // Records each callback, and in AfterStep the body and Transform the step left behind.
+    class StepLogGate final : public mir::PhysicsStepGate
+    {
+      public:
+        std::vector<StepCall> calls;
+        std::vector<float> beforeSpeeds;
+        std::vector<float> afterSpeeds;
+        std::vector<bool> afterMatchesTransform;
+        mir::BodyHandle body;
+        mir::Entity entity{};
+
+        void BeforeStep(mir::World &, mir::PhysicsWorld &physics, float) override
+        {
+            calls.push_back(StepCall::Before);
+            beforeSpeeds.push_back(physics.BodyLinearVelocity(body).y);
+        }
+
+        void AfterStep(mir::World &world, mir::PhysicsWorld &physics, float) override
+        {
+            calls.push_back(StepCall::After);
+            afterSpeeds.push_back(physics.BodyLinearVelocity(body).y);
+            const std::optional<mir::WorldPosition> at = physics.BodyPosition(body);
+            const mir::WorldVec3 fromTransform = world.GetComponent<mir::Transform>(entity)->Position();
+            afterMatchesTransform.push_back(at && glm::length(at->Meters() - fromTransform) < 1e-4);
+        }
+    };
+
+    void AttachStepLogGate(PhysicsFixture &fixture, StepLogGate &gate)
+    {
+        fixture.world.EmplaceResource<mir::PhysicsStepGates>().mGates.push_back(&gate);
+        const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+        gate.body = fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body;
+        gate.entity = entity;
+    }
+} // namespace
+
+TEST_CASE("A gate's AfterStep runs once after BeforeStep in a one-step frame", "[physics]")
+{
+    PhysicsFixture fixture;
+    StepLogGate gate;
+    AttachStepLogGate(fixture, gate);
+
+    fixture.Run(1);
+
+    CHECK(gate.calls == std::vector<StepCall>{StepCall::Before, StepCall::After});
+}
+
+TEST_CASE("Several fixed steps in one frame alternate BeforeStep and AfterStep", "[physics]")
+{
+    PhysicsFixture fixture;
+    StepLogGate gate;
+    AttachStepLogGate(fixture, gate);
+
+    fixture.scheduler.Update(fixture.context, 3, kStep);
+
+    REQUIRE(gate.calls.size() == 6);
+    for (std::size_t i = 0; i < gate.calls.size(); ++i)
+        CHECK(gate.calls[i] == (i % 2 == 0 ? StepCall::Before : StepCall::After));
+    CHECK(gate.beforeSpeeds.size() == 3);
+    CHECK(gate.afterSpeeds.size() == 3);
+}
+
+TEST_CASE("A gate's AfterStep reads the body and Transform the step produced", "[physics]")
+{
+    PhysicsFixture fixture;
+    StepLogGate gate;
+    AttachStepLogGate(fixture, gate);
+
+    fixture.Run(3);
+
+    const glm::vec3 gravity = fixture.Physics().Gravity();
+    REQUIRE(gate.afterSpeeds.size() == 3);
+    REQUIRE(gate.afterMatchesTransform.size() == 3);
+    for (std::size_t i = 0; i < gate.afterSpeeds.size(); ++i)
+    {
+        // Jolt damps the velocity each step, so the gain is just under g*dt.
+        CHECK(gate.afterSpeeds[i] - gate.beforeSpeeds[i] == Catch::Approx(gravity.y * kStep).margin(1e-3));
+        CHECK(gate.afterMatchesTransform[i]);
+    }
+}
+
+namespace
+{
     // Map-edge coordinates shared with the terrain ADRs.
     const mir::WorldVec3 kEdgeA{-150000.125, 350.5, 75000.5};
     const mir::WorldVec3 kEdgeB{150000.625, -20.0, -75000.25};
