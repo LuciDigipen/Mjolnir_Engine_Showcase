@@ -49,6 +49,8 @@ namespace mir
     std::vector<FlightDebugRow> BuildFlightDebugConfigRows(const AircraftConfig &config);
     std::vector<FlightDebugRow> BuildFlightDebugTelemetryRows(const AircraftRuntime &runtime);
     std::vector<FlightDebugRow> BuildFlightDebugForceRows(const AircraftRuntime &runtime);
+    // Empty when the config has no L3 profile; the out-of-table row carries the warning flag.
+    std::vector<FlightDebugRow> BuildFlightDebugL3Rows(const AircraftConfig &config, const AircraftRuntime &runtime);
 
     // Every scalar the window can edit, in display order; engines and gear points appear per index.
     std::vector<FlightDebugField> BuildFlightDebugEditableFields(const AircraftConfig &config);

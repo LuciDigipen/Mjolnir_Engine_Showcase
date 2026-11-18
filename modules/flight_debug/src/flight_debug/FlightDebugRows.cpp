@@ -186,6 +186,29 @@ namespace mir
         return rows;
     }
 
+    std::vector<FlightDebugRow> BuildFlightDebugL3Rows(const AircraftConfig &config, const AircraftRuntime &runtime)
+    {
+        std::vector<FlightDebugRow> rows;
+        if (!config.aero.l3.has_value())
+            return rows;
+
+        const FlightTelemetry &telemetry = runtime.telemetry;
+        const L3Sample sample = SampleL3(*config.aero.l3, telemetry.angleOfAttack, telemetry.sideslip,
+            telemetry.mach, runtime.actuators.flaps);
+        rows.push_back({ "Cell alpha", std::format("{}", sample.alphaIndex) });
+        rows.push_back({ "Cell beta", std::format("{}", sample.betaIndex) });
+        rows.push_back({ "Cell Mach", std::format("{}", sample.machIndex) });
+        rows.push_back({ "Cell flap", std::format("{}", sample.flapIndex) });
+        rows.push_back({ "Base CX", std::format("{:.4f}", sample.base.CX) });
+        rows.push_back({ "Base CY", std::format("{:.4f}", sample.base.CY) });
+        rows.push_back({ "Base CZ", std::format("{:.4f}", sample.base.CZ) });
+        rows.push_back({ "Base Cl", std::format("{:.4f}", sample.base.Cl) });
+        rows.push_back({ "Base Cm", std::format("{:.4f}", sample.base.Cm) });
+        rows.push_back({ "Base Cn", std::format("{:.4f}", sample.base.Cn) });
+        rows.push_back({ "Out of table", sample.outOfTable ? "yes" : "no", sample.outOfTable });
+        return rows;
+    }
+
     std::vector<FlightDebugField> BuildFlightDebugEditableFields(const AircraftConfig &config)
     {
         std::vector<FlightDebugField> fields;
@@ -365,6 +388,14 @@ namespace mir
         {
             rows.push_back({ "L2 post-stall", std::format("{} rows", config.aero.l2->stall.postStall.size()) });
             rows.push_back({ "L2 flaps", std::format("{} rows", config.aero.l2->flaps.size()) });
+        }
+
+        if (config.aero.l3.has_value())
+        {
+            const L3Grid &grid = config.aero.l3->grid;
+            rows.push_back({ "L3 grid", std::format("{} x {} x {} x {}", grid.alpha.size(), grid.beta.size(),
+                grid.mach.size(), grid.flaps.size()) });
+            rows.push_back({ "L3 base cells", std::format("{} cells", config.aero.l3->base.CX.size()) });
         }
 
         rows.push_back({ "Nodes", std::format("{} entries", config.nodes.size()) });

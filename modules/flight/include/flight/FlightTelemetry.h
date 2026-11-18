@@ -51,6 +51,7 @@ namespace mir
         float loadFactor = 0.0f;       // g
         float stallMargin = 0.0f;      // radians, critical alpha minus angle of attack
         bool stallWarning = false;
+        bool aeroOutOfTable = false;   // the L3 input was clamped to a table edge
         float throttle = 0.0f;
         float rpm[kMaxEngines]{};
         std::size_t engineCount = 0;

@@ -35,8 +35,13 @@ wing, Z belly.
 The Edit section comes from `BuildFlightDebugEditableFields`, a table of section, label, getter and setter into
 `AircraftConfig`, plus a flag for values stored in radians and edited in degrees. The module draws one drag
 widget per entry and calls `MarkEdited` on the store when a value changes; engines and gear points contribute
-one group each, so their fields follow the parsed lists. Curves, detent lists and the L2 tables are shown as
-sizes in the read-only table rows.
+one group each, so their fields follow the parsed lists. Curves, detent lists and the L2 and L3 tables are
+shown as sizes in the read-only table rows.
+
+The L3 section reads `SampleL3` for the selected aircraft's current alpha, beta, Mach and flap and shows the
+lower cell index per axis and the six base coefficients; the out-of-table row carries `warning`. The
+`Generate L3 from L2` button is enabled only for a config with an L2 profile, rebuilds the L3 profile from the
+config's own L2 with the default grids and marks the path edited, so the normal Save writes it back.
 
 `FlightDebugModule` takes the source assets root from `App` and passes it to `SaveAircraftConfigToSource`, which
 rewrites `<root>/<config path>` through `WriteTextAtomic` and clears the dirty flag on success. A non-editor
@@ -49,7 +54,7 @@ build gets an empty root, so the Save button stays disabled.
 | `FlightDebugModule` | `<flight_debug/FlightDebugModule.h>` | the Tools drawer, its Play-world hand-over and the save root |
 | `FlightDebugRow` | `<flight_debug/FlightDebugRows.h>` | one label, its value text and an optional warning |
 | `FlightDebugField` | `<flight_debug/FlightDebugRows.h>` | one editable scalar: its section, label, accessors and degree flag |
-| `BuildFlightDebugConfigRows`, `BuildFlightDebugTelemetryRows`, `BuildFlightDebugForceRows`, `BuildFlightDebugTableRows` | `<flight_debug/FlightDebugRows.h>` | the row text without ImGui |
+| `BuildFlightDebugConfigRows`, `BuildFlightDebugTelemetryRows`, `BuildFlightDebugForceRows`, `BuildFlightDebugL3Rows`, `BuildFlightDebugTableRows` | `<flight_debug/FlightDebugRows.h>` | the row text without ImGui |
 | `BuildFlightDebugEditableFields` | `<flight_debug/FlightDebugRows.h>` | the editable field table |
 | `SetFlightDebugTier`, `FlightDebugTierAvailable` | `<flight_debug/FlightDebugRows.h>` | write `Aircraft::tier` and report a missing profile |
 | `FlightDebugWindowVisible`, `FlightDebugDegrees` | `<flight_debug/FlightDebugRows.h>` | the visibility rule and the radian-to-degree conversion |
@@ -75,24 +80,34 @@ re-applies it. With no store in the world, or a path that did not load, the Edit
 successful write clears it, a failed write keeps it and shows the error, which is logged too. A reload that
 replaces unsaved edits leaves a notice the window shows until it is dismissed.
 
+**L3 is read and generated, not edited.** The L3 section and its out-of-table highlight are read-only; the
+generate button replaces the store's L3 profile through `Edit` + `MarkEdited` and saves with the same path as
+the scalar edits. The tables themselves are still edited in the JSON file.
+
 **The row builders and the field table are pure.** They take the config or the runtime, so the tests need no
 window, GPU or ImGui context.
 
 ## State
 
 *As of 2026-11-18.* The panel lists aircraft, shows the config path and load state, the tier combo, the
-configuration summary, the live telemetry in degrees, the body-frame forces and moments by source, the editable
-scalar table and the read-only curve and table sizes, and saves the edited config to the source file.
-`FlightDebugToggle` is F3 with no gamepad binding. `tests/FlightDebug.tests.cpp` covers the telemetry labels and
-degree conversion, the stall-warning highlight, the configuration summary, the force rows, the tier switch and
-its missing profiles, and the visibility rule; `tests/FlightDebugTuning.tests.cpp` covers the save helper, the
-field table and the read-only table rows; target `engine_flight_debug_tests`.
+configuration summary, the live telemetry in degrees, the body-frame forces and moments by source, the L3 cell
+and coefficients with the out-of-table highlight, the editable scalar table and the read-only curve and table
+sizes, generates L3 from L2, and saves the edited config to the source file. `FlightDebugToggle` is F3 with no
+gamepad binding. `tests/FlightDebug.tests.cpp` covers the telemetry labels and degree conversion, the
+stall-warning highlight, the configuration summary, the force rows, the L3 cell rows and their flag, the tier
+switch and its missing profiles, and the visibility rule; `tests/FlightDebugTuning.tests.cpp` covers the save
+helper, the field table and the read-only table rows; target `engine_flight_debug_tests`.
 
 ## Backlog
 
-L3 grid display (#462) and curve plotting are tracked separately.
+Curve plotting and table editing in the panel are tracked separately.
 
 ## Changed
+
+*2026-11-18* — **Added the L3 section and its generator.** Was: the panel showed and edited L1/L2 profiles
+only. Now: it shows the L3 cell and base coefficients with the out-of-table highlight and generates an L3
+profile from the config's L2. Because: the table model needed a visible starting point and a way to build it
+without hand-writing hundreds of values.
 
 *2026-11-18* — **Added live tuning and save.** Was: a panel that showed the Play world and switched the tier.
 Now: the panel edits the shared config of the selected path, marks unsaved edits, saves them to the source file

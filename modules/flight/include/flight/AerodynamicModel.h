@@ -12,6 +12,7 @@
 
 #include <glm/vec3.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -45,6 +46,8 @@ namespace mir
         // Body frame, about the centre of mass.
         glm::vec3 force{0.0f};
         glm::vec3 moment{0.0f};
+        // An L3 input fell outside one of the table axes and was clamped to its edge.
+        bool outOfTable = false;
         ForceMomentSources sources;
     };
 
@@ -134,10 +137,96 @@ namespace mir
     // Positive critical angle of attack, flaps already applied.
     float L2CriticalAngleOfAttack(const L2Profile &profile, float flaps);
 
+    struct AircraftConfig;
+
+    struct L3Coefficients
+    {
+        float CX = 0.0f;
+        float CY = 0.0f;
+        float CZ = 0.0f;
+        float Cl = 0.0f;
+        float Cm = 0.0f;
+        float Cn = 0.0f;
+    };
+
+    struct L3Grid
+    {
+        std::vector<float> alpha; // radians
+        std::vector<float> beta;  // radians
+        std::vector<float> mach;
+        std::vector<float> flaps; // radians
+    };
+
+    // One flat array per coefficient; the index order is documented on L3Profile::base.
+    struct L3Table
+    {
+        std::vector<float> CX;
+        std::vector<float> CY;
+        std::vector<float> CZ;
+        std::vector<float> Cl;
+        std::vector<float> Cm;
+        std::vector<float> Cn;
+    };
+
+    struct L3ControlTable
+    {
+        std::vector<float> deflection; // radians, strictly increasing
+        // Over (alpha, deflection) as ia*nDeflection + id; increments relative to zero deflection.
+        L3Table increments;
+    };
+
+    struct L3Profile
+    {
+        float minAirspeed = 0.0f;
+        L3Grid grid;
+        // Over (alpha, beta, mach, flaps) as ((ia*nBeta + ib)*nMach + im)*nFlaps + if.
+        L3Table base;
+        struct Controls
+        {
+            L3ControlTable elevator;
+            L3ControlTable aileron;
+            L3ControlTable rudder;
+        } controls;
+        struct Rates
+        {
+            std::vector<float> Clp; // over the alpha grid
+            std::vector<float> Cmq;
+            std::vector<float> Cnr;
+        } rates;
+    };
+
+    struct L3Sample
+    {
+        L3Coefficients base;
+        // Lower cell index per axis; a clamped input reports the edge cell.
+        std::size_t alphaIndex = 0;
+        std::size_t betaIndex = 0;
+        std::size_t machIndex = 0;
+        std::size_t flapIndex = 0;
+        bool outOfTable = false;
+    };
+
+    // Multilinear base coefficients at the input; every axis is clamped at its ends.
+    L3Sample SampleL3(const L3Profile &profile, float alpha, float beta, float mach, float flaps);
+
+    struct L3DeflectionGrids
+    {
+        std::vector<float> elevator; // radians
+        std::vector<float> aileron;
+        std::vector<float> rudder;
+    };
+
+    L3Grid DefaultL3Grid(const AircraftConfig &config);
+    L3DeflectionGrids DefaultL3Deflections(const AircraftConfig &config);
+    // Samples the L2 profile at every grid point; L2 ignores Mach, so every Mach slice is equal.
+    L3Profile GenerateL3FromL2(const L2Profile &profile, const AircraftConfig &config, const L3Grid &grid,
+        const L3DeflectionGrids &deflections);
+
     struct AerodynamicProfile
     {
         std::optional<L1Profile> l1;
         std::optional<L2Profile> l2;
+        std::optional<L3Profile> l3;
     };
 
     bool HasAerodynamicProfile(const AerodynamicProfile &profile, AerodynamicTier tier);
@@ -149,6 +238,6 @@ namespace mir
         virtual ForceMoment Evaluate(const AeroInput &input, const AerodynamicProfile &profile) const = 0;
     };
 
-    // Stateless models; L3 yields zero until its issue lands.
+    // Stateless models; a tier without a profile yields zero.
     const IAerodynamicModel &AerodynamicModelFor(AerodynamicTier tier);
 }

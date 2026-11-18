@@ -1,6 +1,7 @@
 engine_add_module_tests(flight
     Aerodynamics.tests.cpp
     AerodynamicsL2.tests.cpp
+    AerodynamicsL3.tests.cpp
     AircraftConfig.tests.cpp
     AirData.tests.cpp
     FlightActuators.tests.cpp

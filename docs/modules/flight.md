@@ -45,7 +45,8 @@ centre of mass; the gear stage raycasts every gear down the body and adds a spri
 rolling, braking and side friction at the contact point; the aerodynamics stage evaluates the selected tier's
 profile into a body-frame `ForceMoment` and adds it to the accumulator. A gear's first contact also queues a
 touchdown. A tier without a profile in the config adds nothing and warns once per aircraft config. L2 is the
-default playable model; `Aircraft::tier` defaults to it.
+default playable model; `Aircraft::tier` defaults to it. L3 reads its own tables and its generator samples
+L2.
 
 `FlightTouchdownSystem` runs in LateUpdate, after the frame's fixed steps, and moves each aircraft's
 `pendingTouchdowns` into `touchdowns`, which then holds them for the whole next frame;
@@ -108,9 +109,11 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `FlightControls`, `FlightCommandQueue`, `ActuatorState` | `<flight/AircraftRuntime.h>` | held controls, the discrete-command FIFO and the actuator state |
 | `FlightEnvironment`, `DensityModel`, `AtmosphereSample`, `SampleAtmosphere` | `<flight/FlightEnvironment.h>` | the World's air resource and the density/sound sample at an altitude |
 | `AirData`, `ComputeAirData`, `kAirDataMinSpeed` | `<flight/AirData.h>` | body-frame velocity relative to the air and the quantities derived from it |
-| `AeroInput`, `ForceMoment`, `AerodynamicProfile`, `L1Profile`, `L2Profile` | `<flight/AerodynamicModel.h>` | the model's input, its body-frame output and the per-tier coefficients |
+| `AeroInput`, `ForceMoment`, `AerodynamicProfile`, `L1Profile`, `L2Profile`, `L3Profile` | `<flight/AerodynamicModel.h>` | the model's input, its body-frame output and the per-tier coefficients |
 | `IAerodynamicModel`, `AerodynamicModelFor`, `WindAxesToBody` | `<flight/AerodynamicModel.h>` | the stateless model interface, the tier lookup and the wind-axis conversion |
 | `L2StallFraction`, `L2CriticalAngleOfAttack` | `<flight/AerodynamicModel.h>` | the post-stall blend weight and the positive critical angle of attack |
+| `L3Grid`, `L3Table`, `L3ControlTable`, `L3Sample`, `SampleL3` | `<flight/AerodynamicModel.h>` | the L3 axes, its flat coefficient tables, the interpolated base and the per-axis cell |
+| `GenerateL3FromL2`, `DefaultL3Grid`, `DefaultL3Deflections`, `L3DeflectionGrids` | `<flight/AerodynamicModel.h>` | the L2-sampled generator and its default grids |
 | `StepPropulsion`, `PropulsionState`, `EngineState` | `<flight/FlightPropulsion.h>` | the engine rpm response and the thrust of every engine |
 | `StepLandingGear`, `kGearFrictionFadeSpeed`, `AircraftTouchdowns` | `<flight/FlightLandingGear.h>` | the raycast gear springs, the wheel friction and the published touchdown list |
 | `LandingGearState`, `GearPointState`, `Touchdown`, `TouchdownList` | `<flight/AircraftRuntime.h>` | per-gear contact state and the pending and published touchdown lists |
@@ -161,8 +164,14 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   `blendDeg` after each critical alpha. `qbar` uses the true airspeed and the rate normalisation uses
   `max(V, minAirspeed)`, so the force is zero at rest and the damping stays bounded at low speed. Post-stall
   scales the control derivatives by `controlScale` and `Cmalpha`, `Clbeta`, `Cnbeta` by `stabilityScale`.
-- A tier with no profile in the config adds no aerodynamic force and warns once per aircraft config; L3
-  stays zero until its issue lands.
+- A tier with no profile in the config adds no aerodynamic force and warns once per aircraft config.
+- L3 reads the four grid axes with a multilinear blend, clamps an input outside an axis to its edge and sets
+  `ForceMoment::outOfTable`; the total force is `qbar S [CX, CY, CZ]` and the moment `qbar S [b Cl, c Cm,
+  b Cn]`. The control increments add to the base coefficients, the rate tables give `dampingMoment` and the
+  base moments are `stabilityMoment`. `WindAxesToBody` splits the force into lift, drag and side for the
+  sources and the telemetry.
+- `aero`, `aero.L1`, `aero.L2` and `aero.L3` are optional. When `aero.L3` is present its grid axes, base and
+  control tables and rate arrays must all match their cell counts; every error names its JSON path.
 - `SampleAtmosphere` reports the true altitude `worldY - seaLevelY` and clamps it to the model's range only
   inside the ISA formula. ISA is the troposphere lapse up to the tropopause and an isothermal layer above;
   the constant model returns `constantDensity` and a fixed speed of sound at every altitude.
@@ -269,13 +278,15 @@ the same store the aircraft fly from. The panel asks for the selected aircraft's
 ## State
 
 *As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
-resource, air data, actuator stage, propulsion stage, landing gear stage and the L1 and L2 aerodynamic models
-work. L2 is the default tier and includes the stall blend and flap table. `FlightStepGate` is attached, reads
-state and air data, and adds the propulsion, the gear and the selected tier's aerodynamic force and moment;
+resource, air data, actuator stage, propulsion stage, landing gear stage and the L1, L2 and L3 aerodynamic
+models work. L2 is the default tier and includes the stall blend and flap table. `FlightStepGate` is attached,
+reads state and air data, and adds the propulsion, the gear and the selected tier's aerodynamic force and
+moment;
 `AfterStep` fills the telemetry and `FlightTouchdownSystem` publishes the frame's touchdowns. `ResetAircraft`
 respawns an aircraft. `FlightCameraSystem` wires the chase and cockpit cameras from the config and the camera
-toggle switches between them. L3 yields zero with a warning until its issue lands. Editor builds hot-reload an
-edited config through the reload stages; other builds decode once and keep the result for the module's lifetime.
+toggle switches between them. L3 is a table model with an L2 generator and the out-of-table flag. Editor
+builds hot-reload an edited config through the reload stages; other builds decode once and keep the result
+for the module's lifetime.
 The store also holds live tuning: an edit re-applies on the next fixed step, a save rewrites the source file and
 the next reload replaces any unsaved edits it finds.
 
@@ -290,7 +301,10 @@ engine moment signs, no engines, `engines` parsing and its error paths, an engin
 fixture), `Aerodynamics` (wind-axis directions, determinism, dynamic-pressure scaling, control and damping
 signs, sources, missing profiles, an L1 aircraft through the physics fixture), `AerodynamicsL2` (stall
 continuity, flap lift, trim and control signs, adverse yaw, post-stall scaling, the low-speed bound,
-zero-airspeed rest, determinism, `aero.L2` parsing and its error paths), `LandingGear` (settling without
+zero-airspeed rest, determinism, `aero.L2` parsing and its error paths), `AerodynamicsL3` (the multilinear
+blend at a midpoint, the single-point Mach axis, clamped axes and the flag, the generator matching L2 at the
+grid points with controls and rates, the default grids, `aero.L3` parsing and its error paths, the serializer
+round trip and the telemetry flag), `LandingGear` (settling without
 bouncing, roll and pitch, own-body exclusion, braking against free rolling, rudder steering both ways, a
 touchdown publishing one event per gear and no repeats, no gear force without gear points, `gear` parsing and
 its error paths), `Telemetry` (the ground ray over flat ground and without ground, attitude from the body
@@ -558,4 +572,58 @@ tail. `Clp`, `Cmq` and `Cnr` are negative for damping.
 
 ### `aero.L3` (#462)
 
-Defined by its issue; it must add its section here.
+Optional. Whole-aircraft coefficients from multilinear tables over `(alpha, beta, mach, flaps)`, plus control
+increments and rate derivatives. Every key is required when `aero.L3` is present; each grid axis is a
+non-empty strictly increasing array, `minAirspeed` must be `> 0`, and angles in the file are degrees.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `minAirspeed` | number > 0 | m/s, lower bound of the rate normalisation |
+| `grid.alphaDeg` | array, strictly increasing | alpha axis, degrees |
+| `grid.betaDeg` | array, strictly increasing | beta axis, degrees |
+| `grid.mach` | array, strictly increasing | Mach axis |
+| `grid.flapsDeg` | array, strictly increasing | flap axis, degrees |
+| `base` | object of six arrays | `CX`, `CY`, `CZ`, `Cl`, `Cm`, `Cn`, one value per grid cell |
+| `controls.elevator` / `aileron` / `rudder` | object | `deflectionDeg` (strictly increasing) plus the six arrays over `(alpha, deflection)` |
+| `rates` | object | `Clp`, `Cmq`, `Cnr` over the alpha axis |
+
+Base arrays are flat over the four grid axes with this index order (`nBeta`, `nMach` and `nFlaps` are the
+axis lengths):
+
+```
+index = ((ia * nBeta + ib) * nMach + im) * nFlaps + if
+```
+
+Control increments are relative to zero deflection and are flat over `(alpha, deflection)` with
+`ia * nDeflection + id`. Every array must hold exactly its cells: a wrong length reports
+`aero.L3.base.Cm: expected 78 values, got 77` and an unsorted axis reports
+`aero.L3.grid.betaDeg: must be strictly increasing`.
+
+Lookup is multilinear over the four grid axes: a single-point axis is constant and the value blends the
+corners of the non-trivial axes. An input outside an axis is clamped to that edge and
+`FlightTelemetry::aeroOutOfTable` (filled from `ForceMoment::outOfTable`) reports it. `SampleL3` exposes the
+interpolated base coefficients and the lower cell index per axis for the panel; a control deflection clamps
+to its own table.
+
+```
+CX = base.CX + dCX(alpha, elevator, aileron, rudder)   (the same for CY and CZ)
+Cl = base.Cl + dCl(...) + Clp * p_hat
+Cm = base.Cm + dCm(...) + Cmq * q_hat
+Cn = base.Cn + dCn(...) + Cnr * r_hat
+```
+
+with `p_hat = p b / (2 Veff)`, `q_hat = q c / (2 Veff)`, `r_hat = r b / (2 Veff)` and
+`Veff = max(V, minAirspeed)`. The force is `qbar S [CX, CY, CZ]` in body axes and the moment is
+`qbar S [b Cl, c Cm, b Cn]`, with `qbar = 0.5 rho V^2`. `WindAxesToBody` splits the total force: lift along
+the wind-axis lift direction, drag along the relative velocity and side on body +Y. `controlMoment` holds the
+control increments, `dampingMoment` the rate terms and `stabilityMoment` the base moments. The model yields
+nothing below `kAirDataMinSpeed`.
+
+`GenerateL3FromL2` samples the L2 profile at every grid point with zero controls and rates, at a reference
+airspeed and sea-level density, and divides by `qbar S` (and by `b` or `c` for the moments); L2 ignores Mach,
+so every Mach slice is equal. A control increment is the L2 value at that deflection (beta 0, first L2 flap
+row) minus the zero-deflection value, and the rate arrays copy L2's `Clp`, `Cmq` and `Cnr`. `DefaultL3Grid`
+gives alpha `-10..20 deg` in `2.5` steps plus the L2 post-stall rows up to `30 deg`, beta `-10/0/10`, one
+Mach point `0.2` and the L2 flap rows; `DefaultL3Deflections` gives `-max, -max/2, 0, max/2, max` per surface.
+The Flight Debug panel's `Generate L3 from L2` button writes the generated profile into the store's runtime
+copy.

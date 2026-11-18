@@ -171,3 +171,42 @@ TEST_CASE("Degrees are the window's angle unit", "[flight_debug]")
     CHECK(mir::FlightDebugDegrees(glm::radians(180.0f)) == Catch::Approx(180.0f));
     CHECK(mir::FlightDebugDegrees(glm::radians(-45.0f)) == Catch::Approx(-45.0f));
 }
+
+TEST_CASE("The L3 rows report the current cell and coefficients", "[flight_debug]")
+{
+    mir::L3Profile profile;
+    profile.minAirspeed = 10.0f;
+    profile.grid.alpha = { 0.0f, glm::radians(10.0f) };
+    profile.grid.beta = { 0.0f, glm::radians(10.0f) };
+    profile.grid.mach = { 0.2f };
+    profile.grid.flaps = { 0.0f };
+    profile.base.CX = { 0.1f, 0.2f, 0.3f, 0.4f };
+    profile.base.CY.assign(4, 0.0f);
+    profile.base.CZ.assign(4, 0.0f);
+    profile.base.Cl.assign(4, 0.0f);
+    profile.base.Cm.assign(4, 0.0f);
+    profile.base.Cn.assign(4, 0.0f);
+
+    mir::AircraftConfig config;
+    config.aero.l3 = profile;
+    mir::AircraftRuntime runtime = TelemetryRuntime();
+    runtime.telemetry.mach = 0.2f;
+    runtime.telemetry.sideslip = glm::radians(5.0f);
+    runtime.actuators.flaps = 0.0f;
+
+    const std::vector<mir::FlightDebugRow> rows = mir::BuildFlightDebugL3Rows(config, runtime);
+    CHECK(FindRow(rows, "Cell alpha").value == "0");
+    CHECK(FindRow(rows, "Cell beta").value == "0");
+    CHECK(FindRow(rows, "Cell Mach").value == "0");
+    CHECK(FindRow(rows, "Cell flap").value == "0");
+    CHECK(FindRow(rows, "Base CX").value == "0.2500");
+    CHECK_FALSE(FindRow(rows, "Out of table").warning);
+    CHECK(FindRow(rows, "Out of table").value == "no");
+
+    runtime.telemetry.mach = 0.9f;
+    const std::vector<mir::FlightDebugRow> flagged = mir::BuildFlightDebugL3Rows(config, runtime);
+    CHECK(FindRow(flagged, "Out of table").warning);
+    CHECK(FindRow(flagged, "Out of table").value == "yes");
+
+    CHECK(mir::BuildFlightDebugL3Rows(mir::AircraftConfig{}, runtime).empty());
+}

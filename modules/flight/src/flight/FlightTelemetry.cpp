@@ -105,6 +105,7 @@ namespace mir
         FillEngines(config, runtime, out);
         FillGear(config, runtime, out);
 
+        out.aeroOutOfTable = runtime.aero.outOfTable;
         out.aeroForces = {runtime.aero.force, runtime.aero.moment};
         out.propulsionForces = {runtime.propulsion.force, runtime.propulsion.moment};
         out.gearForces = {runtime.gear.force, runtime.gear.moment};

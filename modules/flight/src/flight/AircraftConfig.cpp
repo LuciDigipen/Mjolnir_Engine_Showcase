@@ -697,6 +697,245 @@ namespace mir
             return ParseL2Stall(value, out.stall, error) && ParseL2Flaps(value, out, error);
         }
 
+        bool ReadFloatArray(const Json &value, const std::string &path, std::vector<float> &out, std::string &error)
+        {
+            if (!value.is_array())
+            {
+                error = std::format("{}: expected an array", path);
+                return false;
+            }
+            if (value.empty())
+            {
+                error = std::format("{}: must not be empty", path);
+                return false;
+            }
+
+            out.clear();
+            out.reserve(value.size());
+            for (std::size_t i = 0; i < value.size(); ++i)
+            {
+                float number = 0.0f;
+                if (!ReadNumber(value[i], std::format("{}[{}]", path, i), number, error))
+                    return false;
+                out.push_back(number);
+            }
+            return true;
+        }
+
+        bool ReadIncreasingArray(const Json &value, const std::string &path, std::vector<float> &out,
+            std::string &error)
+        {
+            if (!ReadFloatArray(value, path, out, error))
+                return false;
+            for (std::size_t i = 1; i < out.size(); ++i)
+            {
+                if (out[i] <= out[i - 1])
+                {
+                    error = std::format("{}: must be strictly increasing", path);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ReadAngleArray(const Json &value, const std::string &path, std::vector<float> &out, std::string &error)
+        {
+            std::vector<float> degrees;
+            if (!ReadIncreasingArray(value, path, degrees, error))
+                return false;
+            out.clear();
+            out.reserve(degrees.size());
+            for (const float degree : degrees)
+                out.push_back(glm::radians(degree));
+            return true;
+        }
+
+        bool ReadTableArray(const Json &object, const char *key, const std::string &path, std::size_t expected,
+            std::vector<float> &out, std::string &error)
+        {
+            const std::string keyPath = std::format("{}.{}", path, key);
+            const auto entry = object.find(key);
+            if (entry == object.end())
+            {
+                error = std::format("{}: missing", keyPath);
+                return false;
+            }
+            if (!entry->is_array())
+            {
+                error = std::format("{}: expected an array", keyPath);
+                return false;
+            }
+            if (entry->size() != expected)
+            {
+                error = std::format("{}: expected {} values, got {}", keyPath, expected, entry->size());
+                return false;
+            }
+
+            out.clear();
+            out.reserve(expected);
+            for (std::size_t i = 0; i < expected; ++i)
+            {
+                float number = 0.0f;
+                if (!ReadNumber((*entry)[i], std::format("{}[{}]", keyPath, i), number, error))
+                    return false;
+                out.push_back(number);
+            }
+            return true;
+        }
+
+        bool ParseL3Table(const Json &object, const std::string &path, std::size_t expected, L3Table &out,
+            std::string &error)
+        {
+            return ReadTableArray(object, "CX", path, expected, out.CX, error)
+                && ReadTableArray(object, "CY", path, expected, out.CY, error)
+                && ReadTableArray(object, "CZ", path, expected, out.CZ, error)
+                && ReadTableArray(object, "Cl", path, expected, out.Cl, error)
+                && ReadTableArray(object, "Cm", path, expected, out.Cm, error)
+                && ReadTableArray(object, "Cn", path, expected, out.Cn, error);
+        }
+
+        bool ParseL3Grid(const Json &value, L3Grid &out, std::string &error)
+        {
+            if (!value.is_object())
+            {
+                error = "aero.L3.grid: expected an object";
+                return false;
+            }
+
+            const auto alpha = value.find("alphaDeg");
+            if (alpha == value.end())
+            {
+                error = "aero.L3.grid.alphaDeg: missing";
+                return false;
+            }
+            if (!ReadAngleArray(*alpha, "aero.L3.grid.alphaDeg", out.alpha, error))
+                return false;
+
+            const auto beta = value.find("betaDeg");
+            if (beta == value.end())
+            {
+                error = "aero.L3.grid.betaDeg: missing";
+                return false;
+            }
+            if (!ReadAngleArray(*beta, "aero.L3.grid.betaDeg", out.beta, error))
+                return false;
+
+            const auto mach = value.find("mach");
+            if (mach == value.end())
+            {
+                error = "aero.L3.grid.mach: missing";
+                return false;
+            }
+            if (!ReadIncreasingArray(*mach, "aero.L3.grid.mach", out.mach, error))
+                return false;
+
+            const auto flaps = value.find("flapsDeg");
+            if (flaps == value.end())
+            {
+                error = "aero.L3.grid.flapsDeg: missing";
+                return false;
+            }
+            return ReadAngleArray(*flaps, "aero.L3.grid.flapsDeg", out.flaps, error);
+        }
+
+        bool ParseL3Control(const Json &controls, const char *key, std::size_t nAlpha, L3ControlTable &out,
+            std::string &error)
+        {
+            const std::string path = std::format("aero.L3.controls.{}", key);
+            const auto entry = controls.find(key);
+            if (entry == controls.end())
+            {
+                error = std::format("{}: missing", path);
+                return false;
+            }
+            if (!entry->is_object())
+            {
+                error = std::format("{}: expected an object", path);
+                return false;
+            }
+
+            const auto deflection = entry->find("deflectionDeg");
+            if (deflection == entry->end())
+            {
+                error = std::format("{}.deflectionDeg: missing", path);
+                return false;
+            }
+            if (!ReadAngleArray(*deflection, path + ".deflectionDeg", out.deflection, error))
+                return false;
+
+            return ParseL3Table(*entry, path, nAlpha * out.deflection.size(), out.increments, error);
+        }
+
+        bool ParseL3Profile(const Json &value, L3Profile &out, std::string &error)
+        {
+            if (!value.is_object())
+            {
+                error = "aero.L3: expected an object";
+                return false;
+            }
+
+            if (!ReadRequiredPositive(value, "minAirspeed", "aero.L3.minAirspeed", out.minAirspeed, error))
+                return false;
+
+            const auto grid = value.find("grid");
+            if (grid == value.end())
+            {
+                error = "aero.L3.grid: missing";
+                return false;
+            }
+            if (!ParseL3Grid(*grid, out.grid, error))
+                return false;
+
+            const std::size_t nAlpha = out.grid.alpha.size();
+            const std::size_t baseCells =
+                nAlpha * out.grid.beta.size() * out.grid.mach.size() * out.grid.flaps.size();
+
+            const auto base = value.find("base");
+            if (base == value.end())
+            {
+                error = "aero.L3.base: missing";
+                return false;
+            }
+            if (!base->is_object())
+            {
+                error = "aero.L3.base: expected an object";
+                return false;
+            }
+            if (!ParseL3Table(*base, "aero.L3.base", baseCells, out.base, error))
+                return false;
+
+            const auto controls = value.find("controls");
+            if (controls == value.end())
+            {
+                error = "aero.L3.controls: missing";
+                return false;
+            }
+            if (!controls->is_object())
+            {
+                error = "aero.L3.controls: expected an object";
+                return false;
+            }
+            if (!ParseL3Control(*controls, "elevator", nAlpha, out.controls.elevator, error)
+                || !ParseL3Control(*controls, "aileron", nAlpha, out.controls.aileron, error)
+                || !ParseL3Control(*controls, "rudder", nAlpha, out.controls.rudder, error))
+                return false;
+
+            const auto rates = value.find("rates");
+            if (rates == value.end())
+            {
+                error = "aero.L3.rates: missing";
+                return false;
+            }
+            if (!rates->is_object())
+            {
+                error = "aero.L3.rates: expected an object";
+                return false;
+            }
+            return ReadTableArray(*rates, "Clp", "aero.L3.rates", nAlpha, out.rates.Clp, error)
+                && ReadTableArray(*rates, "Cmq", "aero.L3.rates", nAlpha, out.rates.Cmq, error)
+                && ReadTableArray(*rates, "Cnr", "aero.L3.rates", nAlpha, out.rates.Cnr, error);
+        }
+
         bool ParseAero(const Json &document, AerodynamicProfile &out, std::string &error)
         {
             const auto entry = document.find("aero");
@@ -722,6 +961,14 @@ namespace mir
                 if (!ParseL2Profile(*l2, profile, error))
                     return false;
                 out.l2 = profile;
+            }
+
+            if (const auto l3 = entry->find("L3"); l3 != entry->end())
+            {
+                L3Profile profile;
+                if (!ParseL3Profile(*l3, profile, error))
+                    return false;
+                out.l3 = profile;
             }
             return true;
         }
@@ -1051,6 +1298,57 @@ namespace mir
             return out;
         }
 
+        Json WriteFloats(const std::vector<float> &values)
+        {
+            Json out = Json::array();
+            for (const float value : values)
+                out.push_back(value);
+            return out;
+        }
+
+        Json WriteDegrees(const std::vector<float> &radians)
+        {
+            Json out = Json::array();
+            for (const float value : radians)
+                out.push_back(glm::degrees(value));
+            return out;
+        }
+
+        Json WriteL3Table(const L3Table &table)
+        {
+            Json out;
+            out["CX"] = WriteFloats(table.CX);
+            out["CY"] = WriteFloats(table.CY);
+            out["CZ"] = WriteFloats(table.CZ);
+            out["Cl"] = WriteFloats(table.Cl);
+            out["Cm"] = WriteFloats(table.Cm);
+            out["Cn"] = WriteFloats(table.Cn);
+            return out;
+        }
+
+        Json WriteL3Control(const L3ControlTable &table)
+        {
+            Json out = WriteL3Table(table.increments);
+            out["deflectionDeg"] = WriteDegrees(table.deflection);
+            return out;
+        }
+
+        Json WriteL3(const L3Profile &profile)
+        {
+            Json out;
+            out["minAirspeed"] = profile.minAirspeed;
+            out["grid"] = Json{ { "alphaDeg", WriteDegrees(profile.grid.alpha) },
+                { "betaDeg", WriteDegrees(profile.grid.beta) }, { "mach", WriteFloats(profile.grid.mach) },
+                { "flapsDeg", WriteDegrees(profile.grid.flaps) } };
+            out["base"] = WriteL3Table(profile.base);
+            out["controls"] = Json{ { "elevator", WriteL3Control(profile.controls.elevator) },
+                { "aileron", WriteL3Control(profile.controls.aileron) },
+                { "rudder", WriteL3Control(profile.controls.rudder) } };
+            out["rates"] = Json{ { "Clp", WriteFloats(profile.rates.Clp) },
+                { "Cmq", WriteFloats(profile.rates.Cmq) }, { "Cnr", WriteFloats(profile.rates.Cnr) } };
+            return out;
+        }
+
         Json WriteAero(const AerodynamicProfile &profile)
         {
             Json out;
@@ -1058,6 +1356,8 @@ namespace mir
                 out["L1"] = WriteL1(*profile.l1);
             if (profile.l2.has_value())
                 out["L2"] = WriteL2(*profile.l2);
+            if (profile.l3.has_value())
+                out["L3"] = WriteL3(*profile.l3);
             return out;
         }
     }
@@ -1110,7 +1410,7 @@ namespace mir
         document["actuators"] = WriteActuators(config.actuators);
         document["engines"] = WriteEngines(config.engines);
         document["gear"] = WriteGear(config.gear);
-        if (config.aero.l1.has_value() || config.aero.l2.has_value())
+        if (config.aero.l1.has_value() || config.aero.l2.has_value() || config.aero.l3.has_value())
             document["aero"] = WriteAero(config.aero);
 
         ShortenFloats(document);

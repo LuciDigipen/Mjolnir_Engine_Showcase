@@ -235,6 +235,19 @@ namespace mir
                     {
                         ImGui::SeparatorText("Edit");
                         DrawEditFields(*editable, *store, path);
+
+                        ImGui::SeparatorText("Aero L3 generation");
+                        ImGui::BeginDisabled(!editable->aero.l2.has_value());
+                        if (ImGui::Button("Generate L3 from L2") && editable->aero.l2.has_value())
+                        {
+                            editable->aero.l3 = GenerateL3FromL2(*editable->aero.l2, *editable,
+                                DefaultL3Grid(*editable), DefaultL3Deflections(*editable));
+                            store->MarkEdited(path);
+                        }
+                        ImGui::EndDisabled();
+                        if (!editable->aero.l2.has_value())
+                            ImGui::TextUnformatted("needs aero.L2");
+
                         DrawSaveControls(*editable, *store, path, mSourceAssetsRoot, mSaveError);
 
                         ImGui::SeparatorText("Curves and tables (read-only)");
@@ -247,6 +260,12 @@ namespace mir
                     ImGui::SeparatorText("Forces and moments (body frame)");
                     ImGui::TextUnformatted("X nose, Y right, Z down");
                     DrawRows(BuildFlightDebugForceRows(aircraft->runtime));
+
+                    if (config != nullptr && config->aero.l3.has_value())
+                    {
+                        ImGui::SeparatorText("Aero L3");
+                        DrawRows(BuildFlightDebugL3Rows(*config, aircraft->runtime));
+                    }
                 }
             }
         }
