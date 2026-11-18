@@ -338,11 +338,12 @@ namespace mir
                         double delta = 0.0;
                         if (settings.brush == TerrainBrush::RaiseLower)
                         {
-                            target = composite + (settings.lower ? -weight : weight);
-                            delta = settings.lower ? -weight : weight;
+                            const double step = weight * kTerrainRaiseMetersPerSecond;
+                            delta = settings.lower ? -step : step;
+                            target = composite + delta;
                         }
                         else
-                            delta = std::clamp(target - composite, -weight, weight);
+                            delta = (target - composite) * std::min(1.0, weight * kTerrainSettleRatePerSecond);
                         if (!std::isfinite(target) || !std::isfinite(delta))
                             continue;
 

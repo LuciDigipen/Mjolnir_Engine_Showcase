@@ -43,6 +43,8 @@ namespace
     constexpr double kRadius = 1.5;
     constexpr double kCenter = 4.0;
     constexpr double kStep = 0.25;
+    // A dab at strength 0.5 that adds kStep at the brush center.
+    constexpr double kDabSeconds = kStep / (0.5 * mir::kTerrainPaintRatePerSecond);
 
     TerrainLayout MakeLayout()
     {
@@ -155,7 +157,7 @@ TEST_CASE("A paint dab raises the chosen channel and fades the same layer's othe
     Surface surface;
     TerrainPaintStroke stroke(surface.layer, surface.layout, "sand");
 
-    REQUIRE(stroke.Dab(Center(), Settings(), 0.5).Ok());
+    REQUIRE(stroke.Dab(Center(), Settings(), kDabSeconds).Ok());
     CHECK_FALSE(stroke.Empty());
 
     const GlobalSampleIndex center{ 4, 4 };
@@ -176,7 +178,7 @@ TEST_CASE("An erasing dab lowers only the chosen channel", "[terrain_editor][bru
     Surface surface;
     TerrainPaintStroke stroke(surface.layer, surface.layout, "sand");
 
-    REQUIRE(stroke.Dab(Center(), Settings(true), 0.5).Ok());
+    REQUIRE(stroke.Dab(Center(), Settings(true), kDabSeconds).Ok());
 
     const GlobalSampleIndex center{ 4, 4 };
     const std::optional<float> sand = ChannelAt(surface.layer, surface.layout, center, "sand");
@@ -193,7 +195,7 @@ TEST_CASE("Samples outside the radius keep their bits and shared edges agree",
     Surface surface;
     const TerrainEditLayer before = surface.layer;
     TerrainPaintStroke stroke(surface.layer, surface.layout, "sand");
-    REQUIRE(stroke.Dab(Center(), Settings(), 0.5).Ok());
+    REQUIRE(stroke.Dab(Center(), Settings(), kDabSeconds).Ok());
 
     for (const TileCoord &tile : { TileCoord{ 0, 0 }, TileCoord{ 1, 0 }, TileCoord{ 0, 1 }, TileCoord{ 1, 1 } })
     {

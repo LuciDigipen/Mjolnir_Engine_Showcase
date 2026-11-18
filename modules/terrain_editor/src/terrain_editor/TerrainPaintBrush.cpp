@@ -215,7 +215,8 @@ namespace mir
                             continue;
 
                         const double weight =
-                            strength * FalloffWeight(std::sqrt(distanceSquared), radius, settings.falloff) * seconds;
+                            std::min(1.0, strength * FalloffWeight(std::sqrt(distanceSquared), radius, settings.falloff) *
+                                              seconds * kTerrainPaintRatePerSecond);
                         if (!(weight > 0.0))
                             continue;
 

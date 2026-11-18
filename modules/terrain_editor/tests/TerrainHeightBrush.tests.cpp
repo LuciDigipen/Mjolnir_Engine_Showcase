@@ -249,12 +249,15 @@ namespace
 
 TEST_CASE("One dab moves the composite by the brush step on both blends", "[terrain_editor][brush]")
 {
+    // Strength 0.5 at the brush center.
+    constexpr double kSeconds = 0.05;
+    constexpr double kWeight = 0.5 * kSeconds;
     for (const TerrainEditBlend blend : { TerrainEditBlend::Additive, TerrainEditBlend::AlphaBlend })
     {
-        CheckDabStep(TerrainBrush::RaiseLower, blend, false, 0.25, 0.125);
-        CheckDabStep(TerrainBrush::RaiseLower, blend, true, 0.25, -0.125);
-        CheckDabStep(TerrainBrush::Smooth, blend, false, 0.25, -0.125);
-        CheckDabStep(TerrainBrush::Flatten, blend, false, 0.25, 0.125);
+        CheckDabStep(TerrainBrush::RaiseLower, blend, false, kSeconds, kWeight * mir::kTerrainRaiseMetersPerSecond);
+        CheckDabStep(TerrainBrush::RaiseLower, blend, true, kSeconds, -kWeight * mir::kTerrainRaiseMetersPerSecond);
+        CheckDabStep(TerrainBrush::Smooth, blend, false, kSeconds, -4.0 * kWeight * mir::kTerrainSettleRatePerSecond);
+        CheckDabStep(TerrainBrush::Flatten, blend, false, kSeconds, 2.0 * kWeight * mir::kTerrainSettleRatePerSecond);
         CheckDabStep(TerrainBrush::Smooth, blend, false, 10.0, -4.0);
         CheckDabStep(TerrainBrush::Flatten, blend, false, 10.0, 2.0);
     }

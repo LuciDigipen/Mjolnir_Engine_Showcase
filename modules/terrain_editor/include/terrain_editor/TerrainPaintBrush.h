@@ -21,6 +21,9 @@
 
 namespace mir
 {
+    // Paint weight a second at full strength and the brush center, so a held brush covers in a fraction of a second.
+    inline constexpr double kTerrainPaintRatePerSecond = 8.0;
+
     class TerrainPaintStroke
     {
     public:

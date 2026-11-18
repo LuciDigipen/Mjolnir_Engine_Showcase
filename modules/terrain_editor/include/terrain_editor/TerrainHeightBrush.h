@@ -25,6 +25,11 @@
 
 namespace mir
 {
+    // Raise or lower speed at full strength and the brush center.
+    inline constexpr double kTerrainRaiseMetersPerSecond = 10.0;
+    // Share of the way to the smooth or flatten target covered a second at full strength and the brush center.
+    inline constexpr double kTerrainSettleRatePerSecond = 8.0;
+
     struct TerrainBrushSettings
     {
         TerrainBrush brush = TerrainBrush::RaiseLower;
