@@ -4,13 +4,29 @@ The Caldera island in Mjolnir: terrain, the airfield runway and buildings, and a
 
 ## Cirrus SF50
 
-The default scene includes `Cirrus SF50 - Arrivee Stellar` on the runway, with Family seating and the gear held extended. Entity 1144 loads `assets/models/sf50/sf50.glb`. Only the landing gear, bay doors, and linkages are animated; the other aircraft components are static.
+The default scene includes the SF50 on the runway, with Family seating and the gear held extended. Its child entity `Model` (1145) under `Aircraft` (1144) loads `assets/models/sf50/sf50.glb`. Only the landing gear, bay doors, and linkages are animated; the other aircraft components are static.
 
 The optimized aircraft uses 2,273,442 triangles and 161 material primitives, down from 3,158,827 and 263. Selective interior decimation and subsequent manual cleanup preserve stitching, decals, instruments and small parts. Engine/bay/gear hardware shares one untextured machinery material; wheel materials and gear-door livery remain. Gear skin bindings and animation samples are unchanged. The gear retains its earlier reduction to 138,758 triangles, down from 1,129,884. This does not add aircraft LODs or cache frozen gear poses. Rebuild/reimport after an export change to use the updated runtime model.
 
 The editable master is `source/aircraft/sf50/cirrus_sf-50.blend`, with adjacent `sf50_textures/`, `reports/`, and `previews/` folders. This authoring package stays outside the runtime cook roots. Re-exporting preserves the saved master and source texture files. The export uses a single gear clip and limits runtime textures to 1024 pixels (2048 for fuselage, wings, and livery). See `source/aircraft/sf50/reports/sf50_material_interior_review.md` for the earlier optimization measurements and validation.
 
 The model-rendering path supports core glTF PBR, normal maps, specular/IOR and clearcoat. The SF50 GLB includes normal, occlusion and metallic/roughness textures on 71 materials, emissive textures on six, and clearcoat on eight. Windows retain their alpha-blended approximation; Blender's Fresnel glass and transmission are not reproduced by this asset. Export and scene reports are in `source/sf50_export_report.json` and `source/sf50_scene_report.json`. The latter records the actual exported clip duration used for the parked pose.
+
+## Flying the placeholder aircraft
+
+`Aircraft` (1144) is a flyable placeholder at the south-east end of the runway: a dynamic box body, the flight model from `assets/aircraft/powered.aircraft.json`, the SF50 model and a `Cockpit Camera` child; the main `Camera` follows it. The numbers are a generic light single, not SF50 data. `assets/aircraft/glider.aircraft.json` is an unpowered alternative; set the `Aircraft` config to it. Both carry L3 tables generated from their L2 profiles.
+
+| Control | Keyboard | Gamepad |
+|---|---|---|
+| Pitch / roll | W S / A D | left stick |
+| Yaw | Q E | triggers |
+| Throttle up / down | R / F | A / B |
+| Brake | B | X |
+| Flaps up / down | [ / ] | D-pad up / down |
+| Trim up / down | T / G | D-pad left / right |
+| Chase / cockpit camera | V | Y |
+| Flight Debug panel | F3 | |
+| Air start, 300 m above the runway start (`assets/scripts/flight_dev.lua`) | F5 | |
 
 ## Getting it
 
