@@ -67,6 +67,12 @@ switches a player aircraft between that chase camera and its cockpit camera, cut
 the reset, and expose the published touchdown list and the held controls with their actuator state. Angles
 cross into Lua in degrees; see [script.md](script.md#flight).
 
+`modules/flight_debug` draws the `Flight Debug` Tools panel over the active Play world: the aircraft list, the
+configuration and its load state, the tier switch and the live telemetry and body-frame forces by source.
+`FlightDebugToggle` (F3) shows and hides it; an editor build shows it only while Play is running, while a game
+build keeps it as a developer toggle. The panel reads the Play world and writes only its `Aircraft::tier`;
+see [flight_debug.md](flight_debug.md).
+
 ```cpp
 #if MIR_WITH_EDITOR
 mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver),
@@ -283,6 +289,7 @@ camera setup re-run).
 | `FlightTrimUp` | Button | D-pad left | T |
 | `FlightTrimDown` | Button | D-pad right | G |
 | `FlightCameraToggle` | Button | Y | V |
+| `FlightDebugToggle` | Button | - | F3 |
 
 Triggers are remapped in the input module to 0 released and 1 fully pressed before the deadzone, and their
 `scale` applies, so one signed yaw axis can use both. Values are positive for stick back, stick right and

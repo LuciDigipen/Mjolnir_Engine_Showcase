@@ -296,6 +296,7 @@ namespace mir
             mParticlesGpu, mRenderer.Rendering()),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
+        mFlightDebug(Context(), mImGui),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
         mWorldState.gameShell.SetControlsOptions(&mControlsOptions);
@@ -645,6 +646,7 @@ namespace mir
         SetEngineMode(mWorldState.world, EngineMode::Play);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
         mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mFlightDebug.ActivateWorld(&mRuntime->state.world);
         mImGui.SetInputWorld(&mRuntime->state.world);
     #if MIR_WITH_EDITOR
         mEditor.SetPlayWorld(&mRuntime->state.world);
@@ -663,6 +665,7 @@ namespace mir
         mEditor.SetPlayWorld(nullptr);
     #endif
         mGameUIImGui.ActivateWorld(nullptr, nullptr);
+        mFlightDebug.ActivateWorld(nullptr);
         mImGui.SetInputWorld(nullptr);
         mRenderer.ActivateWorld(nullptr);
         mRuntime.reset();
@@ -779,6 +782,7 @@ namespace mir
         if (mRuntime->pendingPrimary == instance) SetPrimaryScene(instance);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
         mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mFlightDebug.ActivateWorld(&mRuntime->state.world);
         mImGui.SetInputWorld(&mRuntime->state.world);
     #if MIR_WITH_EDITOR
         mEditor.SetPlayWorld(&mRuntime->state.world);

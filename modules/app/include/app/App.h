@@ -30,6 +30,7 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <flight/FlightModule.h>
+#include <flight_debug/FlightDebugModule.h>
 #include <flight_script/FlightScriptModule.h>
 #include <gameshell/GameShellModule.h>
 #include <gameui/GameUIModule.h>
@@ -387,6 +388,7 @@ namespace mir
         SimulationSystems mSimulation;
         TerrainRuntimeModule mTerrain;
         GameUIImGuiModule mGameUIImGui;
+        FlightDebugModule mFlightDebug;
 
         struct RuntimeSession;
         std::unique_ptr<RuntimeSession> mRuntime;

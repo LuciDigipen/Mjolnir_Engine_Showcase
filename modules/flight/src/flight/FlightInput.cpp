@@ -93,6 +93,10 @@ namespace mir
                 KeyBinding(Key::V),
             };
 
+            map.AddAction(std::string(kFlightDebugToggleAction), InputActionType::Button).bindings = {
+                KeyBinding(Key::F3),
+            };
+
             return map;
         }
     }

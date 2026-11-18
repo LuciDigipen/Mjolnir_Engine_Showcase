@@ -8,6 +8,7 @@ target_link_libraries(engine_app
            mir::camera
            mir::core
            mir::flight
+           mir::flight_debug
            mir::flight_script
            mir::gameshell
            mir::gameui

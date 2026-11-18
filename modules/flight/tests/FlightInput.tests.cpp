@@ -38,6 +38,7 @@ namespace
         { mir::kFlightTrimUpAction, mir::InputActionType::Button },
         { mir::kFlightTrimDownAction, mir::InputActionType::Button },
         { mir::kFlightCameraToggleAction, mir::InputActionType::Button },
+        { mir::kFlightDebugToggleAction, mir::InputActionType::Button },
     };
 
     bool BindsDevice(const mir::InputAction &action, mir::DeviceKind device)
@@ -69,7 +70,7 @@ TEST_CASE("Every flight action exists with its type", "[flight][input]")
     }
 }
 
-TEST_CASE("Flight actions bind a gamepad and a keyboard device", "[flight][input]")
+TEST_CASE("Flight actions bind a keyboard and the controls a gamepad", "[flight][input]")
 {
     mir::InputMap map;
     mir::AddFlightDefaultActions(map);
@@ -78,8 +79,9 @@ TEST_CASE("Flight actions bind a gamepad and a keyboard device", "[flight][input
     {
         INFO(expected.name);
         const mir::InputAction &action = *map.Find(expected.name);
-        CHECK(BindsDevice(action, mir::DeviceKind::Gamepad));
         CHECK(BindsDevice(action, mir::DeviceKind::Keyboard));
+        if (expected.name != mir::kFlightDebugToggleAction)
+            CHECK(BindsDevice(action, mir::DeviceKind::Gamepad));
     }
 
     const mir::InputAction &yaw = *map.Find(mir::kFlightYawAction);
@@ -89,6 +91,11 @@ TEST_CASE("Flight actions bind a gamepad and a keyboard device", "[flight][input
     REQUIRE(left != nullptr);
     CHECK(right->scale == 1.0f);
     CHECK(left->scale == -1.0f);
+
+    const mir::InputAction &debug = *map.Find(mir::kFlightDebugToggleAction);
+    REQUIRE(debug.bindings.size() == 1);
+    CHECK(debug.bindings[0].device == mir::DeviceKind::Keyboard);
+    CHECK(debug.bindings[0].key == mir::Key::F3);
 }
 
 TEST_CASE("A second call adds nothing", "[flight][input]")

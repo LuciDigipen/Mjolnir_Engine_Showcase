@@ -26,6 +26,7 @@ namespace mir
     inline constexpr std::string_view kFlightTrimUpAction = "FlightTrimUp";
     inline constexpr std::string_view kFlightTrimDownAction = "FlightTrimDown";
     inline constexpr std::string_view kFlightCameraToggleAction = "FlightCameraToggle";
+    inline constexpr std::string_view kFlightDebugToggleAction = "FlightDebugToggle";
 
     // Adds only the actions the map does not already have, so a rebound action is kept.
     std::size_t AddFlightDefaultActions(InputMap &map);
