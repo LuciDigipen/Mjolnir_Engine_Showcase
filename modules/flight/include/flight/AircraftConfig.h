@@ -23,6 +23,7 @@
 namespace mir
 {
     inline constexpr std::size_t kMaxEngines = 4;
+    inline constexpr std::size_t kMaxGear = 8;
 
     struct AircraftConfig
     {
@@ -85,6 +86,19 @@ namespace mir
             std::vector<CurvePoint> speedFactor;    // [axial m/s, factor]
         };
 
+        struct Gear
+        {
+            std::string name;
+            glm::vec3 mount{0.0f}; // body frame, metres from the entity origin
+            float restLength = 0.0f;
+            float stiffness = 0.0f; // newtons per metre
+            float damping = 0.0f; // newton seconds per metre
+            float rollingFriction = 0.0f;
+            float sideFriction = 0.0f;
+            float brake = 0.0f; // friction coefficient while the brake is held
+            float maxSteer = 0.0f; // radians; above zero steers with the rudder
+        };
+
         int version = 0;
         float mass = 0.0f;
         glm::vec3 inertiaDiagonal{0.0f};
@@ -97,6 +111,7 @@ namespace mir
         float throttleRate = 0.0f; // per second
         Actuators actuators;
         std::vector<Engine> engines;
+        std::vector<Gear> gear;
         AerodynamicProfile aero;
     };
 

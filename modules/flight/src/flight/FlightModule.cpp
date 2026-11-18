@@ -12,6 +12,7 @@
 #include <flight/ComponentRegistration.h>
 #include <flight/FlightEnvironment.h>
 #include <flight/FlightInputSystem.h>
+#include <flight/FlightTouchdownSystem.h>
 
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
@@ -30,6 +31,10 @@ namespace mir
 
         // Update runs after PreUpdate's InputSystem and before any FixedUpdate substep
         context.scheduler.AddSystem<FlightInputSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
+
+        // once per frame, after every fixed step, so scripts see the frame's touchdowns in Update
+        context.scheduler.AddSystem<FlightTouchdownSystem>(SystemPhase::LateUpdate,
+            SystemOrder{SystemOrder::kNormal});
 
         if (!context.world.TryResource<FlightEnvironment>())
             context.world.EmplaceResource<FlightEnvironment>();

@@ -13,6 +13,7 @@
 #include <flight/FlightActuators.h>
 #include <flight/FlightEnvironment.h>
 #include <flight/FlightFrames.h>
+#include <flight/FlightLandingGear.h>
 #include <flight/FlightPropulsion.h>
 #include <flight/components/Aircraft.h>
 
@@ -60,7 +61,7 @@ namespace mir
                 RunEnvironmentAndAirData(aircraft, environment ? *environment : fallbackEnvironment, dt);
                 RunActuators(aircraft, dt);
                 RunPropulsion(aircraft, dt);
-                RunLandingGear(aircraft, dt);
+                RunLandingGear(aircraft, *position, physics, body, dt);
                 RunAerodynamics(aircraft, dt);
 
                 const ForceAccumulator &accumulator = aircraft.runtime.accumulator;
@@ -71,7 +72,15 @@ namespace mir
             });
     }
 
-    void FlightStepGate::AfterStep(World &, PhysicsWorld &, float) {}
+    void FlightStepGate::AfterStep(World &world, PhysicsWorld &, float)
+    {
+        world.GetOrCreateQuery<Aircraft, RigidBody>().ForEach(
+            [](Entity, Aircraft &aircraft, RigidBody &)
+            {
+                aircraft.runtime.pendingTouchdowns.Append(aircraft.runtime.gear.stepTouchdowns);
+                aircraft.runtime.gear.stepTouchdowns.Clear();
+            });
+    }
 
     void FlightStepGate::RunEnvironmentAndAirData(Aircraft &aircraft, const FlightEnvironment &environment, float)
     {
@@ -102,7 +111,11 @@ namespace mir
         runtime.accumulator.moment += runtime.propulsion.moment;
     }
 
-    void FlightStepGate::RunLandingGear(Aircraft &, float) {}
+    void FlightStepGate::RunLandingGear(Aircraft &aircraft, const WorldPosition &origin, PhysicsWorld &physics,
+        BodyHandle body, float dt)
+    {
+        StepLandingGear(*aircraft.runtime.config, origin, physics, body, aircraft.runtime, dt);
+    }
 
     void FlightStepGate::RunAerodynamics(Aircraft &aircraft, float)
     {

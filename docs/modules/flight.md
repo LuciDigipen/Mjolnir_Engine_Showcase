@@ -23,10 +23,15 @@ result into `AircraftRuntime::airData`, then clears `additionalWind`. The gate r
 step and uses the defaults when it is missing. The actuator stage consumes the queued commands and the held
 controls; the propulsion stage advances each engine's rpm toward its throttle target and adds the thrust of
 its static curve, scaled by the axial speed factor and the density ratio, at the engine's offset from the
-centre of mass; the aerodynamics stage evaluates the selected tier's profile into a body-frame `ForceMoment`
-and adds it to the accumulator. The gear stage is still empty. A tier without a profile in the config adds
-nothing and warns once per aircraft config. L2 is the default playable model; `Aircraft::tier` defaults to
-it.
+centre of mass; the gear stage raycasts every gear down the body and adds a spring-damper normal force with
+rolling, braking and side friction at the contact point; the aerodynamics stage evaluates the selected tier's
+profile into a body-frame `ForceMoment` and adds it to the accumulator. A gear's first contact also queues a
+touchdown. A tier without a profile in the config adds nothing and warns once per aircraft config. L2 is the
+default playable model; `Aircraft::tier` defaults to it.
+
+`FlightTouchdownSystem` runs in LateUpdate, after the frame's fixed steps, and moves each aircraft's
+`pendingTouchdowns` into `touchdowns`, which then holds them for the whole next frame;
+`AircraftTouchdowns` exposes the list for scripts.
 
 `FlightInputSystem` runs in Update, after PreUpdate's `InputSystem` and before the frame's fixed steps. For
 every `Aircraft` with `playerInput` it copies the pitch, roll, yaw, throttle and brake actions into
@@ -58,6 +63,9 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `IAerodynamicModel`, `AerodynamicModelFor`, `WindAxesToBody` | `<flight/AerodynamicModel.h>` | the stateless model interface, the tier lookup and the wind-axis conversion |
 | `L2StallFraction`, `L2CriticalAngleOfAttack` | `<flight/AerodynamicModel.h>` | the post-stall blend weight and the positive critical angle of attack |
 | `StepPropulsion`, `PropulsionState`, `EngineState` | `<flight/FlightPropulsion.h>` | the engine rpm response and the thrust of every engine |
+| `StepLandingGear`, `kGearFrictionFadeSpeed`, `AircraftTouchdowns` | `<flight/FlightLandingGear.h>` | the raycast gear springs, the wheel friction and the published touchdown list |
+| `LandingGearState`, `GearPointState`, `Touchdown`, `TouchdownList` | `<flight/AircraftRuntime.h>` | per-gear contact state and the pending and published touchdown lists |
+| `FlightTouchdownSystem` | `<flight/FlightTouchdownSystem.h>` | LateUpdate system that publishes the frame's touchdowns |
 | `CurvePoint`, `EvaluateCurve` | `<flight/FlightCurve.h>` | the piecewise-linear curves with clamped ends |
 | `BodyToLocal`, `LocalToBody`, `InertiaBodyToLocal` | `<flight/FlightFrames.h>` | the one body/local conversion |
 | `AngleOfAttack`, `Sideslip` | `<flight/FlightFrames.h>` | air-data angles from body velocity |
@@ -122,15 +130,37 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   `cross(position - centerOfMass, force)`. An empty `engines` array adds nothing.
 - `AircraftRuntime::propulsion` keeps the per-engine rpm and last thrust in a fixed `kMaxEngines` array plus the
   accumulated force and moment, so the runtime stays trivially copyable and the telemetry stage can read it.
+- `gear` is required and may be empty; at most `kMaxGear` (8). `mount` is in body frame from the entity origin,
+  `restLength` and `stiffness` are above 0, and `damping`, `rollingFriction`, `sideFriction`, `brake` and
+  `maxSteerDeg` are `>= 0`; each error names its path, e.g. `gear[1].stiffness: must be > 0`.
+- The gear stage runs after the actuators, so it reads the step's rudder and brake. Every gear casts a ray from
+  its mount along body +Z for `restLength`, excluding the aircraft's own body; a miss adds no force. The
+  compression is `restLength - distance` and the contact velocity is
+  `linearVelocityBody + cross(angularVelocityBody, contact - centerOfMass)`; its component `vc` along body +Z is
+  the closing speed and the normal force is `max(0, stiffness * x + damping * vc)` along the hit normal in body
+  axes.
+- Wheel friction acts in the ground plane: forward is body X projected on the plane and turned about body down
+  by the steer `(rudder actual / rudder max) * maxSteerDeg`, lateral its in-plane perpendicular. With `vf` and
+  `vs` the contact speeds along them, `fade(v) = min(|v| / kGearFrictionFadeSpeed, 1)` scales a viscous
+  friction: `-sign(vf) * fade(vf) * (rollingFriction + brake while held) * Fn` along forward and
+  `-sign(vs) * fade(vs) * sideFriction * Fn` along lateral. The total force and its
+  moment `cross(contact - centerOfMass, force)` go into the accumulator.
+- A positive rudder points the steered wheel right, so an aircraft rolling forward yaws right (positive body
+  yaw rate); gears with `maxSteerDeg` 0 never steer.
+- A gear's no-contact to contact transition records a `Touchdown` (`gearIndex`, `sinkRate` = the closing speed
+  at that step, `compression`). `FlightStepGate::AfterStep` appends it to `pendingTouchdowns`, and
+  `FlightTouchdownSystem` moves the list into `touchdowns` once per frame. Both lists hold `kTouchdownCapacity`
+  (8) events and drop the rest; `touchdowns` keeps the last frame's events for scripts, and leaving the ground
+  lets a later contact publish another event.
 
 ## State
 
 *As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
-resource, air data, actuator stage, propulsion stage and the L1 and L2 aerodynamic models work. L2 is the default
-tier and includes the stall blend and flap table. `FlightStepGate` is attached, reads state and air data, and
-adds the propulsion and the selected tier's aerodynamic force and moment. The gear stage is a stub; L3 yields
-zero with a warning until its issue lands. There is no hot reload yet; the store is cleared only with the
-module.
+resource, air data, actuator stage, propulsion stage, landing gear stage and the L1 and L2 aerodynamic models
+work. L2 is the default tier and includes the stall blend and flap table. `FlightStepGate` is attached, reads
+state and air data, and adds the propulsion, the gear and the selected tier's aerodynamic force and moment;
+`FlightTouchdownSystem` publishes the frame's touchdowns. L3 yields zero with a warning until its issue lands.
+There is no hot reload yet; the store is cleared only with the module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
@@ -143,8 +173,10 @@ engine moment signs, no engines, `engines` parsing and its error paths, an engin
 fixture), `Aerodynamics` (wind-axis directions, determinism, dynamic-pressure scaling, control and damping
 signs, sources, missing profiles, an L1 aircraft through the physics fixture), `AerodynamicsL2` (stall
 continuity, flap lift, trim and control signs, adverse yaw, post-stall scaling, the low-speed bound,
-zero-airspeed rest, determinism, `aero.L2` parsing and its error paths) and `FlightStepGate` (control-moment
-signs, state from the step, detach).
+zero-airspeed rest, determinism, `aero.L2` parsing and its error paths), `LandingGear` (settling without
+bouncing, roll and pitch, own-body exclusion, braking against free rolling, rudder steering both ways, a
+touchdown publishing one event per gear and no repeats, no gear force without gear points, `gear` parsing and
+its error paths) and `FlightStepGate` (control-moment signs, state from the step, detach).
 
 ## Flight input
 
@@ -192,7 +224,7 @@ right rudder.
 | `throttleRate` | number > 0 | #451 | throttle change per second while held |
 | `actuators` | object | #451 | see below |
 | `engines` | array (may be empty) | #454 | empty = glider |
-| `gear` | array (may be empty) | #323 | raycast gear points |
+| `gear` | array (may be empty) | #323 | required; raycast gear points |
 | `camera.eye` | vec3 | #449 (read by #457) | cockpit eye point |
 | `camera.chaseDistance` / `chaseHeight` | number >= 0 | #449 (read by #457) | chase camera offset behind/above |
 | `stallWarningMarginDeg` | number >= 0 | #455 | warn when alpha is within this margin of the critical alpha |
@@ -251,13 +283,38 @@ Required, an array that may be empty (a glider). At most four engines; each entr
 
 ### `gear[]` (#323)
 
+Required, an array that may be empty; an aircraft with no gear points gets no gear force. At most eight gear
+points, each an object.
+
 ```json
-{ "name": "nose", "mount": [2.0, 0, 0.6], "restLength": 0.6, "stiffness": 30000, "damping": 3000,
-  "rollingFriction": 0.03, "sideFriction": 0.9, "brake": 0.0, "maxSteerDeg": 30 }
+[
+  { "name": "nose", "mount": [1.5, 0, 0], "restLength": 0.6, "stiffness": 40000, "damping": 10000,
+    "rollingFriction": 0.03, "sideFriction": 0.9, "brake": 0, "maxSteerDeg": 30 },
+  { "name": "left", "mount": [-0.75, -1.2, 0], "restLength": 0.6, "stiffness": 40000, "damping": 10000,
+    "rollingFriction": 0.03, "sideFriction": 0.9, "brake": 0.5, "maxSteerDeg": 0 }
+]
 ```
-- Ray from `mount` along body +Z (down) of length `restLength` (+ a small margin).
-- `brake` is a friction coefficient applied while Brake is held (0 = no brake on this wheel).
-- `maxSteerDeg` > 0 makes it steerable by the rudder command.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `name` | string | the gear's name |
+| `mount` | vec3 | body frame, metres from the entity origin |
+| `restLength` | number > 0 | metres the ray reaches down the body |
+| `stiffness` | number > 0 | spring rate, N/m |
+| `damping` | number >= 0 | damper rate on the closing speed, N s/m |
+| `rollingFriction` | number >= 0 | rolling friction coefficient |
+| `sideFriction` | number >= 0 | lateral friction coefficient |
+| `brake` | number >= 0 | extra rolling friction while Brake is held, 0 = no brake on this wheel |
+| `maxSteerDeg` | number >= 0 | degrees of steer at full rudder; above 0 steers with the rudder |
+
+- The ray runs from `mount` along body +Z (down) for `restLength` and ignores the aircraft's own body; a gear
+  carries load only while a collider is that close.
+- Both friction coefficients multiply the gear's normal force and fade out below `kGearFrictionFadeSpeed`, so a
+  parked aircraft does not jitter and a slow one creeps rather than sticking.
+- The wheel turns about body down by `(rudder actual / rudder max) * maxSteerDeg`: a positive rudder points it
+  right, which yaws the aircraft right while it rolls forward.
+- Errors name the entry and the key, e.g. `gear[1].stiffness: must be > 0`; more than eight is
+  `gear: at most 8 gear points`.
 
 ### `aero.L1` (#452)
 

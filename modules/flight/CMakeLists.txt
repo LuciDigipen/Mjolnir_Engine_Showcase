@@ -23,9 +23,11 @@ target_sources(engine_flight PRIVATE
     src/flight/FlightFrames.cpp
     src/flight/FlightInput.cpp
     src/flight/FlightInputSystem.cpp
+    src/flight/FlightLandingGear.cpp
     src/flight/FlightModule.cpp
     src/flight/FlightPropulsion.cpp
     src/flight/FlightStepGate.cpp
+    src/flight/FlightTouchdownSystem.cpp
 )
 
 if(BUILD_TESTING)

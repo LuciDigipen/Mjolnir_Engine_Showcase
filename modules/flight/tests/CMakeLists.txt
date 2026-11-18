@@ -7,5 +7,6 @@ engine_add_module_tests(flight
     FlightFrames.tests.cpp
     FlightInput.tests.cpp
     FlightStepGate.tests.cpp
+    LandingGear.tests.cpp
     Propulsion.tests.cpp
 )

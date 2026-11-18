@@ -96,6 +96,7 @@ namespace
             "camera": { "eye": [0, 0, 0], "chaseDistance": 0, "chaseHeight": 0 },
             "throttleRate": 0.5, "actuators": )";
         document += kActuators;
+        document += R"(, "gear": [])";
         return document;
     }
 
@@ -149,7 +150,8 @@ namespace
             "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0],
             "idleRpm": 0.0, "maxRpm": 2700.0, "rpmTau": 0.5,
             "staticThrust": [[0.0, 0.0], [1.0, 3000.0]], "speedFactor": [[0.0, 1.0]]
-        }]
+        }],
+        "gear": []
     })";
 
     struct RawConfig

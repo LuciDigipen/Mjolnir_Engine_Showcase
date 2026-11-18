@@ -109,6 +109,54 @@ namespace mir
         glm::vec3 moment{0.0f};
     };
 
+    // One gear's last contact; the point stays at its last contact while the gear is off the ground.
+    struct GearPointState
+    {
+        bool inContact = false;
+        float compression = 0.0f;
+        float normalForce = 0.0f; // newtons
+        glm::vec3 contactBody{0.0f};
+    };
+
+    struct Touchdown
+    {
+        int gearIndex = 0;
+        float sinkRate = 0.0f; // closing speed at the first contact, m/s
+        float compression = 0.0f;
+    };
+
+    inline constexpr std::size_t kTouchdownCapacity = 8;
+
+    // Fixed capacity keeps AircraftRuntime trivially copyable; extra events are dropped.
+    struct TouchdownList
+    {
+        Touchdown events[kTouchdownCapacity]{};
+        std::size_t count = 0;
+
+        bool Push(const Touchdown &event)
+        {
+            if (count == kTouchdownCapacity)
+                return false;
+            events[count++] = event;
+            return true;
+        }
+
+        void Append(const TouchdownList &other)
+        {
+            for (std::size_t i = 0; i < other.count; ++i)
+                Push(other.events[i]);
+        }
+
+        void Clear() { count = 0; }
+    };
+
+    // Each gear's contact state this step and the touchdowns AfterStep moves to the pending list.
+    struct LandingGearState
+    {
+        GearPointState points[kMaxGear]{};
+        TouchdownList stepTouchdowns;
+    };
+
     struct AircraftRuntime
     {
         AircraftState state;
@@ -118,6 +166,10 @@ namespace mir
         AirData airData;
         ForceMoment aero;
         PropulsionState propulsion;
+        LandingGearState gear;
+        // Touchdowns collected by fixed steps, then published once per frame as `touchdowns`.
+        TouchdownList pendingTouchdowns;
+        TouchdownList touchdowns;
         FlightControls controls;
         FlightCommandQueue commands;
         ActuatorState actuators;

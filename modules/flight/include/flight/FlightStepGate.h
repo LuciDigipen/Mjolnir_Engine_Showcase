@@ -8,7 +8,9 @@
  */
 #pragma once
 
+#include <core/math/WorldCoordinates.h>
 #include <physics/PhysicsStepGate.h>
+#include <physics/PhysicsTypes.h>
 
 namespace mir
 {
@@ -26,7 +28,8 @@ namespace mir
         void RunEnvironmentAndAirData(Aircraft &aircraft, const FlightEnvironment &environment, float dt);
         void RunActuators(Aircraft &aircraft, float dt);
         void RunPropulsion(Aircraft &aircraft, float dt);
-        void RunLandingGear(Aircraft &aircraft, float dt);
+        void RunLandingGear(Aircraft &aircraft, const WorldPosition &origin, PhysicsWorld &physics,
+            BodyHandle body, float dt);
         void RunAerodynamics(Aircraft &aircraft, float dt);
     };
 }

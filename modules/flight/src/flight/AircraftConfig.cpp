@@ -30,9 +30,9 @@ namespace mir
         {
             return key == "version" || key == "mass" || key == "inertia" || key == "centerOfMass"
                 || key == "reference" || key == "camera" || key == "nodes"
-                // owned by later issues, accepted and ignored for now
-                || key == "throttleRate" || key == "actuators" || key == "engines" || key == "gear"
-                || key == "stallWarningMarginDeg" || key == "aero";
+                || key == "throttleRate" || key == "actuators" || key == "engines" || key == "gear" || key == "aero"
+                // owned by a later issue, accepted and ignored for now
+                || key == "stallWarningMarginDeg";
         }
 
         bool ReadNumber(const Json &value, const std::string &path, float &out, std::string &error)
@@ -429,6 +429,72 @@ namespace mir
             return true;
         }
 
+        bool ParseGear(const Json &value, const std::string &path, AircraftConfig::Gear &out, std::string &error)
+        {
+            if (!value.is_object())
+            {
+                error = std::format("{}: expected an object", path);
+                return false;
+            }
+
+            const auto name = value.find("name");
+            if (name == value.end())
+            {
+                error = std::format("{}.name: missing", path);
+                return false;
+            }
+            if (!name->is_string())
+            {
+                error = std::format("{}.name: expected a string", path);
+                return false;
+            }
+            out.name = name->get<std::string>();
+
+            float degrees = 0.0f;
+            if (!ReadRequiredVector3(value, "mount", path + ".mount", out.mount, error)
+                || !ReadRequiredPositive(value, "restLength", path + ".restLength", out.restLength, error)
+                || !ReadRequiredPositive(value, "stiffness", path + ".stiffness", out.stiffness, error)
+                || !ReadRequiredNonNegative(value, "damping", path + ".damping", out.damping, error)
+                || !ReadRequiredNonNegative(value, "rollingFriction", path + ".rollingFriction", out.rollingFriction,
+                    error)
+                || !ReadRequiredNonNegative(value, "sideFriction", path + ".sideFriction", out.sideFriction, error)
+                || !ReadRequiredNonNegative(value, "brake", path + ".brake", out.brake, error)
+                || !ReadRequiredNonNegative(value, "maxSteerDeg", path + ".maxSteerDeg", degrees, error))
+                return false;
+
+            out.maxSteer = glm::radians(degrees);
+            return true;
+        }
+
+        bool ParseGears(const Json &document, std::vector<AircraftConfig::Gear> &out, std::string &error)
+        {
+            const auto entry = document.find("gear");
+            if (entry == document.end())
+            {
+                error = "gear: missing";
+                return false;
+            }
+            if (!entry->is_array())
+            {
+                error = "gear: expected an array";
+                return false;
+            }
+            if (entry->size() > kMaxGear)
+            {
+                error = std::format("gear: at most {} gear points", kMaxGear);
+                return false;
+            }
+
+            for (std::size_t i = 0; i < entry->size(); ++i)
+            {
+                AircraftConfig::Gear gear;
+                if (!ParseGear((*entry)[i], std::format("gear[{}]", i), gear, error))
+                    return false;
+                out.push_back(std::move(gear));
+            }
+            return true;
+        }
+
         bool ParseL1Profile(const Json &value, L1Profile &out, std::string &error)
         {
             if (!value.is_object())
@@ -781,6 +847,9 @@ namespace mir
                 return false;
 
             if (!ParseEngines(document, config.engines, error))
+                return false;
+
+            if (!ParseGears(document, config.gear, error))
                 return false;
 
             if (!ParseAero(document, config.aero, error))

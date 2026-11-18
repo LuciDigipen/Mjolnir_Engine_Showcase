@@ -154,6 +154,7 @@ namespace
                 "trim": { "stepDeg": 0.5, "maxDeg": 10 }
             },
             "engines": [],
+            "gear": [],
             "aero": )";
         document += aero;
         document += "}";
