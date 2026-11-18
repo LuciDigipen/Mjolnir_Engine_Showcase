@@ -30,6 +30,7 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <flight/FlightModule.h>
+#include <flight_script/FlightScriptModule.h>
 #include <gameshell/GameShellModule.h>
 #include <gameui/GameUIModule.h>
 #include <gameui_imgui/GameUIImGuiModule.h>
@@ -378,6 +379,7 @@ namespace mir
         #endif
             InputScriptModule inputScript;
             PhysicsScriptModule physicsScript;
+            FlightScriptModule flightScript;
             RendererScriptModule rendererScript;
             TerrainScriptModule terrainScript;
         };

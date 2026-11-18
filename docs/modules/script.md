@@ -88,10 +88,10 @@ return Spin
 The Lua surface — `world:has/get/set/spawn/destroy/add/remove/each/declare` and
 the `Entity` usertype — lives in `src/script/bindings/` and is not public. Loaded
 Lua source reaches it; no C++ outside this module includes it. The input,
-physics, audio, terrain and post-processing bindings live in the bridges, and
-each extends that same `World` usertype rather than adding one of its own. The
-host binds `Entity` and `World` when it builds its state, so every bridge's
-bindings run after them.
+physics, flight, audio, terrain and post-processing bindings live in the
+bridges, and each extends that same `World` usertype rather than adding one of
+its own. The host binds `Entity` and `World` when it builds its state, so every
+bridge's bindings run after them.
 
 `world:load_scene("sceneId")` queues a swap of the running Play scene to a
 scene registered in `game.json`. It returns `true` when the request is queued.
@@ -276,6 +276,40 @@ requested when the scene loads but arrive on their own, so the first frames may
 answer `Loading` there too. A Play session keeps its release when `current` changes; app's Edit
 safe point replaces the resource after Stop. No resource, an empty resource,
 or no instance covering the point gives `OutsideMap` / `None`.
+
+### Flight
+
+`world:aircraft_telemetry(entity)` returns a table of every `FlightTelemetry` field, or `nil` for an entity
+with no `Aircraft`. Keys are snake_case: `true_airspeed`, `indicated_airspeed`, `altitude`,
+`height_above_ground`, `has_ground`, `vertical_speed`, `heading`, `pitch`, `roll`, `angle_of_attack`,
+`sideslip`, `dynamic_pressure`, `mach`, `load_factor`, `stall_margin`, `stall_warning`, `throttle`, `rpm`,
+`engine_count`, `flaps`, `trim`, `elevator`, `aileron`, `rudder`, `gear_compression`, `gear_count`,
+`weight_on_wheels`, `aero_forces`, `propulsion_forces` and `gear_forces`. Airspeeds, altitude, height,
+vertical speed, dynamic pressure, Mach, load factor, throttle, rpm and compression are SI; `heading`, `pitch`,
+`roll`, `angle_of_attack`, `sideslip`, `stall_margin`, `flaps`, `trim`, `elevator`, `aileron` and `rudder`
+are degrees. `rpm` and `gear_compression` are 1-based arrays sized by `engine_count` and `gear_count`, empty
+when the config has none; each `*_forces` table holds `force` and `moment` as `{x, y, z}` tables in body axes.
+
+`world:set_aircraft_wind(entity, wind)` adds a world-frame wind velocity in m/s to the aircraft's
+`AircraftRuntime::additionalWind` and returns `true`, or `false` without `Aircraft`. The addition is
+deliberate, so thermals and ridge lift from separate scripts stack. The flight step computes with the sum of
+that wind and the global wind, then clears `additionalWind`; a script must write it again every fixed step.
+`OnFixedUpdate` runs before the step, so its wind acts on that step.
+
+`world:reset_aircraft(entity, position, rotation, airspeed, throttle)` calls `ResetAircraft` and returns its
+bool. The position and rotation are the forms `world:teleport` accepts, so a `nil` rotation is the identity;
+`airspeed` is m/s along the new nose and `throttle` is clamped to 0..1.
+
+`world:aircraft_touchdowns(entity)` returns a 1-based array of `{ gear = index, sink_rate, compression }`, an
+empty table when the published list is empty, or `nil` without `Aircraft`. `FlightTouchdownSystem` publishes
+in `LateUpdate`, so the list holds a frame's events for exactly one frame.
+
+`world:aircraft_controls(entity)` returns `{ pitch, roll, yaw, throttle_up, throttle_down, brake, throttle,
+flaps_detent, trim_deg }`, the held `FlightControls` plus the actuator state, or `nil` without `Aircraft`.
+`pitch`, `roll` and `yaw` are the -1..1 commands and `trim_deg` is in degrees.
+
+A vector or number that is not the documented form is logged and refused with `false` or `nil`, the way the
+physics bindings refuse one.
 
 ## Rules
 

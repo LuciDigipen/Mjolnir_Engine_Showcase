@@ -189,6 +189,7 @@ namespace mir
     #endif
         inputScript(script),
         physicsScript(script),
+        flightScript(script),
         rendererScript(script),
         terrainScript(script)
     {}

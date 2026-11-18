@@ -46,6 +46,11 @@ every `Aircraft` with `playerInput` it copies the pitch, roll, yaw, throttle and
 `AircraftRuntime::commands`. The actuator stage drains that queue on the first fixed step after the frame, so
 a frame without a fixed step keeps its commands for the next one.
 
+`modules/flight_script` is the Lua bridge: `world:aircraft_telemetry`, `set_aircraft_wind`, `reset_aircraft`,
+`aircraft_touchdowns` and `aircraft_controls` read the telemetry, add to the aircraft's additional wind, call
+the reset, and expose the published touchdown list and the held controls with their actuator state. Angles
+cross into Lua in degrees; see [script.md](script.md#flight).
+
 ```cpp
 mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver));
 ```
