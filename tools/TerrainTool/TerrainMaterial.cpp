@@ -49,6 +49,9 @@ namespace mir::terrainbake
 
         double Coverage(const TerrainMaterialLayer &layer, double height, double slopeDegrees, double fbm)
         {
+            // A layer without rules shows only where it is painted, not everywhere.
+            if (!layer.rules.height && !layer.rules.slope && !layer.rules.noise)
+                return 0.0;
             double coverage = 1.0;
             if (const std::optional<TerrainMaterialHeightRule> &rule = layer.rules.height)
                 coverage *= TerrainMaterialRamp(height, rule->min, rule->max, rule->blend);

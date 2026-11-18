@@ -22,7 +22,7 @@
 namespace mir::terrainbake
 {
     // Bumping it changes every weight fingerprint.
-    inline constexpr uint32_t kMaterialCanonicalVersion = 1;
+    inline constexpr uint32_t kMaterialCanonicalVersion = 2;
     inline constexpr size_t kMaxMaterialNameLength = mir::kMaxMaterialNameLength;
 
     using TerrainMaterialHeightRule = mir::TerrainMaterialHeightRule;

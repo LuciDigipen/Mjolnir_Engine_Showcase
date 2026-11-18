@@ -204,6 +204,25 @@ TEST_CASE("Height rules ramp over blend and give hard edges at blend 0", "[terra
     }
 }
 
+TEST_CASE("A layer without rules covers nothing until it is painted", "[terraintool][material][weights]")
+{
+    Json json = BaseRecipe();
+    json["materials"] = Layers({Json{{"name", "grass"}}, Json{{"name", "sand"}}});
+    const TerrainRecipe dressed = Valid(json);
+    const std::vector<TileHeights> tiles{RampTile(dressed.layout)};
+    const auto byTile = ByTile(tiles);
+    const auto weights = Evaluate(dressed, byTile, {0, 0});
+    REQUIRE(weights);
+    CheckWeights(*weights);
+
+    for (int32_t k = 0; k <= dressed.layout.IntervalsPerTile(); ++k)
+        for (int32_t i = 0; i <= dressed.layout.IntervalsPerTile(); ++i)
+        {
+            CHECK(weights->At(0, i, k) == Catch::Approx(1.0).margin(1e-6));
+            CHECK(weights->At(1, i, k) == Catch::Approx(0.0).margin(1e-6));
+        }
+}
+
 TEST_CASE("Slope rules ramp on the final surface normal", "[terraintool][material][weights]")
 {
     const TerrainRecipe recipe = Valid(BaseRecipe());
