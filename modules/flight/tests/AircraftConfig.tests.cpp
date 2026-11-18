@@ -91,6 +91,7 @@ namespace
             document += R"( "actuators": )";
             document += actuators;
         }
+        document += R"(, "engines": [])";
         document += "}";
         return document;
     }
@@ -103,7 +104,7 @@ namespace
             "camera": { "eye": [0, 0, 0], "chaseDistance": 0, "chaseHeight": 0 },
             "throttleRate": 0.5, "actuators": )";
         document += kActuators;
-        document += R"(, "aero": )";
+        document += R"(, "engines": [], "aero": )";
         document += aero;
         document += "}";
         return document;
@@ -563,7 +564,8 @@ TEST_CASE("An aircraft takes its mass properties from its config", "[flight][con
             "rudder": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
             "flaps": { "detentsDeg": [0.0, 10.0, 20.0, 30.0], "rateDegPerSec": 5.0 },
             "trim": { "stepDeg": 0.5, "maxDeg": 10.0 }
-        }
+        },
+        "engines": []
     })");
     REQUIRE(plane.view.has_value());
     REQUIRE(heavy.view.has_value());

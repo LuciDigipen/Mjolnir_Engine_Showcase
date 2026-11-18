@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
 
 #include <cmath>
@@ -304,6 +305,128 @@ namespace mir
                 && ParseActuator(*entry, "aileron", out.aileron, error)
                 && ParseActuator(*entry, "rudder", out.rudder, error) && ParseFlaps(*entry, out.flaps, error)
                 && ParseTrim(*entry, out.trim, error);
+        }
+
+        bool ParseEngineCurve(const Json &engine, const char *key, const std::string &path, std::size_t minimumPoints,
+            bool unitIntervalX, std::vector<CurvePoint> &out, std::string &error)
+        {
+            const auto entry = engine.find(key);
+            if (entry == engine.end())
+            {
+                error = std::format("{}: missing", path);
+                return false;
+            }
+            if (!entry->is_array())
+            {
+                error = std::format("{}: expected an array", path);
+                return false;
+            }
+            if (entry->size() < minimumPoints)
+            {
+                error = minimumPoints == 1
+                    ? std::format("{}: must not be empty", path)
+                    : std::format("{}: must have at least {} points", path, minimumPoints);
+                return false;
+            }
+
+            float previous = 0.0f;
+            for (std::size_t i = 0; i < entry->size(); ++i)
+            {
+                const Json &row = (*entry)[i];
+                const std::string rowPath = std::format("{}[{}]", path, i);
+                if (!row.is_array() || row.size() != 2)
+                {
+                    error = std::format("{}: expected [x, y]", rowPath);
+                    return false;
+                }
+
+                CurvePoint point;
+                if (!ReadNumber(row[0], rowPath + "[0]", point.x, error)
+                    || !ReadNumber(row[1], rowPath + "[1]", point.y, error))
+                    return false;
+                if (unitIntervalX && (point.x < 0.0f || point.x > 1.0f))
+                {
+                    error = std::format("{}[0]: must be in 0..1", rowPath);
+                    return false;
+                }
+                if (point.y < 0.0f)
+                {
+                    error = std::format("{}[1]: must be >= 0", rowPath);
+                    return false;
+                }
+                if (i > 0 && point.x <= previous)
+                {
+                    error = std::format("{}: x must be strictly increasing", path);
+                    return false;
+                }
+                previous = point.x;
+                out.push_back(point);
+            }
+            return true;
+        }
+
+        bool ParseEngine(const Json &value, const std::string &path, AircraftConfig::Engine &out, std::string &error)
+        {
+            if (!value.is_object())
+            {
+                error = std::format("{}: expected an object", path);
+                return false;
+            }
+
+            if (!ReadRequiredVector3(value, "position", path + ".position", out.position, error))
+                return false;
+            if (!ReadRequiredVector3(value, "direction", path + ".direction", out.direction, error))
+                return false;
+            if (glm::length(out.direction) <= 0.0f)
+            {
+                error = std::format("{}.direction: must be non-zero", path);
+                return false;
+            }
+            out.direction = glm::normalize(out.direction);
+
+            if (!ReadRequiredNonNegative(value, "idleRpm", path + ".idleRpm", out.idleRpm, error))
+                return false;
+            if (!ReadRequiredNumber(value, "maxRpm", path + ".maxRpm", out.maxRpm, error))
+                return false;
+            if (out.maxRpm <= out.idleRpm)
+            {
+                error = std::format("{}.maxRpm: must be > idleRpm", path);
+                return false;
+            }
+            if (!ReadRequiredPositive(value, "rpmTau", path + ".rpmTau", out.rpmTau, error))
+                return false;
+
+            return ParseEngineCurve(value, "staticThrust", path + ".staticThrust", 2, true, out.staticThrust, error)
+                && ParseEngineCurve(value, "speedFactor", path + ".speedFactor", 1, false, out.speedFactor, error);
+        }
+
+        bool ParseEngines(const Json &document, std::vector<AircraftConfig::Engine> &out, std::string &error)
+        {
+            const auto entry = document.find("engines");
+            if (entry == document.end())
+            {
+                error = "engines: missing";
+                return false;
+            }
+            if (!entry->is_array())
+            {
+                error = "engines: expected an array";
+                return false;
+            }
+            if (entry->size() > kMaxEngines)
+            {
+                error = std::format("engines: at most {} engines", kMaxEngines);
+                return false;
+            }
+
+            for (std::size_t i = 0; i < entry->size(); ++i)
+            {
+                AircraftConfig::Engine engine;
+                if (!ParseEngine((*entry)[i], std::format("engines[{}]", i), engine, error))
+                    return false;
+                out.push_back(std::move(engine));
+            }
+            return true;
         }
 
         bool ParseL1Profile(const Json &value, L1Profile &out, std::string &error)
@@ -655,6 +778,9 @@ namespace mir
                 return false;
 
             if (!ParseActuators(document, config.actuators, error))
+                return false;
+
+            if (!ParseEngines(document, config.engines, error))
                 return false;
 
             if (!ParseAero(document, config.aero, error))

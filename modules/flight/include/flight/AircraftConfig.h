@@ -11,15 +11,19 @@
 #include <assets/AssetDecoder.h>
 
 #include <flight/AerodynamicModel.h>
+#include <flight/FlightCurve.h>
 
 #include <glm/vec3.hpp>
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace mir
 {
+    inline constexpr std::size_t kMaxEngines = 4;
+
     struct AircraftConfig
     {
         struct Reference
@@ -70,6 +74,17 @@ namespace mir
             Trim trim;
         };
 
+        struct Engine
+        {
+            glm::vec3 position{0.0f};
+            glm::vec3 direction{0.0f}; // body frame, normalised on load
+            float idleRpm = 0.0f;
+            float maxRpm = 0.0f;
+            float rpmTau = 0.0f;                    // seconds
+            std::vector<CurvePoint> staticThrust;   // [rpmFraction, newtons]
+            std::vector<CurvePoint> speedFactor;    // [axial m/s, factor]
+        };
+
         int version = 0;
         float mass = 0.0f;
         glm::vec3 inertiaDiagonal{0.0f};
@@ -81,6 +96,7 @@ namespace mir
         std::vector<Node> nodes;
         float throttleRate = 0.0f; // per second
         Actuators actuators;
+        std::vector<Engine> engines;
         AerodynamicProfile aero;
     };
 

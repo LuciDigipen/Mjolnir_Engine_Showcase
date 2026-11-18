@@ -21,9 +21,11 @@ model (ISA by default, or a constant density) and the global wind. The environme
 atmosphere at the body position, adds the aircraft's `additionalWind` to the global wind and writes the
 result into `AircraftRuntime::airData`, then clears `additionalWind`. The gate reads the resource once per
 step and uses the defaults when it is missing. The actuator stage consumes the queued commands and the held
-controls; the aerodynamics stage evaluates the selected tier's profile into a body-frame `ForceMoment` and adds
-it to the accumulator. The propulsion and gear stages are still empty. A tier without a profile in the config
-adds nothing and warns once per aircraft config. L2 is the default playable model; `Aircraft::tier` defaults to
+controls; the propulsion stage advances each engine's rpm toward its throttle target and adds the thrust of
+its static curve, scaled by the axial speed factor and the density ratio, at the engine's offset from the
+centre of mass; the aerodynamics stage evaluates the selected tier's profile into a body-frame `ForceMoment`
+and adds it to the accumulator. The gear stage is still empty. A tier without a profile in the config adds
+nothing and warns once per aircraft config. L2 is the default playable model; `Aircraft::tier` defaults to
 it.
 
 `FlightInputSystem` runs in Update, after PreUpdate's `InputSystem` and before the frame's fixed steps. For
@@ -55,6 +57,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `AeroInput`, `ForceMoment`, `AerodynamicProfile`, `L1Profile`, `L2Profile` | `<flight/AerodynamicModel.h>` | the model's input, its body-frame output and the per-tier coefficients |
 | `IAerodynamicModel`, `AerodynamicModelFor`, `WindAxesToBody` | `<flight/AerodynamicModel.h>` | the stateless model interface, the tier lookup and the wind-axis conversion |
 | `L2StallFraction`, `L2CriticalAngleOfAttack` | `<flight/AerodynamicModel.h>` | the post-stall blend weight and the positive critical angle of attack |
+| `StepPropulsion`, `PropulsionState`, `EngineState` | `<flight/FlightPropulsion.h>` | the engine rpm response and the thrust of every engine |
+| `CurvePoint`, `EvaluateCurve` | `<flight/FlightCurve.h>` | the piecewise-linear curves with clamped ends |
 | `BodyToLocal`, `LocalToBody`, `InertiaBodyToLocal` | `<flight/FlightFrames.h>` | the one body/local conversion |
 | `AngleOfAttack`, `Sideslip` | `<flight/FlightFrames.h>` | air-data angles from body velocity |
 
@@ -109,14 +113,24 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   own maximum. The command passes a first-order lag with time constant `delay` (exact `1 - exp(-dt/delay)`,
   0 = pass through), then the actual deflection moves toward the lagged value by at most `rateDegPerSec * dt`.
   Flaps move toward `detentsDeg[flapDetent]` at their own rate.
+- The propulsion stage runs after the actuators, so the throttle it reads is the one the step just produced. An
+  engine's rpm starts at `idleRpm` the first time its config runs and again after a config change, then follows
+  `target = idleRpm + throttle * (maxRpm - idleRpm)` with `rpm += (target - rpm) * (1 - exp(-dt/rpmTau))`.
+- Thrust is `staticThrust(rpm / maxRpm) * speedFactor(axial) * (density / 1.225)` newtons along the engine's
+  normalised `direction`. `axial` is `dot(airData.relativeVelocityBody, direction)`, so it includes wind; the
+  curves are linearly interpolated and clamped at their ends. The force acts at `position`, and its moment is
+  `cross(position - centerOfMass, force)`. An empty `engines` array adds nothing.
+- `AircraftRuntime::propulsion` keeps the per-engine rpm and last thrust in a fixed `kMaxEngines` array plus the
+  accumulated force and moment, so the runtime stays trivially copyable and the telemetry stage can read it.
 
 ## State
 
 *As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
-resource, air data, actuator stage and the L1 and L2 aerodynamic models work. L2 is the default tier and includes
-the stall blend and flap table. `FlightStepGate` is attached, reads state and air data, and adds the selected
-tier's aerodynamic force and moment. The propulsion and gear stages are stubs; L3 yields zero with a warning
-until its issue lands. There is no hot reload yet; the store is cleared only with the module.
+resource, air data, actuator stage, propulsion stage and the L1 and L2 aerodynamic models work. L2 is the default
+tier and includes the stall blend and flap table. `FlightStepGate` is attached, reads state and air data, and
+adds the propulsion and the selected tier's aerodynamic force and moment. The gear stage is a stub; L3 yields
+zero with a warning until its issue lands. There is no hot reload yet; the store is cleared only with the
+module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
@@ -124,10 +138,13 @@ aircraft, rest and reverse flow, ISA and constant density, the additional wind t
 `FlightFrames` (axis mapping, round trip, gravity, air angles), `FlightInput` (action names and types, default
 bindings, idempotent merge, a rebound action kept), `FlightActuators` (rate limit and settle, lag, trim and flap
 commands in order, throttle, surface signs, a frame with no fixed step, input through the physics fixture),
-`Aerodynamics` (wind-axis directions, determinism, dynamic-pressure scaling, control and damping signs, sources,
-missing profiles, an L1 aircraft through the physics fixture), `AerodynamicsL2` (stall continuity, flap lift,
-trim and control signs, adverse yaw, post-stall scaling, the low-speed bound, zero-airspeed rest, determinism,
-`aero.L2` parsing and its error paths) and `FlightStepGate` (control-moment signs, state from the step, detach).
+`Propulsion` (rpm response and convergence, throttle down, config reset, thrust scaling by speed and density,
+engine moment signs, no engines, `engines` parsing and its error paths, an engine through the physics
+fixture), `Aerodynamics` (wind-axis directions, determinism, dynamic-pressure scaling, control and damping
+signs, sources, missing profiles, an L1 aircraft through the physics fixture), `AerodynamicsL2` (stall
+continuity, flap lift, trim and control signs, adverse yaw, post-stall scaling, the low-speed bound,
+zero-airspeed rest, determinism, `aero.L2` parsing and its error paths) and `FlightStepGate` (control-moment
+signs, state from the step, detach).
 
 ## Flight input
 
@@ -205,13 +222,32 @@ right rudder.
 
 ### `engines[]` (#454)
 
+Required, an array that may be empty (a glider). At most four engines; each entry is an object.
+
 ```json
 { "position": [1.5, 0, 0], "direction": [1, 0, 0], "idleRpm": 700, "maxRpm": 2700, "rpmTau": 0.8,
   "staticThrust": [[0, 0], [1, 3200]], "speedFactor": [[0, 1.0], [60, 0.8], [120, 0.45]] }
 ```
-- Target RPM = idleRpm + throttle * (maxRpm - idleRpm); RPM follows with time constant rpmTau.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `position` | vec3 | body frame, metres from the entity origin |
+| `direction` | vec3 non-zero | body-frame thrust direction, normalised on load |
+| `idleRpm` | number >= 0 | rpm at zero throttle |
+| `maxRpm` | number > `idleRpm` | rpm at full throttle |
+| `rpmTau` | number > 0 | rpm response time constant, seconds |
+| `staticThrust` | curve >= 2 points | `[rpmFraction, newtons]`, x in 0..1 strictly increasing, y >= 0 |
+| `speedFactor` | curve >= 1 point | `[axial m/s, factor]`, x strictly increasing, y >= 0 |
+
+- Target RPM = idleRpm + throttle * (maxRpm - idleRpm); RPM starts at idleRpm when the config first runs
+  and follows the target with the exact first-order response `1 - exp(-dt / rpmTau)`.
 - Thrust = staticThrust(rpm / maxRpm) * speedFactor(axial airspeed m/s) * (rho / 1.225), along `direction`
-  (normalized) at `position`.
+  (normalized) at `position`. `axial` is the air-relative velocity along `direction`, so it includes wind.
+  Curves are linearly interpolated and clamped at the ends. The moment about the centre of mass is
+  `cross(position - centerOfMass, force)`.
+- Errors name the entry and the key, e.g. `engines[0].rpmTau: must be > 0` or
+  `engines[1].staticThrust: x must be strictly increasing`. More than four engines is
+  `engines: at most 4 engines`.
 
 ### `gear[]` (#323)
 

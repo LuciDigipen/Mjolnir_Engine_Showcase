@@ -57,7 +57,8 @@ namespace
             "rudder": { "maxDeflectionDeg": 25.0, "rateDegPerSec": 60.0, "delay": 0.05 },
             "flaps": { "detentsDeg": [0.0, 10.0, 20.0, 30.0], "rateDegPerSec": 5.0 },
             "trim": { "stepDeg": 0.5, "maxDeg": 10.0 }
-        }
+        },
+        "engines": []
     })";
 
     struct RawConfig

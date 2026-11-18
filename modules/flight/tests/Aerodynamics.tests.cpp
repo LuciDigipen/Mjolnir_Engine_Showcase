@@ -97,6 +97,7 @@ namespace
             "flaps": { "detentsDeg": [0.0, 10.0, 20.0, 30.0], "rateDegPerSec": 5.0 },
             "trim": { "stepDeg": 0.5, "maxDeg": 10.0 }
         },
+        "engines": [],
         "aero": { "L1": { "CL": 0.4, "CD": 0.04, "Ka": 3.0, "Ke": 4.0, "Kr": 2.0,
                            "Kp": 2000.0, "Kq": 4000.0, "Kn": 2000.0 } }
     })";

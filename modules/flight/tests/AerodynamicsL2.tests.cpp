@@ -153,6 +153,7 @@ namespace
                 "flaps": { "detentsDeg": [0], "rateDegPerSec": 5 },
                 "trim": { "stepDeg": 0.5, "maxDeg": 10 }
             },
+            "engines": [],
             "aero": )";
         document += aero;
         document += "}";

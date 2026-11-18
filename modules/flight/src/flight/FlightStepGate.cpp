@@ -13,6 +13,7 @@
 #include <flight/FlightActuators.h>
 #include <flight/FlightEnvironment.h>
 #include <flight/FlightFrames.h>
+#include <flight/FlightPropulsion.h>
 #include <flight/components/Aircraft.h>
 
 #include <core/ecs/Query.h>
@@ -90,7 +91,16 @@ namespace mir
         StepActuators(*runtime.config, runtime.controls, runtime.commands, runtime.actuators, dt);
     }
 
-    void FlightStepGate::RunPropulsion(Aircraft &, float) {}
+    void FlightStepGate::RunPropulsion(Aircraft &aircraft, float dt)
+    {
+        AircraftRuntime &runtime = aircraft.runtime;
+        if (runtime.config == nullptr)
+            return;
+
+        StepPropulsion(*runtime.config, runtime, dt);
+        runtime.accumulator.force += runtime.propulsion.force;
+        runtime.accumulator.moment += runtime.propulsion.moment;
+    }
 
     void FlightStepGate::RunLandingGear(Aircraft &, float) {}
 

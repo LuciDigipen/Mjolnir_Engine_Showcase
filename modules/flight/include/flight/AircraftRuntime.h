@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <flight/AircraftConfig.h>
 #include <flight/AerodynamicModel.h>
 
 #include <core/ecs/ComponentFields.h>
@@ -22,8 +23,6 @@
 
 namespace mir
 {
-    struct AircraftConfig;
-
     enum class FlightCommand : uint8_t
     {
         FlapsUp,
@@ -96,6 +95,20 @@ namespace mir
         glm::vec3 moment{0.0f};
     };
 
+    struct EngineState
+    {
+        float rpm = 0.0f;
+        float thrust = 0.0f; // newtons
+    };
+
+    // Fixed capacity keeps AircraftRuntime trivially copyable.
+    struct PropulsionState
+    {
+        EngineState engines[kMaxEngines]{};
+        glm::vec3 force{0.0f};
+        glm::vec3 moment{0.0f};
+    };
+
     struct AircraftRuntime
     {
         AircraftState state;
@@ -104,6 +117,7 @@ namespace mir
         glm::vec3 additionalWind{ 0.0f };
         AirData airData;
         ForceMoment aero;
+        PropulsionState propulsion;
         FlightControls controls;
         FlightCommandQueue commands;
         ActuatorState actuators;
@@ -112,5 +126,7 @@ namespace mir
         const AircraftConfig *config = nullptr;
         // The config already warned about for its missing tier profile.
         const AircraftConfig *aeroMissingConfig = nullptr;
+        // The config the engine rpm was last initialised for.
+        const AircraftConfig *propulsionConfig = nullptr;
     };
 }
