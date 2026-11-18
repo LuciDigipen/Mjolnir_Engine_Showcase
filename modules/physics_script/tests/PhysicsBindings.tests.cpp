@@ -703,15 +703,20 @@ end
 
 function T.OnStart(self, world, entity)
     local ok = true
-    -- a choice from a list, and numbers outside the range the field declares
+    -- choices outside the field's list are refused
     ok = ok and world:set_capsule_axis(entity, 3) == false
     ok = ok and world:set_capsule_axis(entity, 1.5) == false
     ok = ok and world:set_motion(entity, 7) == false
     ok = ok and world:set_shape(entity, -1) == false
-    ok = ok and world:set_mass(entity, -1) == false
-    ok = ok and world:set_mass(entity, 0) == false
-    ok = ok and world:set_restitution(entity, 5) == false
-    ok = ok and world:set_friction(entity, -0.1) == false
+    -- finite numbers outside a clamped field's range are accepted at its boundary
+    ok = ok and world:set_mass(entity, -1) == true
+    ok = ok and math.abs(world:mass(entity) - 0.001) < 0.000001
+    ok = ok and world:set_mass(entity, 0) == true
+    ok = ok and math.abs(world:mass(entity) - 0.001) < 0.000001
+    ok = ok and world:set_restitution(entity, 5) == true
+    ok = ok and world:restitution(entity) == 1.0
+    ok = ok and world:set_friction(entity, -0.1) == true
+    ok = ok and world:friction(entity) == 0.0
     -- and a value inside it is taken
     ok = ok and world:set_mass(entity, 3.0) == true
     ok = ok and world:set_restitution(entity, 0.5) == true
@@ -736,7 +741,7 @@ return T
 )LUA";
 }
 
-TEST_CASE("Field values outside what the field allows are refused", "[script][physics][validation]")
+TEST_CASE("RigidBody field setters reject invalid enums and clamp numeric ranges", "[script][physics][validation]")
 {
     Fixture f(kRanges);
     f.Start();
@@ -746,6 +751,8 @@ TEST_CASE("Field values outside what the field allows are refused", "[script][ph
     CHECK(body.axis == mir::PhysicsAxis::Y);
     CHECK(body.motion == mir::PhysicsMotion::Dynamic);
     CHECK(body.mass == 3.0f);
+    CHECK(body.restitution == 0.5f);
+    CHECK(body.friction == 0.0f);
 }
 
 TEST_CASE("The physics bindings leave the input bridge's world:axis alone", "[script][physics][validation]")
