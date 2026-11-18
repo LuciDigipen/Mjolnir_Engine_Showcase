@@ -216,6 +216,56 @@ TEST_CASE("Surface material packs base color, AO, normals and F0 into three mip 
     }
 }
 
+TEST_CASE("Optional cooked outputs do not log read errors when absent", "[material][cook][logging]")
+{
+    MaterialFixture fixture;
+    const auto out = fs::path(fixture.root.string() + "-logging");
+    const auto result = out / "result.json";
+    const auto captured = fs::path(fixture.root.string() + "-cooker.log");
+    auto run = [&]()
+        {
+            ChildProcess process;
+            REQUIRE(process.Start(GLTF_COOKER_EXE, fixture.Args(out, result), {}, captured));
+            const auto exit = process.Wait();
+            REQUIRE(exit);
+            return *exit;
+        };
+    auto output = [&]()
+        {
+            auto text = ReadText(captured);
+            REQUIRE(text);
+            return *text;
+        };
+
+    REQUIRE(run() == 0);
+    CHECK(output().find("[error]") == std::string::npos);
+    const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(manifest);
+    REQUIRE(manifest->Count() == 4);
+    const auto blob = out / manifest->PathOf(manifest->Entries().front());
+
+    REQUIRE(fs::remove(blob));
+    REQUIRE(run() == 0);
+    CHECK(fs::is_regular_file(blob));
+    CHECK(output().find("[error]") == std::string::npos);
+
+    SECTION("Missing required source files still report errors")
+    {
+        REQUIRE(fs::remove(fixture.root / "textures/base.png"));
+        CHECK(run() != 0);
+        CHECK(output().find("[error]") != std::string::npos);
+        CHECK(output().find("base.png") != std::string::npos);
+    }
+    SECTION("Existing outputs that cannot be read or replaced still report errors")
+    {
+        REQUIRE(fs::remove(blob));
+        REQUIRE(fs::create_directory(blob));
+        CHECK(run() != 0);
+        CHECK(output().find("[error]") != std::string::npos);
+    }
+    CHECK(Json::parse(std::ifstream(result)).at("status") == "failed");
+}
+
 TEST_CASE("Material batches skip unchanged inputs and recook edited sources", "[material][cook][incremental]")
 {
     MaterialFixture fixture;

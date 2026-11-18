@@ -2,7 +2,7 @@
 # INCLUDE_DIR names the public include root, relative to the module; include by default.
 # core uses it to build core_base and core from one folder with two roots
 function(engine_add_module name)
-    cmake_parse_arguments(ARG "" "INCLUDE_DIR" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "INCLUDE_DIR" "PCH_HEADERS" ${ARGN})
     if(NOT ARG_INCLUDE_DIR)
         set(ARG_INCLUDE_DIR include)
     endif()
@@ -13,6 +13,15 @@ function(engine_add_module name)
     add_library(${target})
     add_library(mir::${name} ALIAS ${target})
     target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/${ARG_INCLUDE_DIR})
+
+    # base PCH headers
+    foreach(header IN ITEMS
+            algorithm array cmath cstdint filesystem format functional map memory
+            optional span string string_view system_error unordered_map utility vector
+            ${ARG_PCH_HEADERS})
+        target_precompile_headers(${target} PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:<${header}$<ANGLE-R>>")
+    endforeach()
 
 endfunction()
 

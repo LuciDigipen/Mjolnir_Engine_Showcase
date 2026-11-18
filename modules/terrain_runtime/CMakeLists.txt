@@ -1,4 +1,4 @@
-engine_add_module(terrain_runtime)
+engine_add_module(terrain_runtime PCH_HEADERS glm/glm.hpp)
 
 target_sources(engine_terrain_runtime PRIVATE
     src/terrain_runtime/TerrainGroundBridge.cpp

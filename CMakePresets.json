@@ -44,7 +44,8 @@
             ],
             "generator": "Ninja",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_TESTING": "OFF"
             },
             "condition": {
                 "type": "equals",
@@ -103,12 +104,14 @@
         {
             "name": "windows-msvc-debug",
             "displayName": "Debug",
-            "configurePreset": "windows-msvc-debug"
+            "configurePreset": "windows-msvc-debug",
+            "jobs": 12
         },
         {
             "name": "windows-msvc-release",
             "displayName": "Release",
-            "configurePreset": "windows-msvc-release"
+            "configurePreset": "windows-msvc-release",
+            "jobs": 12
         },
         {
             "name": "windows-msvc-game-debug",

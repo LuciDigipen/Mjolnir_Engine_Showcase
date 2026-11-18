@@ -1,4 +1,4 @@
-﻿engine_add_module(assets)
+﻿engine_add_module(assets PCH_HEADERS nlohmann/json.hpp)
 
 target_sources(engine_assets PRIVATE
     src/assets/AssetBlob.cpp

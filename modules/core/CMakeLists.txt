@@ -3,7 +3,7 @@
 # core_base (include/): log, fs, math, platform. Process-wide, set up in main, and
 # links only third-party code. core (include_ecs/): the ECS, built on core_base. A
 # library linking only core_base cannot find an ECS header
-engine_add_module(core_base)
+engine_add_module(core_base PCH_HEADERS glm/glm.hpp)
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/include/core/EngineVersion.h.in
@@ -38,7 +38,7 @@ if(WIN32)
     target_link_libraries(engine_core_base PRIVATE shell32 ole32)
 endif()
 
-engine_add_module(core INCLUDE_DIR include_ecs)
+engine_add_module(core INCLUDE_DIR include_ecs PCH_HEADERS glm/glm.hpp)
 
 target_sources(engine_core PRIVATE
     src/core/ecs/TransformHierarchy.cpp

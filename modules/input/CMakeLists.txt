@@ -1,4 +1,4 @@
-﻿engine_add_module(input)
+﻿engine_add_module(input PCH_HEADERS nlohmann/json.hpp)
 
 target_link_libraries(engine_input
     PUBLIC mir::core

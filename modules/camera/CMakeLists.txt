@@ -1,4 +1,4 @@
-engine_add_module(camera)
+engine_add_module(camera PCH_HEADERS glm/glm.hpp)
 
 target_link_libraries(engine_camera
     PUBLIC mir::core

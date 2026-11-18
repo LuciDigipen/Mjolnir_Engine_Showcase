@@ -1,4 +1,4 @@
-engine_add_module(particles_gpu)
+engine_add_module(particles_gpu PCH_HEADERS glm/glm.hpp)
 
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 # PUBLIC because the FX registration API uses renderer and core types.

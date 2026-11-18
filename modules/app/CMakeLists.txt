@@ -1,4 +1,4 @@
-engine_add_module(app)
+engine_add_module(app PCH_HEADERS glm/glm.hpp nlohmann/json.hpp)
 
 # PUBLIC: App.h holds every module as a member
 target_link_libraries(engine_app
