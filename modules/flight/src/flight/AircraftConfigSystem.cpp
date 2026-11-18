@@ -65,8 +65,18 @@ namespace mir
                 const uint32_t generation = mStore.Generation();
                 const bool pathChanged = path != std::string_view(aircraft.runtime.appliedConfig);
                 const bool reloaded = aircraft.runtime.configGeneration != generation;
-                if (!pathChanged && !reloaded)
+                const uint32_t editGeneration = mStore.EditGeneration();
+                const bool edited = aircraft.runtime.configEditGeneration != editGeneration;
+                if (!pathChanged && !reloaded && !edited)
                     return;
+
+                aircraft.runtime.configEditGeneration = editGeneration;
+                if (!pathChanged && !reloaded)
+                {
+                    if (aircraft.runtime.config != nullptr)
+                        WriteMassProperties(*aircraft.runtime.config, rigidBody);
+                    return;
+                }
 
                 if (pathChanged)
                     std::memcpy(aircraft.runtime.appliedConfig, aircraft.config,

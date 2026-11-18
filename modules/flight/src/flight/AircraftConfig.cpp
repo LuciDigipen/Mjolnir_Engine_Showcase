@@ -1,7 +1,7 @@
 /**
  * @file AircraftConfig.cpp
  * @author Jackey Cen
- * @brief Parses and decodes the *.aircraft.json configuration asset.
+ * @brief Parses, decodes and writes the *.aircraft.json configuration asset.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -15,10 +15,12 @@
 #include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
 
+#include <charconv>
 #include <cmath>
 #include <format>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace mir
 {
@@ -897,6 +899,167 @@ namespace mir
             }
             return ParseAircraftConfig(AsStringView(root), out, error);
         }
+
+        // Every number is a float widened to double; write the shortest text that reads back as the same float.
+        void ShortenFloats(Json &value)
+        {
+            if (value.is_number_float())
+            {
+                char text[32];
+                const auto written = std::to_chars(text, text + sizeof(text), static_cast<float>(value.get<double>()));
+                double shortest = 0.0;
+                std::from_chars(text, written.ptr, shortest);
+                value = shortest;
+                return;
+            }
+            // A primitive iterates as itself.
+            if (!value.is_structured())
+                return;
+            for (Json &child : value)
+                ShortenFloats(child);
+        }
+
+        Json WriteVector3(const glm::vec3 &value) { return Json::array({ value.x, value.y, value.z }); }
+
+        Json WriteCurve(const std::vector<CurvePoint> &points)
+        {
+            Json curve = Json::array();
+            for (const CurvePoint &point : points)
+                curve.push_back(Json::array({ point.x, point.y }));
+            return curve;
+        }
+
+        Json WriteActuator(const AircraftConfig::Actuator &actuator)
+        {
+            Json out;
+            out["maxDeflectionDeg"] = glm::degrees(actuator.maxDeflection);
+            out["rateDegPerSec"] = glm::degrees(actuator.rate);
+            out["delay"] = actuator.delay;
+            return out;
+        }
+
+        Json WriteActuators(const AircraftConfig::Actuators &actuators)
+        {
+            Json detents = Json::array();
+            for (const float detent : actuators.flaps.detents)
+                detents.push_back(glm::degrees(detent));
+
+            Json out;
+            out["elevator"] = WriteActuator(actuators.elevator);
+            out["aileron"] = WriteActuator(actuators.aileron);
+            out["rudder"] = WriteActuator(actuators.rudder);
+            out["flaps"] = Json{ { "detentsDeg", detents },
+                { "rateDegPerSec", glm::degrees(actuators.flaps.rate) } };
+            out["trim"] = Json{ { "stepDeg", glm::degrees(actuators.trim.step) },
+                { "maxDeg", glm::degrees(actuators.trim.max) } };
+            return out;
+        }
+
+        Json WriteEngines(const std::vector<AircraftConfig::Engine> &engines)
+        {
+            Json out = Json::array();
+            for (const AircraftConfig::Engine &engine : engines)
+            {
+                Json entry;
+                entry["position"] = WriteVector3(engine.position);
+                entry["direction"] = WriteVector3(engine.direction);
+                entry["idleRpm"] = engine.idleRpm;
+                entry["maxRpm"] = engine.maxRpm;
+                entry["rpmTau"] = engine.rpmTau;
+                entry["staticThrust"] = WriteCurve(engine.staticThrust);
+                entry["speedFactor"] = WriteCurve(engine.speedFactor);
+                out.push_back(std::move(entry));
+            }
+            return out;
+        }
+
+        Json WriteGear(const std::vector<AircraftConfig::Gear> &gear)
+        {
+            Json out = Json::array();
+            for (const AircraftConfig::Gear &point : gear)
+            {
+                Json entry;
+                entry["name"] = point.name;
+                entry["mount"] = WriteVector3(point.mount);
+                entry["restLength"] = point.restLength;
+                entry["stiffness"] = point.stiffness;
+                entry["damping"] = point.damping;
+                entry["rollingFriction"] = point.rollingFriction;
+                entry["sideFriction"] = point.sideFriction;
+                entry["brake"] = point.brake;
+                entry["maxSteerDeg"] = glm::degrees(point.maxSteer);
+                out.push_back(std::move(entry));
+            }
+            return out;
+        }
+
+        Json WriteL1(const L1Profile &profile)
+        {
+            Json out;
+            out["CL"] = profile.CL;
+            out["CD"] = profile.CD;
+            out["Ka"] = profile.Ka;
+            out["Ke"] = profile.Ke;
+            out["Kr"] = profile.Kr;
+            out["Kp"] = profile.Kp;
+            out["Kq"] = profile.Kq;
+            out["Kn"] = profile.Kn;
+            return out;
+        }
+
+        Json WriteL2(const L2Profile &profile)
+        {
+            Json out;
+            out["CL0"] = profile.CL0;
+            out["CLalpha"] = profile.CLalpha;
+            out["CD0"] = profile.CD0;
+            out["k"] = profile.k;
+            out["Cm0"] = profile.Cm0;
+            out["Cmalpha"] = profile.Cmalpha;
+            out["Cmq"] = profile.Cmq;
+            out["Cmde"] = profile.Cmde;
+            out["CYbeta"] = profile.CYbeta;
+            out["CYdr"] = profile.CYdr;
+            out["Clbeta"] = profile.Clbeta;
+            out["Clp"] = profile.Clp;
+            out["Clda"] = profile.Clda;
+            out["Cnbeta"] = profile.Cnbeta;
+            out["Cnr"] = profile.Cnr;
+            out["Cndr"] = profile.Cndr;
+            out["Cnda"] = profile.Cnda;
+            out["minAirspeed"] = profile.minAirspeed;
+
+            Json postStall = Json::array();
+            for (const L2PostStallPoint &point : profile.stall.postStall)
+                postStall.push_back(
+                    Json::array({ glm::degrees(point.alpha), point.CL, point.CD, point.Cm }));
+
+            Json stall;
+            stall["positiveDeg"] = glm::degrees(profile.stall.positive);
+            stall["negativeDeg"] = glm::degrees(profile.stall.negative);
+            stall["blendDeg"] = glm::degrees(profile.stall.blend);
+            stall["controlScale"] = profile.stall.controlScale;
+            stall["stabilityScale"] = profile.stall.stabilityScale;
+            stall["postStall"] = std::move(postStall);
+            out["stall"] = std::move(stall);
+
+            Json flaps = Json::array();
+            for (const L2FlapPoint &point : profile.flaps)
+                flaps.push_back(Json::array(
+                    { glm::degrees(point.flap), point.dCL, point.dCD, point.dCm, glm::degrees(point.stallShift) }));
+            out["flaps"] = std::move(flaps);
+            return out;
+        }
+
+        Json WriteAero(const AerodynamicProfile &profile)
+        {
+            Json out;
+            if (profile.l1.has_value())
+                out["L1"] = WriteL1(*profile.l1);
+            if (profile.l2.has_value())
+                out["L2"] = WriteL2(*profile.l2);
+            return out;
+        }
     }
 
     bool ParseAircraftConfig(std::string_view json, AircraftConfig &out, std::string &error)
@@ -919,6 +1082,39 @@ namespace mir
         }
 
         return ParseDocument(document, out, error);
+    }
+
+    std::string SerializeAircraftConfig(const AircraftConfig &config)
+    {
+        Json document;
+        document["version"] = config.version;
+        document["mass"] = config.mass;
+        document["inertia"] = Json{ { "diagonal", WriteVector3(config.inertiaDiagonal) },
+            { "products", WriteVector3(config.inertiaProducts) } };
+        document["centerOfMass"] = WriteVector3(config.centerOfMass);
+        document["reference"] = Json{ { "area", config.reference.area }, { "span", config.reference.span },
+            { "chord", config.reference.chord } };
+        document["camera"] = Json{ { "eye", WriteVector3(config.camera.eye) },
+            { "chaseDistance", config.camera.chaseDistance }, { "chaseHeight", config.camera.chaseHeight } };
+
+        if (!config.nodes.empty())
+        {
+            Json nodes = Json::object();
+            for (const AircraftConfig::Node &node : config.nodes)
+                nodes[node.component] = node.model;
+            document["nodes"] = std::move(nodes);
+        }
+
+        document["throttleRate"] = config.throttleRate;
+        document["stallWarningMarginDeg"] = glm::degrees(config.stallWarningMargin);
+        document["actuators"] = WriteActuators(config.actuators);
+        document["engines"] = WriteEngines(config.engines);
+        document["gear"] = WriteGear(config.gear);
+        if (config.aero.l1.has_value() || config.aero.l2.has_value())
+            document["aero"] = WriteAero(config.aero);
+
+        ShortenFloats(document);
+        return document.dump(2);
     }
 
     const AssetDecoder<AircraftConfig> &AircraftConfigDecoder()

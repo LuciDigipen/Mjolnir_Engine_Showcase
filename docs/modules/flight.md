@@ -24,6 +24,11 @@ system re-applies a config whose generation is newer than the aircraft's and cle
 propulsion, aerodynamic-warning and camera stages compare, so they initialise again; actuator deflections,
 throttle and the flap detent are kept.
 
+The store also carries live tuning. `Edit` returns the decoded object, the one every aircraft on that path
+shares, so a panel edit reaches them all at once; `MarkEdited` sets the path unsaved and bumps `EditGeneration`,
+so the next fixed step re-applies the mass properties. `SerializeAircraftConfig` writes a config back in the parser's own
+schema, and a save plus the resulting hot reload keeps every value.
+
 `FlightStepGate` is the per-step pipeline. It reads the body state before the physics step and skips any
 aircraft whose config did not load. After the step it re-reads the body, recomputes the air data with the wind
 that step used, raycasts the ground and fills `AircraftRuntime::telemetry`; the post-step body state never
@@ -68,10 +73,11 @@ the reset, and expose the published touchdown list and the held controls with th
 cross into Lua in degrees; see [script.md](script.md#flight).
 
 `modules/flight_debug` draws the `Flight Debug` Tools panel over the active Play world: the aircraft list, the
-configuration and its load state, the tier switch and the live telemetry and body-frame forces by source.
-`FlightDebugToggle` (F3) shows and hides it; an editor build shows it only while Play is running, while a game
-build keeps it as a developer toggle. The panel reads the Play world and writes only its `Aircraft::tier`;
-see [flight_debug.md](flight_debug.md).
+configuration and its load state, the tier switch, the live telemetry and body-frame forces by source, and the
+live edit and save controls of the store the Play world's `FlightModule` owns. `FlightDebugToggle` (F3) shows and
+hides it; an editor build shows it only while Play is running, while a game build keeps it as a developer toggle
+and disables saving. The panel writes `Aircraft::tier` and the shared `AircraftConfig` for the edited path; see
+[flight_debug.md](flight_debug.md).
 
 ```cpp
 #if MIR_WITH_EDITOR
@@ -87,8 +93,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | Type | Header | Role |
 |---|---|---|
 | `Aircraft`, `AircraftRuntime`, `AerodynamicTier` | `<flight/components/Aircraft.h>` | component and its transient per-step state |
-| `AircraftConfig`, `ParseAircraftConfig`, `AircraftConfigDecoder` | `<flight/AircraftConfig.h>` | the file's values, its parser and the raw-blob decoder |
-| `AircraftConfigStore`, `MakeAircraftConfigSource` | `<flight/AircraftConfigStore.h>` | cached decode by path, fed by the asset cache |
+| `AircraftConfig`, `ParseAircraftConfig`, `SerializeAircraftConfig`, `AircraftConfigDecoder` | `<flight/AircraftConfig.h>` | the file's values, its parser, its writer and the raw-blob decoder |
+| `AircraftConfigStore`, `AircraftConfigStoreRef`, `MakeAircraftConfigSource` | `<flight/AircraftConfigStore.h>` | cached decode by path, unsaved edits, its World resource and the source fed by the asset cache |
 | `AircraftConfigSystem`, `WriteMassProperties` | `<flight/AircraftConfigSystem.h>` | FixedUpdate system that writes mass properties |
 | `FlightModule` | `<flight/FlightModule.h>` | registers components, the input system, the config system and the step gate |
 | `FlightStepGate` | `<flight/FlightStepGate.h>` | the before/after step pipeline |
@@ -240,6 +246,26 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   components and `CutCamera` are used. No flight public header includes a camera or renderer header; the camera
   type is only forward-declared there.
 
+## Live tuning and save (#460)
+
+`FlightModule` emplaces `AircraftConfigStoreRef`, a pointer to its store, so a tool that draws a World can edit
+the same store the aircraft fly from. The panel asks for the selected aircraft's path and gets a mutable
+`AircraftConfig` from `Edit`, or null when the path did not load.
+
+- An edit changes the shared object, so every aircraft on that file sees it; there is no per-aircraft copy.
+- Every change calls `MarkEdited`, which sets the path dirty and bumps `EditGeneration`. On the next fixed
+  step `AircraftConfigSystem` re-applies the mass properties only; engine RPM, the camera view and the
+  actuator state are kept, so tuning in flight does not cut the engine or the view. A reload commit bumps
+  `Generation` instead and re-initialises those stages.
+- `IsDirty` and `ClearDirty` are what the panel shows as its `* unsaved` marker.
+- A save is a full rewrite: `SerializeAircraftConfig` emits every section the parser reads, with angles back in
+  the `*Deg` keys, so the writer never has to preserve the file's own formatting. Each number is written as the
+  shortest text that reads back as the same float, so a save adds no widening noise. The panel writes the result
+  through a temp file beside the target and renames it, then clears the dirty flag; the editor's import and the
+  hot reload then carry it into the running Play world.
+- A `CommitReload` over a dirty path takes the file's content like any other path, clears the dirty flag and
+  keeps the path in `TakeOverwrittenEdits`; a caller takes that list once and shows it as an overwrite notice.
+
 ## State
 
 *As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
@@ -250,6 +276,8 @@ state and air data, and adds the propulsion, the gear and the selected tier's ae
 respawns an aircraft. `FlightCameraSystem` wires the chase and cockpit cameras from the config and the camera
 toggle switches between them. L3 yields zero with a warning until its issue lands. Editor builds hot-reload an
 edited config through the reload stages; other builds decode once and keep the result for the module's lifetime.
+The store also holds live tuning: an edit re-applies on the next fixed step, a save rewrites the source file and
+the next reload replaces any unsaved edits it finds.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
@@ -272,7 +300,9 @@ from the config, a re-run after the config changes, the toggle both ways with it
 missing one of the two cameras) and `FlightStepGate` (control-moment signs, state from the step, detach), and
 `HotReload` (an in-place swap with the mass re-applied after a step, a veto that leaves the old body and an
 abort, a cached failure that becomes valid, the generation only on commit, no stages without a factory, the
-camera setup re-run).
+camera setup re-run), and `LiveTuning` (the serializer round trip of a full config, an edited mass re-applied
+after one fixed step through the World's store, dirty tracking and the generation, a commit that replaces an
+unsaved path and reports it).
 
 ## Flight input
 

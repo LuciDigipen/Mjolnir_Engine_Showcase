@@ -12,6 +12,7 @@
 #include <flight/AircraftRuntime.h>
 #include <flight/components/Aircraft.h>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,16 @@ namespace mir
         std::string label;
         std::string value;
         bool warning = false;
+    };
+
+    // One editable scalar: its section, its label, the config accessors and whether it holds radians.
+    struct FlightDebugField
+    {
+        std::string group;
+        std::string label;
+        std::function<float(const AircraftConfig &)> get;
+        std::function<void(AircraftConfig &, float)> set;
+        bool degrees = false;
     };
 
     // True when the config carries the tier's aerodynamic profile.
@@ -38,4 +49,9 @@ namespace mir
     std::vector<FlightDebugRow> BuildFlightDebugConfigRows(const AircraftConfig &config);
     std::vector<FlightDebugRow> BuildFlightDebugTelemetryRows(const AircraftRuntime &runtime);
     std::vector<FlightDebugRow> BuildFlightDebugForceRows(const AircraftRuntime &runtime);
+
+    // Every scalar the window can edit, in display order; engines and gear points appear per index.
+    std::vector<FlightDebugField> BuildFlightDebugEditableFields(const AircraftConfig &config);
+    // The read-only curves and tables, with their sizes.
+    std::vector<FlightDebugRow> BuildFlightDebugTableRows(const AircraftConfig &config);
 }

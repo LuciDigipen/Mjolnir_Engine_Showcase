@@ -13,12 +13,15 @@
 
 #include <format>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mir
 {
     namespace
     {
+        constexpr char kAxisNames[] = "XYZ";
+
         std::string FormatVec3(const glm::vec3 &value, const char *unit = "")
         {
             const std::string numbers = std::format("({:.2f}, {:.2f}, {:.2f})", value.x, value.y, value.z);
@@ -40,6 +43,46 @@ namespace mir
                 value += std::format("{:.1f}", FlightDebugDegrees(detent));
             }
             return value.empty() ? "none" : value + " deg";
+        }
+
+        void AddScalar(std::vector<FlightDebugField> &fields, std::string group, std::string label,
+            std::function<float(const AircraftConfig &)> get, std::function<void(AircraftConfig &, float)> set,
+            bool degrees = false)
+        {
+            fields.push_back(
+                FlightDebugField{ std::move(group), std::move(label), std::move(get), std::move(set), degrees });
+        }
+
+        void AddVector(std::vector<FlightDebugField> &fields, const std::string &group, const std::string &label,
+            const std::function<glm::vec3(const AircraftConfig &)> &get,
+            const std::function<void(AircraftConfig &, const glm::vec3 &)> &set)
+        {
+            for (std::size_t axis = 0; axis < 3; ++axis)
+            {
+                AddScalar(fields, group, std::format("{} {}", label, kAxisNames[axis]),
+                    [get, axis](const AircraftConfig &config) { return get(config)[axis]; },
+                    [get, set, axis](AircraftConfig &config, float value)
+                    {
+                        glm::vec3 vector = get(config);
+                        vector[axis] = value;
+                        set(config, vector);
+                    });
+            }
+        }
+
+        void AddActuator(std::vector<FlightDebugField> &fields, const std::string &group, const std::string &label,
+            AircraftConfig::Actuator AircraftConfig::Actuators::*member)
+        {
+            AddScalar(fields, group, label + " travel",
+                [member](const AircraftConfig &config) { return (config.actuators.*member).maxDeflection; },
+                [member](AircraftConfig &config, float value) { (config.actuators.*member).maxDeflection = value; },
+                true);
+            AddScalar(fields, group, label + " rate",
+                [member](const AircraftConfig &config) { return (config.actuators.*member).rate; },
+                [member](AircraftConfig &config, float value) { (config.actuators.*member).rate = value; }, true);
+            AddScalar(fields, group, label + " delay",
+                [member](const AircraftConfig &config) { return (config.actuators.*member).delay; },
+                [member](AircraftConfig &config, float value) { (config.actuators.*member).delay = value; });
         }
     }
 
@@ -140,6 +183,191 @@ namespace mir
         rows.push_back({ "Propulsion moment", FormatVec3(runtime.propulsion.moment, "N m") });
         rows.push_back({ "Gear force", FormatVec3(runtime.gear.force, "N") });
         rows.push_back({ "Gear moment", FormatVec3(runtime.gear.moment, "N m") });
+        return rows;
+    }
+
+    std::vector<FlightDebugField> BuildFlightDebugEditableFields(const AircraftConfig &config)
+    {
+        std::vector<FlightDebugField> fields;
+
+        AddScalar(fields, "Body", "Mass", [](const AircraftConfig &c) { return c.mass; },
+            [](AircraftConfig &c, float value) { c.mass = value; });
+        AddVector(fields, "Body", "Inertia diagonal", [](const AircraftConfig &c) { return c.inertiaDiagonal; },
+            [](AircraftConfig &c, const glm::vec3 &value) { c.inertiaDiagonal = value; });
+        AddVector(fields, "Body", "Inertia product", [](const AircraftConfig &c) { return c.inertiaProducts; },
+            [](AircraftConfig &c, const glm::vec3 &value) { c.inertiaProducts = value; });
+        AddVector(fields, "Body", "Centre of mass", [](const AircraftConfig &c) { return c.centerOfMass; },
+            [](AircraftConfig &c, const glm::vec3 &value) { c.centerOfMass = value; });
+        AddScalar(fields, "Body", "Reference area", [](const AircraftConfig &c) { return c.reference.area; },
+            [](AircraftConfig &c, float value) { c.reference.area = value; });
+        AddScalar(fields, "Body", "Reference span", [](const AircraftConfig &c) { return c.reference.span; },
+            [](AircraftConfig &c, float value) { c.reference.span = value; });
+        AddScalar(fields, "Body", "Reference chord", [](const AircraftConfig &c) { return c.reference.chord; },
+            [](AircraftConfig &c, float value) { c.reference.chord = value; });
+        AddScalar(fields, "Body", "Throttle rate", [](const AircraftConfig &c) { return c.throttleRate; },
+            [](AircraftConfig &c, float value) { c.throttleRate = value; });
+        AddScalar(fields, "Body", "Stall warning margin",
+            [](const AircraftConfig &c) { return c.stallWarningMargin; },
+            [](AircraftConfig &c, float value) { c.stallWarningMargin = value; }, true);
+
+        AddVector(fields, "Camera", "Eye", [](const AircraftConfig &c) { return c.camera.eye; },
+            [](AircraftConfig &c, const glm::vec3 &value) { c.camera.eye = value; });
+        AddScalar(fields, "Camera", "Chase distance",
+            [](const AircraftConfig &c) { return c.camera.chaseDistance; },
+            [](AircraftConfig &c, float value) { c.camera.chaseDistance = value; });
+        AddScalar(fields, "Camera", "Chase height", [](const AircraftConfig &c) { return c.camera.chaseHeight; },
+            [](AircraftConfig &c, float value) { c.camera.chaseHeight = value; });
+
+        AddActuator(fields, "Actuators", "Elevator", &AircraftConfig::Actuators::elevator);
+        AddActuator(fields, "Actuators", "Aileron", &AircraftConfig::Actuators::aileron);
+        AddActuator(fields, "Actuators", "Rudder", &AircraftConfig::Actuators::rudder);
+        AddScalar(fields, "Actuators", "Flap rate", [](const AircraftConfig &c) { return c.actuators.flaps.rate; },
+            [](AircraftConfig &c, float value) { c.actuators.flaps.rate = value; }, true);
+        AddScalar(fields, "Actuators", "Trim step", [](const AircraftConfig &c) { return c.actuators.trim.step; },
+            [](AircraftConfig &c, float value) { c.actuators.trim.step = value; }, true);
+        AddScalar(fields, "Actuators", "Trim max", [](const AircraftConfig &c) { return c.actuators.trim.max; },
+            [](AircraftConfig &c, float value) { c.actuators.trim.max = value; }, true);
+
+        for (std::size_t i = 0; i < config.engines.size(); ++i)
+        {
+            const std::string group = std::format("Engine {}", i + 1);
+            AddScalar(fields, group, "Idle rpm",
+                [i](const AircraftConfig &c) { return c.engines[i].idleRpm; },
+                [i](AircraftConfig &c, float value) { c.engines[i].idleRpm = value; });
+            AddScalar(fields, group, "Max rpm", [i](const AircraftConfig &c) { return c.engines[i].maxRpm; },
+                [i](AircraftConfig &c, float value) { c.engines[i].maxRpm = value; });
+            AddScalar(fields, group, "rpm tau", [i](const AircraftConfig &c) { return c.engines[i].rpmTau; },
+                [i](AircraftConfig &c, float value) { c.engines[i].rpmTau = value; });
+            AddVector(fields, group, "Position",
+                [i](const AircraftConfig &c) { return c.engines[i].position; },
+                [i](AircraftConfig &c, const glm::vec3 &value) { c.engines[i].position = value; });
+            AddVector(fields, group, "Direction",
+                [i](const AircraftConfig &c) { return c.engines[i].direction; },
+                [i](AircraftConfig &c, const glm::vec3 &value) { c.engines[i].direction = value; });
+        }
+
+        for (std::size_t i = 0; i < config.gear.size(); ++i)
+        {
+            const std::string group = std::format("Gear {}", i + 1);
+            AddVector(fields, group, "Mount", [i](const AircraftConfig &c) { return c.gear[i].mount; },
+                [i](AircraftConfig &c, const glm::vec3 &value) { c.gear[i].mount = value; });
+            AddScalar(fields, group, "Rest length", [i](const AircraftConfig &c) { return c.gear[i].restLength; },
+                [i](AircraftConfig &c, float value) { c.gear[i].restLength = value; });
+            AddScalar(fields, group, "Stiffness", [i](const AircraftConfig &c) { return c.gear[i].stiffness; },
+                [i](AircraftConfig &c, float value) { c.gear[i].stiffness = value; });
+            AddScalar(fields, group, "Damping", [i](const AircraftConfig &c) { return c.gear[i].damping; },
+                [i](AircraftConfig &c, float value) { c.gear[i].damping = value; });
+            AddScalar(fields, group, "Rolling friction",
+                [i](const AircraftConfig &c) { return c.gear[i].rollingFriction; },
+                [i](AircraftConfig &c, float value) { c.gear[i].rollingFriction = value; });
+            AddScalar(fields, group, "Side friction",
+                [i](const AircraftConfig &c) { return c.gear[i].sideFriction; },
+                [i](AircraftConfig &c, float value) { c.gear[i].sideFriction = value; });
+            AddScalar(fields, group, "Brake", [i](const AircraftConfig &c) { return c.gear[i].brake; },
+                [i](AircraftConfig &c, float value) { c.gear[i].brake = value; });
+            AddScalar(fields, group, "Max steer", [i](const AircraftConfig &c) { return c.gear[i].maxSteer; },
+                [i](AircraftConfig &c, float value) { c.gear[i].maxSteer = value; }, true);
+        }
+
+        if (config.aero.l1.has_value())
+        {
+            AddScalar(fields, "Aero L1", "CL", [](const AircraftConfig &c) { return c.aero.l1->CL; },
+                [](AircraftConfig &c, float value) { c.aero.l1->CL = value; });
+            AddScalar(fields, "Aero L1", "CD", [](const AircraftConfig &c) { return c.aero.l1->CD; },
+                [](AircraftConfig &c, float value) { c.aero.l1->CD = value; });
+            AddScalar(fields, "Aero L1", "Ka", [](const AircraftConfig &c) { return c.aero.l1->Ka; },
+                [](AircraftConfig &c, float value) { c.aero.l1->Ka = value; });
+            AddScalar(fields, "Aero L1", "Ke", [](const AircraftConfig &c) { return c.aero.l1->Ke; },
+                [](AircraftConfig &c, float value) { c.aero.l1->Ke = value; });
+            AddScalar(fields, "Aero L1", "Kr", [](const AircraftConfig &c) { return c.aero.l1->Kr; },
+                [](AircraftConfig &c, float value) { c.aero.l1->Kr = value; });
+            AddScalar(fields, "Aero L1", "Kp", [](const AircraftConfig &c) { return c.aero.l1->Kp; },
+                [](AircraftConfig &c, float value) { c.aero.l1->Kp = value; });
+            AddScalar(fields, "Aero L1", "Kq", [](const AircraftConfig &c) { return c.aero.l1->Kq; },
+                [](AircraftConfig &c, float value) { c.aero.l1->Kq = value; });
+            AddScalar(fields, "Aero L1", "Kn", [](const AircraftConfig &c) { return c.aero.l1->Kn; },
+                [](AircraftConfig &c, float value) { c.aero.l1->Kn = value; });
+        }
+
+        if (config.aero.l2.has_value())
+        {
+            AddScalar(fields, "Aero L2", "CL0", [](const AircraftConfig &c) { return c.aero.l2->CL0; },
+                [](AircraftConfig &c, float value) { c.aero.l2->CL0 = value; });
+            AddScalar(fields, "Aero L2", "CLalpha", [](const AircraftConfig &c) { return c.aero.l2->CLalpha; },
+                [](AircraftConfig &c, float value) { c.aero.l2->CLalpha = value; });
+            AddScalar(fields, "Aero L2", "CD0", [](const AircraftConfig &c) { return c.aero.l2->CD0; },
+                [](AircraftConfig &c, float value) { c.aero.l2->CD0 = value; });
+            AddScalar(fields, "Aero L2", "k", [](const AircraftConfig &c) { return c.aero.l2->k; },
+                [](AircraftConfig &c, float value) { c.aero.l2->k = value; });
+            AddScalar(fields, "Aero L2", "Cm0", [](const AircraftConfig &c) { return c.aero.l2->Cm0; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cm0 = value; });
+            AddScalar(fields, "Aero L2", "Cmalpha", [](const AircraftConfig &c) { return c.aero.l2->Cmalpha; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cmalpha = value; });
+            AddScalar(fields, "Aero L2", "Cmq", [](const AircraftConfig &c) { return c.aero.l2->Cmq; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cmq = value; });
+            AddScalar(fields, "Aero L2", "Cmde", [](const AircraftConfig &c) { return c.aero.l2->Cmde; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cmde = value; });
+            AddScalar(fields, "Aero L2", "CYbeta", [](const AircraftConfig &c) { return c.aero.l2->CYbeta; },
+                [](AircraftConfig &c, float value) { c.aero.l2->CYbeta = value; });
+            AddScalar(fields, "Aero L2", "CYdr", [](const AircraftConfig &c) { return c.aero.l2->CYdr; },
+                [](AircraftConfig &c, float value) { c.aero.l2->CYdr = value; });
+            AddScalar(fields, "Aero L2", "Clbeta", [](const AircraftConfig &c) { return c.aero.l2->Clbeta; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Clbeta = value; });
+            AddScalar(fields, "Aero L2", "Clp", [](const AircraftConfig &c) { return c.aero.l2->Clp; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Clp = value; });
+            AddScalar(fields, "Aero L2", "Clda", [](const AircraftConfig &c) { return c.aero.l2->Clda; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Clda = value; });
+            AddScalar(fields, "Aero L2", "Cnbeta", [](const AircraftConfig &c) { return c.aero.l2->Cnbeta; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cnbeta = value; });
+            AddScalar(fields, "Aero L2", "Cnr", [](const AircraftConfig &c) { return c.aero.l2->Cnr; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cnr = value; });
+            AddScalar(fields, "Aero L2", "Cndr", [](const AircraftConfig &c) { return c.aero.l2->Cndr; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cndr = value; });
+            AddScalar(fields, "Aero L2", "Cnda", [](const AircraftConfig &c) { return c.aero.l2->Cnda; },
+                [](AircraftConfig &c, float value) { c.aero.l2->Cnda = value; });
+            AddScalar(fields, "Aero L2", "Min airspeed",
+                [](const AircraftConfig &c) { return c.aero.l2->minAirspeed; },
+                [](AircraftConfig &c, float value) { c.aero.l2->minAirspeed = value; });
+
+            AddScalar(fields, "Aero L2 stall", "Positive",
+                [](const AircraftConfig &c) { return c.aero.l2->stall.positive; },
+                [](AircraftConfig &c, float value) { c.aero.l2->stall.positive = value; }, true);
+            AddScalar(fields, "Aero L2 stall", "Negative",
+                [](const AircraftConfig &c) { return c.aero.l2->stall.negative; },
+                [](AircraftConfig &c, float value) { c.aero.l2->stall.negative = value; }, true);
+            AddScalar(fields, "Aero L2 stall", "Blend", [](const AircraftConfig &c) { return c.aero.l2->stall.blend; },
+                [](AircraftConfig &c, float value) { c.aero.l2->stall.blend = value; }, true);
+            AddScalar(fields, "Aero L2 stall", "Control scale",
+                [](const AircraftConfig &c) { return c.aero.l2->stall.controlScale; },
+                [](AircraftConfig &c, float value) { c.aero.l2->stall.controlScale = value; });
+            AddScalar(fields, "Aero L2 stall", "Stability scale",
+                [](const AircraftConfig &c) { return c.aero.l2->stall.stabilityScale; },
+                [](AircraftConfig &c, float value) { c.aero.l2->stall.stabilityScale = value; });
+        }
+
+        return fields;
+    }
+
+    std::vector<FlightDebugRow> BuildFlightDebugTableRows(const AircraftConfig &config)
+    {
+        std::vector<FlightDebugRow> rows;
+        rows.push_back({ "Flap detents", std::format("{} detents", config.actuators.flaps.detents.size()) });
+
+        for (std::size_t i = 0; i < config.engines.size(); ++i)
+        {
+            rows.push_back({ std::format("Engine {} static thrust", i + 1),
+                std::format("{} points", config.engines[i].staticThrust.size()) });
+            rows.push_back({ std::format("Engine {} speed factor", i + 1),
+                std::format("{} points", config.engines[i].speedFactor.size()) });
+        }
+
+        if (config.aero.l2.has_value())
+        {
+            rows.push_back({ "L2 post-stall", std::format("{} rows", config.aero.l2->stall.postStall.size()) });
+            rows.push_back({ "L2 flaps", std::format("{} rows", config.aero.l2->flaps.size()) });
+        }
+
+        rows.push_back({ "Nodes", std::format("{} entries", config.nodes.size()) });
         return rows;
     }
 }

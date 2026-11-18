@@ -1,7 +1,7 @@
 /**
  * @file AircraftConfigStore.cpp
  * @author Jackey Cen
- * @brief Decodes each aircraft configuration path once and keeps the result.
+ * @brief Decodes each aircraft configuration path once, keeps the result and tracks unsaved edits.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -60,6 +60,32 @@ namespace mir
         return decoded;
     }
 
+    AircraftConfig *AircraftConfigStore::Edit(std::string_view path)
+    {
+        const auto found = mDecoded.find(std::string(path));
+        return found == mDecoded.end() ? nullptr : found->second.get();
+    }
+
+    void AircraftConfigStore::MarkEdited(std::string_view path)
+    {
+        mDirty.emplace(std::string(path));
+        ++mEditGeneration;
+    }
+
+    bool AircraftConfigStore::IsDirty(std::string_view path) const
+    {
+        return mDirty.contains(std::string(path));
+    }
+
+    void AircraftConfigStore::ClearDirty(std::string_view path) { mDirty.erase(std::string(path)); }
+
+    std::vector<std::string> AircraftConfigStore::TakeOverwrittenEdits()
+    {
+        std::vector<std::string> taken = std::move(mOverwritten);
+        mOverwritten.clear();
+        return taken;
+    }
+
     void AircraftConfigStore::PrepareReload(Source candidate)
     {
         mStaged.clear();
@@ -87,6 +113,8 @@ namespace mir
     {
         for (auto &[path, staged] : mStaged)
         {
+            if (mDirty.erase(path) != 0)
+                mOverwritten.push_back(path);
             if (const auto found = mDecoded.find(path); found != mDecoded.end())
             {
                 *found->second = std::move(staged);

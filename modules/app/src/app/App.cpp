@@ -91,6 +91,17 @@ namespace mir
             return project.mRootDir / "assets" / std::string(kPrefabDirectoryName);
         }
 
+        // Where the source assets live; the Flight Debug panel saves tuning there and only an editor build edits.
+        std::string SourceAssetsRoot(const GameProject &project)
+        {
+        #if MIR_WITH_EDITOR
+            return project.mAssetsDir.string();
+        #else
+            (void)project;
+            return {};
+        #endif
+        }
+
         // A game the build left out, as CMake does while its LFS files are pointers, has
         // source assets but none cooked: say so once, before each entity reports its own
         void ReportUncookedGame(const GameProject &project, const AssetManifest &manifest)
@@ -296,7 +307,7 @@ namespace mir
             mParticlesGpu, mRenderer.Rendering()),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
-        mFlightDebug(Context(), mImGui),
+        mFlightDebug(Context(), mImGui, SourceAssetsRoot(mProject)),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
         mWorldState.gameShell.SetControlsOptions(&mControlsOptions);

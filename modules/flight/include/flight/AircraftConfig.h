@@ -121,5 +121,8 @@ namespace mir
     // On failure error is "<json path>: <reason>", or the parser message for malformed JSON.
     bool ParseAircraftConfig(std::string_view json, AircraftConfig &out, std::string &error);
 
+    // Pretty-printed JSON in the parser's schema, with every angle in degrees.
+    std::string SerializeAircraftConfig(const AircraftConfig &config);
+
     const AssetDecoder<AircraftConfig> &AircraftConfigDecoder();
 }

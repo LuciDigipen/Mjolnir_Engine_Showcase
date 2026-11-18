@@ -55,6 +55,8 @@ namespace mir
         if (!context.world.TryResource<FlightEnvironment>())
             context.world.EmplaceResource<FlightEnvironment>();
 
+        context.world.EmplaceResource<AircraftConfigStoreRef>(AircraftConfigStoreRef{ &mStore });
+
         PhysicsStepGates *gates = context.world.TryResource<PhysicsStepGates>();
         if (!gates)
             gates = &context.world.EmplaceResource<PhysicsStepGates>();
@@ -65,5 +67,6 @@ namespace mir
     {
         if (PhysicsStepGates *gates = mWorld->TryResource<PhysicsStepGates>())
             std::erase(gates->mGates, static_cast<PhysicsStepGate *>(&mGate));
+        mWorld->RemoveResource<AircraftConfigStoreRef>();
     }
 }

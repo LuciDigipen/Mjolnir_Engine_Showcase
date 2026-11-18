@@ -10,6 +10,7 @@ engine_add_module_tests(flight
     FlightStepGate.tests.cpp
     HotReload.tests.cpp
     LandingGear.tests.cpp
+    LiveTuning.tests.cpp
     Propulsion.tests.cpp
     Telemetry.tests.cpp
 )

@@ -12,6 +12,9 @@
 #include <core/ecs/Entity.h>
 #include <core/ecs/ModuleContext.h>
 
+#include <string>
+#include <vector>
+
 namespace mir
 {
     class ImGuiModule;
@@ -20,7 +23,8 @@ namespace mir
     class FlightDebugModule
     {
     public:
-        FlightDebugModule(ModuleContext context, ImGuiModule &imgui);
+        // The source assets root is where Save writes; a non-editor build passes it empty.
+        FlightDebugModule(ModuleContext context, ImGuiModule &imgui, std::string sourceAssetsRoot = {});
         ~FlightDebugModule();
 
         FlightDebugModule(const FlightDebugModule &) = delete;
@@ -30,9 +34,13 @@ namespace mir
 
     private:
         void Draw();
+        void CollectOverwrittenEdits();
 
         World *mAuthoringWorld;
         World *mActiveWorld;
+        std::string mSourceAssetsRoot;
+        std::string mSaveError;
+        std::vector<std::string> mOverwrittenEdits;
         bool mPlayWorldActive = false;
         bool mVisible = false;
         Entity mSelectedAircraft = kNullEntity;

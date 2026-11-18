@@ -191,6 +191,8 @@ namespace mir
         const AircraftConfig *config = nullptr;
         // The store generation the config was applied with.
         uint32_t configGeneration = 0;
+        // The store edit generation the mass properties were written for.
+        uint32_t configEditGeneration = 0;
         // The config already warned about for its missing tier profile.
         const AircraftConfig *aeroMissingConfig = nullptr;
         // The config the engine rpm was last initialised for.

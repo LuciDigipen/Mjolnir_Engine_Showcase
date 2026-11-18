@@ -3,6 +3,7 @@ engine_add_module(flight_debug)
 target_sources(engine_flight_debug PRIVATE
     src/flight_debug/FlightDebugModule.cpp
     src/flight_debug/FlightDebugRows.cpp
+    src/flight_debug/FlightDebugSaving.cpp
 )
 
 # A Tools drawer over the Play world; imgui stays private, so no ImGui type reaches a public header.
