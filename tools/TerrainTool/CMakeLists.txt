@@ -1,9 +1,9 @@
+if(TARGET TerrainTool AND NOT BUILD_TESTING)
+    return()
+endif()
+
 find_package(nlohmann_json CONFIG REQUIRED)
 
-# /RTC1 cannot combine with the Debug /O2 below and /Od /Ob0 would only be overridden; cl defaults to /Od.
-if(MSVC)
-    string(REGEX REPLACE "/RTC1|/Ob0|/Od" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-endif()
 
 # Offline terrain pipeline; the engine never links it.
 add_library(terrain_bake STATIC
@@ -34,14 +34,11 @@ target_link_libraries(terrain_bake
     PUBLIC mir::terrain mir::assets mir::core
     PRIVATE mir::jobs nlohmann_json::nlohmann_json)
 
-# The root CMakeLists runs its sync (and package without the editor) on every build.
-add_executable(TerrainTool main.cpp)
-engine_target_utf8(TerrainTool)
-target_link_libraries(TerrainTool PRIVATE terrain_bake)
-
-set(terrain_bake_debug_o2 "$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:/O2>")
-target_compile_options(terrain_bake PRIVATE ${terrain_bake_debug_o2})
-target_compile_options(TerrainTool PRIVATE ${terrain_bake_debug_o2})
+if(NOT TARGET TerrainTool)
+    add_executable(TerrainTool main.cpp)
+    engine_target_utf8(TerrainTool)
+    target_link_libraries(TerrainTool PRIVATE terrain_bake)
+endif()
 
 if(BUILD_TESTING)
     add_executable(terrain_tool_tests

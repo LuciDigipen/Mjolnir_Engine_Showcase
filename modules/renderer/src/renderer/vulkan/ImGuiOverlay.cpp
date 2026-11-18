@@ -16,6 +16,8 @@
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 
+#include <algorithm>
+
 namespace mir::vk
 {
     namespace
@@ -45,7 +47,7 @@ namespace mir::vk
         initInfo.Device = mDevice->Handle();
         initInfo.QueueFamily = mDevice->QueueFamily();
         initInfo.Queue = mDevice->Queue();
-        initInfo.DescriptorPoolSize = 64;
+        initInfo.DescriptorPoolSize = 4096;
         initInfo.MinImageCount = swapchain.ImageCount();
         initInfo.ImageCount = swapchain.ImageCount();
         initInfo.UseDynamicRendering = true;
@@ -68,9 +70,49 @@ namespace mir::vk
             return;
 
         mDevice->WaitIdle();
+        ReleaseTextures();
         ImGui_ImplVulkan_Shutdown();
         mBackendInitialized = false;
         mDrawData = nullptr;
+    }
+
+    uint64_t ImGuiOverlay::BindTexture(uint64_t key, VkImageView view)
+    {
+        if (!mBackendInitialized || view == VK_NULL_HANDLE)
+            return 0;
+        for (const auto &binding : mTextures)
+            if (binding.mKey == key && binding.mRetireAfter == UINT64_MAX)
+                return reinterpret_cast<uint64_t>(binding.mSet);
+        const auto set = ImGui_ImplVulkan_AddTexture(view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (set == VK_NULL_HANDLE)
+            return 0;
+        mTextures.push_back({ key, set });
+        return reinterpret_cast<uint64_t>(set);
+    }
+
+    void ImGuiOverlay::RetireTexture(uint64_t key, uint64_t lastUse)
+    {
+        for (auto &binding : mTextures)
+            if (binding.mKey == key && binding.mRetireAfter == UINT64_MAX)
+                binding.mRetireAfter = lastUse;
+    }
+
+    void ImGuiOverlay::ReleaseTextures()
+    {
+        for (const auto &binding : mTextures)
+            ImGui_ImplVulkan_RemoveTexture(binding.mSet);
+        mTextures.clear();
+    }
+
+    void ImGuiOverlay::Collect(uint64_t completed)
+    {
+        std::erase_if(mTextures, [completed](const TextureBinding &binding)
+            {
+                if (binding.mRetireAfter > completed)
+                    return false;
+                ImGui_ImplVulkan_RemoveTexture(binding.mSet);
+                return true;
+            });
     }
 
     void ImGuiOverlay::RecordInPass(VkCommandBuffer cmd) const

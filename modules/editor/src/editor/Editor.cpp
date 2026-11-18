@@ -1774,7 +1774,11 @@ namespace mir
             if (mShowContentBrowser)
             {
                 if (ImGui::Begin("Content Browser", &mShowContentBrowser))
-                    actions.mContentBrowser = mContentBrowserPanel.Draw(contentBrowser);
+                {
+                    actions.mContentBrowser = mContentBrowserPanel.Draw(contentBrowser, mPreferences);
+                    if (actions.mContentBrowser.mPreferencesChanged)
+                        mPreferences.SaveFile(mPreferencesPath);
+                }
                 ImGui::End();
             }
 

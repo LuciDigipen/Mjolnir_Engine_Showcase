@@ -1,0 +1,30 @@
+{
+  "entity": 1144,
+  "position": [
+    -539.0086729866339,
+    23.57240954417677,
+    534.362258202911
+  ],
+  "rotation": [
+    0,
+    -0.4067286903285611,
+    0,
+    0.9135489983923213
+  ],
+  "gear_clip": "Gear_Retract_Extend",
+  "gear_extended_time_seconds": 4.625,
+  "meshes": 16,
+  "materials": 92,
+  "images": 186,
+  "skins": 1,
+  "animation_channels": 378,
+  "runway_local_surface_y": 0.00019999999494757503,
+  "runway_heading_degrees": -47.99900244051242,
+  "export_bounds_min": [
+    -6.122250556945801,
+    -4.697688579559326,
+    -1.0022095441818237
+  ],
+  "triangles": 2273442,
+  "primitives": 161
+}

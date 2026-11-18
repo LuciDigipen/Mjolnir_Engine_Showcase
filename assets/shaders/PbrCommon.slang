@@ -33,7 +33,7 @@ float3 FresnelSchlick(float cosTheta, float3 f0)
     return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
-float3 SpecularBrdf(float3 f0, float roughness, float3 N, float3 V, float3 L)
+float3 SpecularBrdf(float3 f0, float roughness, float3 N, float3 V, float3 L, float3 f90 = float3(1))
 {
     const float NdotL = saturate(dot(N, L));
     const float NdotV = max(saturate(dot(N, V)), kMinNdotV);
@@ -45,7 +45,7 @@ float3 SpecularBrdf(float3 f0, float roughness, float3 N, float3 V, float3 L)
     const float3 H = normalize(halfVector);
     const float NdotH = saturate(dot(N, H));
     const float VdotH = saturate(dot(V, H));
-    const float3 F = FresnelSchlick(VdotH, f0);
+    const float3 F = f0 + (f90 - f0) * pow(saturate(1 - VdotH), 5);
     const float D = DistributionGgx(NdotH, max(roughness, kMinRoughness));
     const float G = GeometrySmith(NdotV, NdotL, max(roughness, kMinRoughness));
     return D * G * F / (4.0 * NdotV * NdotL);
@@ -62,12 +62,13 @@ float3 EvaluateDiffusePbr(float3 diffuseAlbedo, float3 N, float3 L, float3 light
     return diffuseAlbedo * lightColor * NdotL;
 }
 
-float3 EvaluateSpecularPbr(float3 f0, float roughness, float3 N, float3 V, float3 L, float3 lightColor)
+float3 EvaluateSpecularPbr(float3 f0, float roughness, float3 N, float3 V, float3 L, float3 lightColor,
+                           float3 f90 = float3(1))
 {
     const float NdotL = saturate(dot(N, L));
     if (NdotL <= 0.0)
         return float3(0.0, 0.0, 0.0);
-    return kPbrPi * SpecularBrdf(f0, roughness, N, V, L) * lightColor * NdotL;
+    return kPbrPi * SpecularBrdf(f0, roughness, N, V, L, f90) * lightColor * NdotL;
 }
 
 // Directional-albedo fit from Ray Tracing Gems, referenced by NVIDIA DLSS RR.
@@ -79,16 +80,13 @@ float3 SpecularAlbedoGuide(float3 f0, float squaredRoughness, float NoV)
     const float a = saturate(squaredRoughness);
     const float a3 = a * a * a;
     const float biasNumerator = 0.99044 - 1.28514 * n + (1.29678 - 0.755907 * n) * a;
-    const float biasDenominator = 1.0 + 2.92338 * n + 59.4188 * n3 +
-        (20.3225 - 27.0302 * n + 222.592 * n3) * a +
-        (121.563 + 626.13 * n + 316.627 * n3) * a3;
+    const float biasDenominator = 1.0 + 2.92338 * n + 59.4188 * n3 + (20.3225 - 27.0302 * n + 222.592 * n3) * a +
+                                  (121.563 + 626.13 * n + 316.627 * n3) * a3;
     const float scaleNumerator = 0.0365463 + 3.32707 * n + (9.0632 - 9.04756 * n) * a;
-    const float scaleDenominator = 1.0 + 3.59685 * n2 - 1.36772 * n3 +
-        (9.04401 - 16.3174 * n2 + 9.22949 * n3) * a +
-        (5.56589 + 19.7886 * n2 - 20.2123 * n3) * a3;
+    const float scaleDenominator = 1.0 + 3.59685 * n2 - 1.36772 * n3 + (9.04401 - 16.3174 * n2 + 9.22949 * n3) * a +
+                                   (5.56589 + 19.7886 * n2 - 20.2123 * n3) * a3;
     const float3 reflectance = saturate(f0);
-    const float bias = max(0.0, biasNumerator / max(biasDenominator, 1e-6)) *
-        saturate(reflectance.g * 50.0);
+    const float bias = max(0.0, biasNumerator / max(biasDenominator, 1e-6)) * saturate(reflectance.g * 50.0);
     const float scale = max(0.0, scaleNumerator / max(scaleDenominator, 1e-6));
     return saturate(reflectance * scale + bias);
 }
@@ -104,23 +102,55 @@ struct PbrLighting
     float3 emissive;
 };
 
-PbrLighting EvaluatePbrLighting<V : IShadowVisibility>(V visibility, SurfaceOutput surface, float3 worldPos)
+float3 PbrDiffuseReflectance(SurfaceOutput surface)
+{
+    if (surface.unlit)
+        return float3(0);
+    return PbrDiffuseColor(surface.albedo, surface.metallic, surface.dielectricF0) * surface.ao;
+}
+
+void AccumulatePbrLight(SurfaceOutput s, float3 N, float3 V, float3 L, float3 radiance, inout PbrLighting lighting)
+{
+    const float3 H = SafeNormalize(L + V, N);
+    const float3 F = PbrDielectricFresnel(s.dielectricF0, s.dielectricF90, dot(V, H));
+    float attenuation = 1;
+    if (s.clearcoat > 0)
+    {
+        const float3 coatN = SafeNormalize(s.clearcoatNormalWS, N);
+        const float FcV = .04 + .96 * pow(saturate(1 - dot(coatN, V)), 5);
+        const float FcL = .04 + .96 * pow(saturate(1 - dot(coatN, L)), 5);
+        attenuation = (1 - s.clearcoat * FcV) * (1 - s.clearcoat * FcL);
+        lighting.specularDirect +=
+            s.clearcoat * EvaluateSpecularPbr(float3(.04), s.clearcoatRoughness, coatN, V, L, radiance);
+    }
+    lighting.diffuseDirect +=
+        attenuation * EvaluateDiffusePbr(PbrDiffuseColor(s.albedo, s.metallic, F), N, L, radiance);
+    lighting.specularDirect += attenuation * EvaluateSpecularPbr(s.f0, s.roughness, N, V, L, radiance, s.f90);
+}
+
+PbrLighting EvaluatePbrLighting<V : IShadowVisibility>(V visibility, SurfaceOutput surface, float3 worldPos,
+                                                       float3 viewDirection = float3(0))
 {
     const float3 N = normalize(surface.normalWS);
-    const float3 V = normalize(cameraPos.xyz - worldPos);
-    const float3 f0 = surface.f0.xxx;
-    const float3 diffuseAlbedo = surface.albedo * (1.0 - surface.f0);
+    const float3 V =
+        dot(viewDirection, viewDirection) > 1e-12 ? normalize(viewDirection) : normalize(cameraPos.xyz - worldPos);
+    const float3 diffuseAlbedo = surface.albedo * (1.0 - surface.metallic);
 
     PbrLighting lighting;
-    lighting.ambientRadiance = surface.albedo * surface.ao * ambientColor.rgb;
+    lighting.ambientRadiance = diffuseAlbedo * surface.ao * ambientColor.rgb;
     lighting.diffuseDirect = float3(0.0, 0.0, 0.0);
     lighting.specularDirect = float3(0.0, 0.0, 0.0);
     lighting.emissive = surface.emissive;
 
+    if (surface.unlit)
+    {
+        lighting.ambientRadiance = 0;
+        lighting.emissive = surface.albedo;
+        return lighting;
+    }
     const float3 L = normalize(lightDirWS.xyz);
     const float sunVisibility = visibility.Sun(L);
-    lighting.diffuseDirect += EvaluateDiffusePbr(diffuseAlbedo, N, L, lightColor.rgb) * sunVisibility;
-    lighting.specularDirect += EvaluateSpecularPbr(f0, surface.roughness, N, V, L, lightColor.rgb) * sunVisibility;
+    AccumulatePbrLight(surface, N, V, L, lightColor.rgb * sunVisibility, lighting);
 
     const int firstLight = int(lightingMeta.y);
     const int lightCount = int(lightingMeta.x);
@@ -139,9 +169,7 @@ PbrLighting EvaluatePbrLighting<V : IShadowVisibility>(V visibility, SurfaceOutp
             continue;
 
         const float localVisibility = atten * visibility.Local(light, Lp, dist);
-        lighting.diffuseDirect += EvaluateDiffusePbr(diffuseAlbedo, N, Lp, light.color.rgb) * localVisibility;
-        lighting.specularDirect +=
-            EvaluateSpecularPbr(f0, surface.roughness, N, V, Lp, light.color.rgb) * localVisibility;
+        AccumulatePbrLight(surface, N, V, Lp, light.color.rgb * localVisibility, lighting);
     }
 
     return lighting;
@@ -174,11 +202,14 @@ float3 ShadePbr<V : IShadowVisibility>(V visibility, SurfaceOutput surface, floa
 // passes use the same fixed dielectric finish in raster and ray tracing.
 SurfaceOutput BlendedModelSurface(float3 albedo, float3 normal)
 {
-    SurfaceOutput surface;
+    SurfaceOutput surface = (SurfaceOutput)0;
+    surface.f90 = float3(1);
     surface.albedo = albedo;
     surface.normalWS = normal;
     surface.roughness = 0.24;
-    surface.f0 = 0.04;
+    surface.dielectricF0 = float3(0.04);
+    surface.dielectricF90 = 1;
+    surface.f0 = surface.dielectricF0;
     surface.ao = 1.0;
     surface.height = 0.0;
     surface.emissive = float3(0.0, 0.0, 0.0);

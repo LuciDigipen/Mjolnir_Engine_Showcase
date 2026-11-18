@@ -13,6 +13,7 @@
 #include <window/InputSnapshot.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace mir
@@ -27,6 +28,7 @@ namespace mir
         void OnHidden()
         {
             CancelListening();
+            mDraft.reset();
             mStatusMessage.clear();
         }
 
@@ -45,6 +47,7 @@ namespace mir
         int mListeningBinding = -1;
         RawInputSnapshot mPreviousRaw;
 
+        std::optional<InputMap> mDraft;
         std::string mStatusMessage;
         // The map as of the last Save; a further edit clears the message before it goes stale.
         InputMap mSavedCopy;

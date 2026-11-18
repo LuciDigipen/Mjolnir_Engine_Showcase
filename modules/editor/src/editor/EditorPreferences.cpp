@@ -7,6 +7,7 @@
  *
  */
 #include <editor/EditorPreferences.h>
+#include <editor/ContentThumbnailCache.h>
 
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
@@ -90,6 +91,15 @@ namespace mir
 
         ReadEnum(*root, "theme", kThemeNames, prefs.theme);
         ReadBuild(*root, prefs);
+        if (const auto browser = root->find("contentBrowser"); browser != root->end() && browser->is_object())
+        {
+            if (const auto it = browser->find("grid"); it != browser->end() && it->is_boolean())
+                prefs.contentGrid = it->get<bool>();
+            if (const auto it = browser->find("size"); it != browser->end() && it->is_number_integer())
+                prefs.contentThumbnailSize = static_cast<int>(std::clamp(it->get<int64_t>(), int64_t(48), int64_t(128)));
+            if (const auto it = browser->find("capacity"); it != browser->end() && it->is_number_integer())
+                prefs.contentThumbnailCapacity = static_cast<int>(std::clamp(it->get<int64_t>(), int64_t(0), int64_t(ContentThumbnailCache::kMaxThumbnails)));
+        }
 
         const auto background = root->find("background");
         if (background == root->end() || !background->is_object())
@@ -129,7 +139,9 @@ namespace mir
             return false;
         }
 
-        const json root{{"theme", kThemeNames[static_cast<size_t>(theme)]},
+        const json root{{"contentBrowser", {{"grid", contentGrid}, {"size", contentThumbnailSize},
+                            {"capacity", contentThumbnailCapacity}}},
+                        {"theme", kThemeNames[static_cast<size_t>(theme)]},
                         {"background",
                          {{"enabled", backgroundEnabled},
                           {"file", backgroundFile},

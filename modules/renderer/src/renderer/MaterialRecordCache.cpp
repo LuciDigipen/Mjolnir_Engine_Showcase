@@ -22,7 +22,10 @@ namespace mir
     namespace
     {
         // Floats compare by bit pattern so a key and its hash agree.
-        bool SameFloat(float a, float b) { return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b); }
+        bool SameFloat(float a, float b)
+        {
+            return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b);
+        }
     }
 
     MaterialValueKey MaterialValueKey::Of(const MaterialDesc &desc)
@@ -35,6 +38,7 @@ namespace mir
         key.frontFace = desc.frontFace;
         key.baseColorTexture = desc.baseColorTexture;
         key.normalTexture = desc.normalTexture;
+        key.model = desc.model;
         key.sampler = desc.sampler;
         key.alphaMode = desc.alphaMode;
         key.alphaCutoff = desc.alphaCutoff;
@@ -48,30 +52,38 @@ namespace mir
     bool MaterialValueKey::operator==(const MaterialValueKey &other) const
     {
         return shaderName == other.shaderName && cullMode == other.cullMode && polygonMode == other.polygonMode &&
-            topology == other.topology && frontFace == other.frontFace &&
-            baseColorTexture == other.baseColorTexture && normalTexture == other.normalTexture &&
-            sampler.magFilter == other.sampler.magFilter && sampler.minFilter == other.sampler.minFilter &&
-            sampler.mipmapMode == other.sampler.mipmapMode && sampler.addressModeU == other.sampler.addressModeU &&
-            sampler.addressModeV == other.sampler.addressModeV && sampler.useMips == other.sampler.useMips &&
-            SameFloat(sampler.maxAnisotropy, other.sampler.maxAnisotropy) && alphaMode == other.alphaMode &&
-            SameFloat(alphaCutoff, other.alphaCutoff) && record == other.record &&
-            recordAlignment == other.recordAlignment && surfaceMaterial == other.surfaceMaterial &&
-            surfaceAsset == other.surfaceAsset;
+               topology == other.topology && frontFace == other.frontFace &&
+               baseColorTexture == other.baseColorTexture && normalTexture == other.normalTexture &&
+               model == other.model && sampler.magFilter == other.sampler.magFilter &&
+               sampler.minFilter == other.sampler.minFilter && sampler.mipmapMode == other.sampler.mipmapMode &&
+               sampler.addressModeU == other.sampler.addressModeU &&
+               sampler.addressModeV == other.sampler.addressModeV && sampler.useMips == other.sampler.useMips &&
+               SameFloat(sampler.maxAnisotropy, other.sampler.maxAnisotropy) && alphaMode == other.alphaMode &&
+               SameFloat(alphaCutoff, other.alphaCutoff) && record == other.record &&
+               recordAlignment == other.recordAlignment && surfaceMaterial == other.surfaceMaterial &&
+               surfaceAsset == other.surfaceAsset;
     }
 
     size_t MaterialValueKeyHash::operator()(const MaterialValueKey &key) const
     {
         size_t hash = std::hash<std::string>{}(key.shaderName);
-        const auto mix = [&hash](uint64_t value)
-            {
-                hash ^= std::hash<uint64_t>{}(value)+ 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2);
-            };
+        const auto mix = [&hash](uint64_t value) {
+            hash ^= std::hash<uint64_t>{}(value) + 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2);
+        };
         mix(key.cullMode);
         mix(key.polygonMode);
         mix(key.topology);
         mix(key.frontFace);
         mix((uint64_t(key.baseColorTexture.mIndex) << 32) | key.baseColorTexture.mGeneration);
         mix((uint64_t(key.normalTexture.mIndex) << 32) | key.normalTexture.mGeneration);
+        for (const auto &factor : key.model.factors)
+            for (int i = 0; i < 4; ++i)
+                mix(factor[i] == 0.f ? 0u : std::bit_cast<uint32_t>(factor[i]));
+        for (const auto &binding : key.model.textures)
+        {
+            mix((uint64_t(binding.texture.mIndex) << 32) | binding.texture.mGeneration);
+            mix(SamplerCacheKey(binding.sampler, true, binding.sampler.maxAnisotropy));
+        }
         mix(key.sampler.magFilter);
         mix(key.sampler.minFilter);
         mix(key.sampler.mipmapMode);
@@ -90,9 +102,12 @@ namespace mir
     }
 
     uint64_t MaterialRecordCache::Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims,
-        MaterialAcquire *status)
+                                          MaterialAcquire *status)
     {
-        const auto report = [status](MaterialAcquire result) { if (status != nullptr) *status = result; };
+        const auto report = [status](MaterialAcquire result) {
+            if (status != nullptr)
+                *status = result;
+        };
         MaterialValueKey key = MaterialValueKey::Of(desc);
         if (const auto found = mIds.find(key); found != mIds.end())
         {
@@ -118,7 +133,9 @@ namespace mir
         Record &record = mRecords[id];
         // The table treats an alignment of zero as its default, so the footprint must not divide by it.
         const uint32_t alignment = key.recordAlignment != 0 ? key.recordAlignment : MaterialValueKey{}.recordAlignment;
-        record.recordBytes = key.record.empty() ? 0 : (key.record.size() + alignment - 1) / alignment * alignment;
+        record.recordBytes = key.shaderName == "model" ? 224
+                             : key.record.empty()      ? 0
+                                                       : (key.record.size() + alignment - 1) / alignment * alignment;
         record.handle = handle;
         record.claims = std::move(claims);
         record.key = key;
@@ -153,8 +170,7 @@ namespace mir
         return found == mRecords.end() ? MaterialHandle{} : found->second.handle;
     }
 
-    MaterialRecordCache::MaterialRecordCache(IMeshResolveHost &host)
-        : mHost(host), mResidency(host.SharedResidency())
+    MaterialRecordCache::MaterialRecordCache(IMeshResolveHost &host) : mHost(host), mResidency(host.SharedResidency())
     {
         mHolder = mResidency->AddHolder(GpuCategory::Material, [this] { return RecordBytes(); });
     }
@@ -184,7 +200,7 @@ namespace mir
         using TextureId = std::tuple<const void *, uint64_t, uint64_t>;
         TextureId IdOf(const TextureLoadLease &claim)
         {
-            return { claim.CacheOf(), claim.Key().asset.value, claim.Key().content };
+            return {claim.CacheOf(), claim.Key().asset.value, claim.Key().content};
         }
     }
 
@@ -259,7 +275,7 @@ namespace mir
             }
             const bool freesRecord = record->second.recordBytes > 0;
             const bool helps = ((freesTexture || freesRecord) && totalUnmet) || (freesTexture && textureUnmet) ||
-                (freesRecord && recordUnmet);
+                               (freesRecord && recordUnmet);
             if (!helps)
                 continue;
             for (const TextureLoadLease &claim : record->second.claims)

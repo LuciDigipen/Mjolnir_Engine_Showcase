@@ -72,26 +72,25 @@ namespace
         }
         void WriteMaterial(int resolution = 2)
         {
-            Json material = {
-                {"version", 1},
-                {"shader", {{"file", "shaders/test.slang"}, {"type", "surface"}}},
-                {"frontends", {"mesh", "terrain"}},
-                {"parameters", {{"tint", {1, 1, 1, 1}}}},
-                {"resolution", resolution},
-                {"textures",
-                 {{"baseColor", {{"path", "textures/base.png"}, {"colorSpace", "srgb"}}},
-                  {"normal", {{"path", "textures/normal.png"}, {"colorSpace", "linear"}}},
-                  {"roughness", {{"path", "textures/roughness.png"}, {"colorSpace", "linear"}}},
-                  {"displacement", {{"path", "textures/displacement.png"}, {"colorSpace", "linear"}}},
-                  {"specular", {{"path", "textures/specular.png"}, {"colorSpace", "srgb"}}},
-                  {"ao", {{"path", "textures/ao.png"}, {"colorSpace", "srgb"}}}}},
-                {"editorOnly", {{"note", "kept"}}}};
+            Json material = {{"version", 1},
+                             {"shader", {{"file", "shaders/test.slang"}, {"type", "surface"}}},
+                             {"frontends", {"mesh", "terrain"}},
+                             {"parameters", {{"tint", {1, 1, 1, 1}}}},
+                             {"resolution", resolution},
+                             {"textures",
+                              {{"baseColor", {{"path", "textures/base.png"}, {"colorSpace", "srgb"}}},
+                               {"normal", {{"path", "textures/normal.png"}, {"colorSpace", "linear"}}},
+                               {"roughness", {{"path", "textures/roughness.png"}, {"colorSpace", "linear"}}},
+                               {"displacement", {{"path", "textures/displacement.png"}, {"colorSpace", "linear"}}},
+                               {"specular", {{"path", "textures/specular.png"}, {"colorSpace", "srgb"}}},
+                               {"ao", {{"path", "textures/ao.png"}, {"colorSpace", "srgb"}}}}},
+                             {"editorOnly", {{"note", "kept"}}}};
             std::ofstream(root / "materials/sand.material.json") << material.dump(2);
         }
         std::vector<std::string> Args(const fs::path &out, const fs::path &result) const
         {
-            return {"--source-dir", root.string(), "--id-root", "assets", "--out", out.string(), "--result",
-                    result.string()};
+            return {"--source-dir", root.string(), "--id-root", "assets",
+                    "--out",        out.string(),  "--result",  result.string()};
         }
     };
 
@@ -120,6 +119,39 @@ namespace
         return snapshot;
     }
 } // namespace
+
+TEST_CASE("Surface metallic input occupies the packed alpha channel as linear data", "[material][cook][pbr]")
+{
+    MaterialFixture fixture;
+    auto path = fixture.root / "materials/sand.material.json";
+    Json source = Json::parse(std::ifstream(path));
+    source["textures"]["metallic"] = {{"path", "textures/specular.png"}, {"colorSpace", "srgb"}};
+    std::ofstream(path) << source.dump(2);
+    const auto imported =
+        cook::ImportMaterial(path, "assets/materials/sand.material.json", fixture.root, {fixture.root}, AssetId{123});
+    for (const auto &blob : imported.blobs)
+    {
+        const auto view = ParseAssetBlob(blob.bytes);
+        REQUIRE(view);
+        if (view->header.typeTag != kSurfaceMaterialAssetTypeTag)
+            continue;
+        SurfaceMaterialAsset material;
+        std::string error;
+        REQUIRE(ReadTypedAsset(*view, material, error));
+        for (const auto &texture : imported.blobs)
+            if (texture.id == material.surfaceTexture)
+            {
+                const auto data = ParseAssetBlob(texture.bytes);
+                REQUIRE(data);
+                TextureAsset packed;
+                REQUIRE(ReadTypedAsset(*data, packed, error));
+                CHECK(packed.rgba[3] == 188);
+                CHECK(packed.mipData[3] == 188);
+                return;
+            }
+    }
+    FAIL("Missing packed material texture");
+}
 
 TEST_CASE("Surface material packs base color, AO, normals and F0 into three mip chains", "[material][cook]")
 {
@@ -184,6 +216,56 @@ TEST_CASE("Surface material packs base color, AO, normals and F0 into three mip 
     }
 }
 
+TEST_CASE("Optional cooked outputs do not log read errors when absent", "[material][cook][logging]")
+{
+    MaterialFixture fixture;
+    const auto out = fs::path(fixture.root.string() + "-logging");
+    const auto result = out / "result.json";
+    const auto captured = fs::path(fixture.root.string() + "-cooker.log");
+    auto run = [&]()
+        {
+            ChildProcess process;
+            REQUIRE(process.Start(GLTF_COOKER_EXE, fixture.Args(out, result), {}, captured));
+            const auto exit = process.Wait();
+            REQUIRE(exit);
+            return *exit;
+        };
+    auto output = [&]()
+        {
+            auto text = ReadText(captured);
+            REQUIRE(text);
+            return *text;
+        };
+
+    REQUIRE(run() == 0);
+    CHECK(output().find("[error]") == std::string::npos);
+    const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(manifest);
+    REQUIRE(manifest->Count() == 4);
+    const auto blob = out / manifest->PathOf(manifest->Entries().front());
+
+    REQUIRE(fs::remove(blob));
+    REQUIRE(run() == 0);
+    CHECK(fs::is_regular_file(blob));
+    CHECK(output().find("[error]") == std::string::npos);
+
+    SECTION("Missing required source files still report errors")
+    {
+        REQUIRE(fs::remove(fixture.root / "textures/base.png"));
+        CHECK(run() != 0);
+        CHECK(output().find("[error]") != std::string::npos);
+        CHECK(output().find("base.png") != std::string::npos);
+    }
+    SECTION("Existing outputs that cannot be read or replaced still report errors")
+    {
+        REQUIRE(fs::remove(blob));
+        REQUIRE(fs::create_directory(blob));
+        CHECK(run() != 0);
+        CHECK(output().find("[error]") != std::string::npos);
+    }
+    CHECK(Json::parse(std::ifstream(result)).at("status") == "failed");
+}
+
 TEST_CASE("Material batches skip unchanged inputs and recook edited sources", "[material][cook][incremental]")
 {
     MaterialFixture fixture;
@@ -192,12 +274,11 @@ TEST_CASE("Material batches skip unchanged inputs and recook edited sources", "[
     const std::string materialPath = "assets/materials/sand.material.json";
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, fixture.Args(out, result), true) == 0);
 
-    auto run = [&](std::vector<std::string> extra)
-        {
-            auto args = fixture.Args(out, result);
-            args.insert(args.end(), extra.begin(), extra.end());
-            return LaunchProcess(GLTF_COOKER_EXE, args, true);
-        };
+    auto run = [&](std::vector<std::string> extra) {
+        auto args = fixture.Args(out, result);
+        args.insert(args.end(), extra.begin(), extra.end());
+        return LaunchProcess(GLTF_COOKER_EXE, args, true);
+    };
     {
         const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
         REQUIRE(manifest);
@@ -226,7 +307,8 @@ TEST_CASE("Material batches skip unchanged inputs and recook edited sources", "[
     CHECK(failed.at("diagnostic").at("message").get<std::string>().find("Git LFS pointer") != std::string::npos);
 }
 
-TEST_CASE("Changed batches rebuild incompatible textures when the import cache is reset", "[material][cook][incremental]")
+TEST_CASE("Changed batches rebuild incompatible textures when the import cache is reset",
+          "[material][cook][incremental]")
 {
     MaterialFixture fixture;
     fixture.WriteSolid("textures/extra.png", 90, 90, 90, 255);
@@ -248,11 +330,13 @@ TEST_CASE("Changed batches rebuild incompatible textures when the import cache i
     for (const auto &entry : manifest->Entries())
     {
         if (entry.id == extraId)
-            entries.push_back({{entry.id, entry.typeTag, 1}, "legacy-texture.blob", manifest->LogicalPathOf(entry),
-                manifest->Dependencies(entry)});
+            entries.push_back({{entry.id, entry.typeTag, 1},
+                               "legacy-texture.blob",
+                               manifest->LogicalPathOf(entry),
+                               manifest->Dependencies(entry)});
         else
-            entries.push_back({entry, manifest->PathOf(entry), manifest->LogicalPathOf(entry),
-                manifest->Dependencies(entry)});
+            entries.push_back(
+                {entry, manifest->PathOf(entry), manifest->LogicalPathOf(entry), manifest->Dependencies(entry)});
     }
     REQUIRE(WriteBytes(out / "manifest.blob", BuildAssetManifestBlob(entries)));
     const auto cachePath = out / "import-cache.json";
@@ -263,7 +347,9 @@ TEST_CASE("Changed batches rebuild incompatible textures when the import cache i
     auto args = fixture.Args(out, result);
     args.insert(args.end(), {"--changed", (fixture.root / "textures/base.png").string()});
 
-    SECTION("An older cache version requires a complete recook") {}
+    SECTION("An older cache version requires a complete recook")
+    {
+    }
     SECTION("A missing cache requires a complete recook")
     {
         REQUIRE(fs::remove(cachePath));
@@ -354,12 +440,24 @@ TEST_CASE("The authorized TerrainCheck set cooks at the default 2K resolution", 
         {"shader", {{"file", "shaders/default.slang"}, {"type", "surface"}}},
         {"frontends", {"terrain"}},
         {"textures",
-         {{"baseColor", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_BaseColor.jpg"}, {"colorSpace", "srgb"}}},
-          {"normal", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Normal.jpg"}, {"colorSpace", "linear"}}},
-          {"displacement", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Displacement.jpg"}, {"colorSpace", "linear"}}},
-          {"roughness", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Roughness.jpg"}, {"colorSpace", "linear"}}},
-          {"specular", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Specular.jpg"}, {"colorSpace", "srgb"}}},
-          {"ao", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_AO.jpg"}, {"colorSpace", "srgb"}}}}}};
+         {{"baseColor",
+           {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_BaseColor.jpg"},
+            {"colorSpace", "srgb"}}},
+          {"normal",
+           {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Normal.jpg"},
+            {"colorSpace", "linear"}}},
+          {"displacement",
+           {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Displacement.jpg"},
+            {"colorSpace", "linear"}}},
+          {"roughness",
+           {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Roughness.jpg"},
+            {"colorSpace", "linear"}}},
+          {"specular",
+           {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Specular.jpg"},
+            {"colorSpace", "srgb"}}},
+          {"ao",
+           {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_AO.jpg"},
+            {"colorSpace", "srgb"}}}}}};
     // A fresh cache cooks every declared root. Keep this fixture independent
     // of other materials that the game or engine adds later.
     fs::create_directories(root / "shaders");
@@ -373,9 +471,9 @@ TEST_CASE("The authorized TerrainCheck set cooks at the default 2K resolution", 
     std::ofstream(root / "materials/icelandic_sand.material.json") << material.dump(2);
 
     const auto result = out / "result.json";
-    const std::vector<std::string> args{"--source-dir", root.string(), "--id-root", "fixture",
-                                        "--out", out.string(), "--result", result.string(), "--material",
-                                        "fixture/materials/icelandic_sand.material.json"};
+    const std::vector<std::string> args{
+        "--source-dir", root.string(), "--id-root",     "fixture",    "--out",
+        out.string(),   "--result",    result.string(), "--material", "fixture/materials/icelandic_sand.material.json"};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
     const Json cooked = Json::parse(std::ifstream(result));
     REQUIRE(cooked.at("models").size() == 1);
@@ -405,7 +503,7 @@ TEST_CASE("A changed .meta guid recooks the material under the new id", "[materi
 
     const fs::path source = fixture.root / "materials/sand.material.json";
     AssetMeta meta = *ReadAssetMeta(AssetMetaPath(source));
-    meta.guid = AssetId{ meta.guid.value ^ 0x10 };
+    meta.guid = AssetId{meta.guid.value ^ 0x10};
     REQUIRE(WriteAssetMeta(AssetMetaPath(source), meta));
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, fixture.Args(out, result), true) == 0);
 

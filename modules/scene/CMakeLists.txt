@@ -1,4 +1,4 @@
-engine_add_module(scene)
+engine_add_module(scene PCH_HEADERS glm/glm.hpp nlohmann/json.hpp)
 
 target_sources(engine_scene PRIVATE
     src/scene/ComponentJson.cpp

@@ -29,7 +29,12 @@ namespace mir
     // Ready: the record exists. Waiting: the material table has no free slot, the unused records were released
     // and their slots come back when their frames complete, so ask again later. Failed: the renderer could not
     // make the material.
-    enum class MaterialAcquire : uint8_t { Ready, Waiting, Failed };
+    enum class MaterialAcquire : uint8_t
+    {
+        Ready,
+        Waiting,
+        Failed
+    };
 
     // A material description compared and hashed by value, owning the bytes a MaterialDesc only views.
     struct MaterialValueKey
@@ -41,6 +46,7 @@ namespace mir
         VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         TextureHandle baseColorTexture;
         TextureHandle normalTexture;
+        ModelMaterialDesc model;
         SamplerDesc sampler;
         MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
         float alphaCutoff = 0.5f;
@@ -60,7 +66,7 @@ namespace mir
 
     class MaterialRecordCache
     {
-    public:
+      public:
         explicit MaterialRecordCache(IMeshResolveHost &host);
         ~MaterialRecordCache();
         MaterialRecordCache(const MaterialRecordCache &) = delete;
@@ -69,7 +75,7 @@ namespace mir
         // Returns zero on creation failure. New materials retain the supplied texture claims, which must
         // cover every referenced texture.
         uint64_t Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims,
-            MaterialAcquire *status = nullptr);
+                         MaterialAcquire *status = nullptr);
         void Retain(uint64_t id);
         void Drop(uint64_t id);
         MaterialHandle Find(uint64_t id) const;
@@ -83,9 +89,12 @@ namespace mir
         uint64_t PinnedTextureBytes() const;
         // Forgets every record without releasing handles, the renderer destroyed them.
         void Reset();
-        size_t Size() const { return mRecords.size(); }
+        size_t Size() const
+        {
+            return mRecords.size();
+        }
 
-    private:
+      private:
         struct Record
         {
             MaterialValueKey key;
@@ -109,14 +118,17 @@ namespace mir
     // One consumer claim on a material record.
     class MaterialLease
     {
-    public:
+      public:
         MaterialLease() = default;
         MaterialLease(std::shared_ptr<MaterialRecordCache> cache, uint64_t id) : mCache(std::move(cache)), mId(id)
         {
             if (mCache && mId != 0)
                 mCache->Retain(mId);
         }
-        ~MaterialLease() { Reset(); }
+        ~MaterialLease()
+        {
+            Reset();
+        }
         MaterialLease(const MaterialLease &) = delete;
         MaterialLease &operator=(const MaterialLease &) = delete;
         MaterialLease(MaterialLease &&other) noexcept : mCache(std::move(other.mCache)), mId(other.mId)
@@ -126,9 +138,12 @@ namespace mir
         MaterialLease &operator=(MaterialLease &&other) noexcept;
         void Reset();
         // Null for a default lease or after the renderer released every material.
-        MaterialHandle Get() const { return mCache && mId != 0 ? mCache->Find(mId) : MaterialHandle{}; }
+        MaterialHandle Get() const
+        {
+            return mCache && mId != 0 ? mCache->Find(mId) : MaterialHandle{};
+        }
 
-    private:
+      private:
         std::shared_ptr<MaterialRecordCache> mCache;
         uint64_t mId = 0;
     };

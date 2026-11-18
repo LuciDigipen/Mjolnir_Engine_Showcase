@@ -25,6 +25,19 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(cmake/EnginePlatform.cmake)
 include(cmake/EngineModule.cmake)
+option(MIR_OPTIMIZE_ASSET_COOKER "Run Release offline tools in development builds" ON)
+set(MIR_TOOLS_ONLY "${MIR_TOOLS_ONLY}" CACHE INTERNAL "Configure only offline tool dependencies")
+if(MIR_TOOLS_ONLY)
+    set(BUILD_TESTING OFF)
+    include(cmake/Shaders.cmake)
+    foreach(module core jobs project assets serial scene terrain prefab particles)
+        add_subdirectory(modules/${module})
+    endforeach()
+    add_subdirectory(tools/AssetCooker)
+    add_subdirectory(tools/TerrainTool)
+    return()
+endif()
+include(cmake/OfflineTools.cmake)
 include(cmake/Shaders.cmake)
 include(cmake/Assets.cmake)
 include(cmake/Fonts.cmake)
@@ -40,15 +53,14 @@ option(MJOLNIR_WITH_EDITOR "Build the editor into MjolnirEngine" ON)
 
 option(MIR_WITH_AUDIO "Build Wwise audio and Lua audio bindings" ON)
 
-# OFF (default): no network fetch, no NVIDIA SDK dependency - DLSS Ray
-# Reconstruction anti-aliasing stays unreachable, same as unsupported hardware.
-# ON: fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
+# ON (default): fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
 # time (cmake/FindNGX.cmake), pinned to an exact release tag - never committed.
-option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" OFF)
+# Pass -DMIR_WITH_DLSS=OFF to omit the SDK and DLSS Ray Reconstruction support.
+option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" ON)
 
-# Optional DDGI SDK and offline-compiled probe update shaders. OFF does not
-# fetch RTXGI or require DXC; runtime GI is integrated separately.
-option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" OFF)
+# DDGI SDK and offline-compiled probe update shaders are enabled by default.
+# OFF skips the RTXGI fetch and DXC requirement.
+option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" ON)
 if(BUILD_TESTING)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
@@ -489,6 +501,13 @@ if(BUILD_TESTING)
             -Repository "${CMAKE_SOURCE_DIR}" -BuildDirectory "${CMAKE_BINARY_DIR}"
             -Publisher "$<TARGET_FILE:ShaderPublisher>" -Compiler "$<TARGET_FILE:shader_compiler_driver>"
             -CxxCompiler "${CMAKE_CXX_COMPILER}" -MakeProgram "${CMAKE_MAKE_PROGRAM}")
+    # The nested Ninja configure needs the same compiler and SDK environment as this configure.
+    foreach(variable PATH INCLUDE LIB LIBPATH)
+        if(DEFINED ENV{${variable}})
+            string(REPLACE ";" "\\;" value "$ENV{${variable}}")
+            set_property(TEST shader_publication_fixture APPEND PROPERTY ENVIRONMENT "${variable}=${value}")
+        endif()
+    endforeach()
     add_test(NAME surface_material_discovery
         COMMAND "${CMAKE_COMMAND}" -DSLANGC_EXECUTABLE=${SLANGC_EXECUTABLE}
                 -P "${CMAKE_SOURCE_DIR}/tools/tests/SurfaceMaterialDiscovery.cmake")

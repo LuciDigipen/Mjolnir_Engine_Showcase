@@ -8,7 +8,7 @@ The source path resolves to a **Model** asset. It references independently cooke
 
 Mesh payloads contain explicit vertex/index arrays, primitive topology, material and base-color texture IDs, variable-length joint influences, and position/normal/tangent morph deltas. Runtime converts the vertex fields to `renderer/Mesh.h`'s `mir::Vertex`; serialization never copies compiler-dependent struct padding.
 
-`ModelAsset.h` defines payload versions by type. **Mesh contentVersion is 2**, replacing the old RAW!/1 mesh representation; other new types start at 1. The existing outer `AssetBlobHeader::formatVersion` stays at 1 because framing did not change. There is no second version field inside a typed payload. Readers check both type and content version, reject unsupported versions, and require recooking after incompatible schema changes. Legacy raw mesh JSON is still loaded through its existing reader.
+`ModelAsset.h` defines payload versions by type. Mesh, Material and Texture content versions are 2. Material v2 adds the PBR factors and texture bindings; older cooked materials require recooking. The existing outer `AssetBlobHeader::formatVersion` stays at 1 because framing did not change. Readers check both type and content version and reject unsupported versions. Legacy raw mesh JSON is still loaded through its existing reader.
 
 ## Supported first-version content
 
@@ -19,7 +19,17 @@ Mesh payloads contain explicit vertex/index arrays, primitive topology, material
 - Translation, rotation, scale and morph-weight tracks with STEP, LINEAR and CUBICSPLINE interpolation. Quaternion linear interpolation follows the shortest path; cubic tangents are scaled by the interval duration and results normalized.
 - Morph position/normal/tangent deltas, mesh/node default weights, animated weights and optional per-instance overrides. GPU vertex processing applies **morph, then skin, then instance/world transform**. A CPU reference evaluator is available to tests and tools.
 
-Unsupported required extensions fail cook explicitly. Optional extensions use their core glTF fallback. Draco, meshopt, KTX2/BasisU, extension-specific materials/texture transforms, full metallic/roughness PBR, normal maps, cameras/lights from glTF, retargeting, blending/state machines, root motion and editor timeline tools are outside this implementation. Transparent draws sort by instance/node origin, so intersecting transparent surfaces are not order-independent.
+Unsupported required extensions fail cook explicitly. Optional extensions use their core glTF fallback. Draco, meshopt, KTX2/BasisU, texture-transform extensions, transmission/volume, sheen, anisotropy, iridescence, cameras/lights from glTF, retargeting, blending/state machines, root motion and editor timeline tools are outside this implementation. Transparent draws sort by instance/node origin, so intersecting transparent surfaces are not order-independent.
+
+## PBR materials
+
+The model pipeline supports metallic/roughness factors and the texture's G/B channels, tangent-space normals and normal scale, occlusion R/strength, emissive RGB and alpha/double-sided state. `KHR_materials_specular` adds specular strength (texture A) and sRGB specular color; `KHR_materials_ior` controls dielectric F0. `KHR_materials_clearcoat` adds a separate coat factor, roughness and normal map. `KHR_materials_emissive_strength` and `KHR_materials_unlit` are also supported. This implements direct-light material response and the engine's existing diffuse ambient/GI; it does not add environment-specular lighting or glass refraction.
+
+Base color, emissive and specular-color images use sRGB sampling. Other material channels use linear data; normal mips average decoded vectors and renormalize. Additional processing roles append stable image child keys without changing existing image IDs. Materials can share image views while retaining separate samplers. One image used for color, scalar data and normals has distinct cooked views because their filtering and transfer functions differ.
+
+All textures on a primitive currently must select the same UV set. Without base color, the first material texture selects the stored UV stream. Incompatible sets fail cooking explicitly. Missing normal-map tangents are generated with the vendored MikkTSpace implementation after triangulation/normal generation. Tangent seams split all associated vertex attributes, skin influences and morph deltas consistently. Exporting authored tangents remains preferable for baked and morphing assets; generating bind-pose tangents cannot invent absent morph tangent deltas. Normal mapping on points/lines is rejected.
+
+PBR inputs are loaded through the shared asynchronous texture tracker. Missing requested PBR channels degrade to neutral values with a diagnostic, while missing base color keeps the existing error-texture behavior. Immutable 224-byte model material records use the existing shared image/sampler/record tables, preserving primitive counts and avoiding extra descriptor sets or per-frame pixel uploads. Raster, SSGI, camera RT and DDGI material hits share the material evaluator. Shading normals drive lighting and guides; geometric normals still drive ray bias and probe classification.
 
 ## Identity and publication
 

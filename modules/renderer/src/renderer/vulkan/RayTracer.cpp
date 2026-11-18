@@ -947,8 +947,15 @@ namespace mir::vk
             VkDeviceAddress blasAddress = mBlases[item.mesh.mIndex].mAddress;
             if (!item.deformation.empty())
             {
-                const DeformedMesh *posed = RecordDeformedMesh(cmd, frameIndex, *mesh, item.deformation,
-                    item.previousDeformation);
+                // Preserve animated history on the first frame of a pause/pose
+                // change. Once history agrees, the immutable cache needs no
+                // separate previous vertex buffer.
+                const bool reusable = item.settledDeformation &&
+                    (item.previousDeformation.empty() ||
+                     std::ranges::equal(item.deformation, item.previousDeformation));
+                const DeformedMesh *posed = reusable
+                    ? RecordSettledMesh(cmd, frameIndex, item.mesh, *mesh, item.deformation)
+                    : RecordDeformedMesh(cmd, frameIndex, *mesh, item.deformation, item.previousDeformation);
                 if (posed == nullptr)
                     continue;
                 vertexAddress = GetBufferAddress(mDevice->Handle(), posed->vertices);
@@ -1409,6 +1416,13 @@ namespace mir::vk
     {
         if (!mReloadPrepared)
             return;
+        // Commit runs with the device idle. A changed deformation shader must
+        // not keep vertices produced by the previous shader generation.
+        for (auto &entries : mSettledMeshes)
+        {
+            for (auto &entry : entries) DestroyDeformedMesh(entry.geometry);
+            entries.clear();
+        }
         if (mPipeline != VK_NULL_HANDLE)
             vkDestroyPipeline(mDevice->Handle(), mPipeline, nullptr);
         if (mDeformationPipeline != VK_NULL_HANDLE)

@@ -9,6 +9,7 @@
 #pragma once
 #include <animation/ModelAnimation.h>
 #include <core/ecs/components/WorldTransform.h>
+#include <memory>
 
 namespace mir
 {
@@ -43,4 +44,21 @@ namespace mir
     // Pure CPU calculation: no World, asset loading, renderer, shared writes or
     // logging. Invalid override names remain available even if later work throws.
     void EvaluateModelInstance(const ModelEvaluationInput &input, ModelEvaluationResult &result);
+
+    // Evaluates in model space, so moving the entity does not invalidate its
+    // skin/morph sample. Retains two settled poses; animated samples are transient.
+    class ModelPoseCache
+    {
+    public:
+        std::shared_ptr<const ModelEvaluationResult> Evaluate(ModelEvaluationInput input,
+            std::shared_ptr<const ModelResources> resources, bool settled);
+    private:
+        struct Entry
+        {
+            ModelEvaluationInput input;
+            std::shared_ptr<const ModelResources> resources;
+            std::shared_ptr<const ModelEvaluationResult> result;
+        };
+        std::vector<Entry> mEntries;
+    };
 }

@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <span>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -32,7 +33,7 @@ namespace mir
     inline constexpr uint32_t kMeshAssetContentVersion = 2;
     inline constexpr uint32_t kSkeletonAssetContentVersion = 1;
     inline constexpr uint32_t kAnimationAssetContentVersion = 1;
-    inline constexpr uint32_t kMaterialAssetContentVersion = 1;
+    inline constexpr uint32_t kMaterialAssetContentVersion = 2;
     // Texture payload v2 adds the format, color space and every mip level.
     inline constexpr uint32_t kTextureAssetContentVersion = 2;
     inline constexpr uint32_t kSurfaceMaterialAssetContentVersion = 1;
@@ -158,6 +159,27 @@ namespace mir
         float duration = 0;
         std::vector<AnimationTrack> tracks;
     };
+    // Stable order shared with renderer model material records and ModelMaterial.slang.
+    enum class MaterialTextureRole : uint32_t
+    {
+        Normal,
+        MetallicRoughness,
+        Occlusion,
+        Emissive,
+        Specular,
+        SpecularColor,
+        Clearcoat,
+        ClearcoatRoughness,
+        ClearcoatNormal,
+        Count
+    };
+    inline constexpr size_t kMaterialTextureRoles = size_t(MaterialTextureRole::Count);
+    struct MaterialTextureBinding
+    {
+        AssetId texture;
+        uint32_t texCoord = 0;
+        uint32_t wrapS = 10497, wrapT = 10497, minFilter = 9729, magFilter = 9729;
+    };
     struct MaterialAsset
     {
         glm::vec4 baseColor{1};
@@ -167,6 +189,12 @@ namespace mir
         float alphaCutoff = 0.5f;
         // glTF sampler enums; texture is decoded to RGBA8, sampled as sRGB.
         uint32_t wrapS = 10497, wrapT = 10497, minFilter = 9729, magFilter = 9729;
+        std::array<MaterialTextureBinding, kMaterialTextureRoles> textures{};
+        float metallic = 1, roughness = 1, normalScale = 1, occlusionStrength = 1;
+        glm::vec3 emissive{0};
+        glm::vec3 specularColor{1};
+        float specular = 1, ior = 1.5f, clearcoat = 0, clearcoatRoughness = 0, clearcoatNormalScale = 1;
+        bool unlit = false;
     };
     // How the renderer must sample the payload, not how the bytes were authored.
     enum class TextureFormat : uint32_t
@@ -215,7 +243,10 @@ namespace mir
         std::string unknownJson = "{}";
     };
 
-    inline uint32_t TextureMipCount(const TextureAsset &texture) { return 1 + static_cast<uint32_t>(texture.mips.size()); }
+    inline uint32_t TextureMipCount(const TextureAsset &texture)
+    {
+        return 1 + static_cast<uint32_t>(texture.mips.size());
+    }
     inline std::span<const uint8_t> TextureMipPixels(const TextureAsset &texture, uint32_t level)
     {
         if (level == 0)
@@ -227,8 +258,8 @@ namespace mir
     class AssetCache;
 
     uint32_t TypedAssetVersion(uint32_t typeTag);
-    // Explicit little-endian fields, no native struct/GLM padding on disk.
-    // LoadTypedAsset is cache.Load plus ReadTypedAsset; error says which one failed.
+// Explicit little-endian fields, no native struct/GLM padding on disk.
+// LoadTypedAsset is cache.Load plus ReadTypedAsset; error says which one failed.
 #define MIR_TYPED_ASSET(Type)                                                                                          \
     std::vector<std::byte> BuildTypedAsset(const Type &asset);                                                         \
     bool ReadTypedAsset(const AssetBlobView &blob, Type &asset, std::string &error);                                   \

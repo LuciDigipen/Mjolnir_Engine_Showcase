@@ -14,6 +14,35 @@
 
 namespace mir
 {
+    std::shared_ptr<const ModelEvaluationResult> ModelPoseCache::Evaluate(ModelEvaluationInput input,
+        std::shared_ptr<const ModelResources> resources, bool settled)
+    {
+        input.resources = resources.get();
+        input.world = {};
+        // A new resource generation must never reuse an old deformation.
+        std::erase_if(mEntries, [&](const Entry &entry) { return entry.resources != resources; });
+        if (settled)
+            for (auto it = mEntries.begin(); it != mEntries.end(); ++it)
+                if (it->input.clip == input.clip && it->input.scene == input.scene &&
+                    it->input.time == input.time && it->input.loop == input.loop &&
+                    it->input.overrides == input.overrides)
+                {
+                    Entry hit = std::move(*it);
+                    mEntries.erase(it);
+                    mEntries.push_back(std::move(hit));
+                    return mEntries.back().result;
+                }
+        auto result = std::make_shared<ModelEvaluationResult>();
+        EvaluateModelInstance(input, *result);
+        // Invalid overrides are removed during commit; do not cache that feedback.
+        if (settled && result->invalidOverrides.empty())
+        {
+            if (mEntries.size() == 2) mEntries.erase(mEntries.begin());
+            mEntries.push_back({std::move(input), std::move(resources), result});
+        }
+        return result;
+    }
+
     size_t ModelEvaluationGrain(size_t instances, size_t workers)
     {
         if (instances == 0) return 1;

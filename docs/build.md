@@ -66,19 +66,21 @@ ones are fast. If you already cloned without `--recurse-submodules`, run
 
 Then build and check it: [Build loop](#build-loop) and [Verify](#verify).
 
-## Optional RTXGI DDGI SDK
+## RTXGI DDGI SDK
 
-Enable GI support before building:
+GI support is enabled by default:
 
 ```powershell
-cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=ON
+cmake --preset windows-msvc-debug
 cmake --build --preset windows-msvc-debug
 ```
 
-The default is `OFF`. Enabling it fetches RTXGI-DDGI SDK 1.3.6 at commit
+The default is `ON`. Configuring fetches RTXGI-DDGI SDK 1.3.6 at commit
 `f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6`, without samples or submodules.
 It requires DXC with SPIR-V support from the Vulkan SDK or PATH; override its
-location with `-DRTXGI_DXC_EXECUTABLE=<path>`. Review the SDK's `License.txt`
+location with `-DRTXGI_DXC_EXECUTABLE=<path>`. To build without GI support, pass
+`-DMIR_WITH_RTXGI=OFF`. Existing build caches keep their previous setting until
+you change it explicitly. Review the SDK's `License.txt`
 before redistributing it.
 
 The engine owns probe resources and copies the SDK compute shaders to
@@ -149,6 +151,32 @@ stops the configure if they do not. The `windows-msvc-debug-float` preset
 builds with it OFF, into its own `builds/windows-msvc-debug-float/`. Tests that
 need double positions far from the origin report Skipped there. After changing
 code that handles positions, build and test both presets.
+
+**Precompiled headers.** Every compiled engine module privately precompiles stable
+standard-library headers, with selected GLM, ImGui and JSON headers added by the
+modules that use them. Each module builds its own PCH with its compiler settings.
+C sources, tests and sources with separate compiler settings keep their normal
+include order. To disable precompiled headers for an include-dependency check:
+
+```powershell
+cmake --preset windows-msvc-debug -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+cmake --build --preset windows-msvc-debug
+```
+
+Configure with `-DCMAKE_DISABLE_PRECOMPILE_HEADERS=OFF` to enable them again.
+Keep normal includes in source files so both configurations build independently.
+
+**Offline tools.** Development builds automatically build `AssetCooker` and
+`TerrainTool` in Release under `<build>/tools-release`. Builds, editor imports
+and packaging use those executables, while engine and tool-test libraries retain
+the parent configuration. The sub-build reuses the parent's vcpkg installation
+without installing packages and checks its sources on every build. Its compile
+parallelism is capped at four jobs to limit contention with the parent build.
+Release builds keep their tools in the parent tree without a sub-build.
+
+To debug the tools in the parent configuration, configure with
+`-DMIR_OPTIMIZE_ASSET_COOKER=OFF` and rebuild. Switching configurations does not
+change asset cache fingerprints. `ShaderPublisher` remains in the parent tree.
 
 **Reconfigure** every time a `CMakeLists.txt` or `vcpkg.json` changes.
 
@@ -534,11 +562,13 @@ Set it to `OFF` to omit `audio`, `audio_script`, their tests, and the app's
 audio registration and Lua bindings. Games run silently; saved audio components
 are skipped as unknown components. Scripts that call audio bindings should
 check that those methods exist first, as the HelloWorld audio demo does.
-`MIR_WITH_DLSS` defaults to `OFF`, which avoids fetching or linking NVIDIA NGX.
+`MIR_WITH_DLSS` and `MIR_WITH_RTXGI` default to `ON`. Pass
+`-DMIR_WITH_DLSS=OFF` and/or `-DMIR_WITH_RTXGI=OFF` to omit their SDKs.
+Existing build directories retain their cached values until explicitly changed.
 
 The `ci-windows-editor-debug` and `ci-windows-game-release` presets explicitly
-disable both options and enable tests. Each has matching configure, build and
-test presets, so no Wwise or NVIDIA SDK is needed:
+disable audio, DLSS and RTXGI and enable tests. Each has matching configure,
+build and test presets, so no Wwise or NVIDIA SDK is needed:
 
 ```powershell
 cmake --preset ci-windows-editor-debug
@@ -699,6 +729,11 @@ More info: [extending.md](extending.md).
 | A fatal error shows no box | `MjolnirErrorReporter` is missing next to the engine. Rebuild; the log and exit code still carry the error. |
 
 ## Changed
+
+*2026-11-15*, **Development builds run Release offline tools.** AssetCooker and
+TerrainTool use an automatic Release sub-build instead of partial Debug
+optimization. Tool tests retain Debug checks, and the opt-out builds tools in
+the parent configuration for debugging.
 
 *2026-10-01* — **World precision is a compile-time option.** `MIR_LARGE_WORLD`
 picks double or float world positions (`WorldReal`) and, through the vcpkg

@@ -116,7 +116,7 @@ namespace mir
                 if (!pipeline) continue;
 
                 uint32_t baseInstance = 0;
-                if (NeedsDrawRecord(material->mSurfaceMaterial, !material->mRecordId.IsNull()))
+                if (NeedsDrawRecord(material->mSurfaceMaterial || material->mModelShader, !material->mRecordId.IsNull()))
                 {
                     const std::optional<uint32_t> recordIndex = mDrawRecords->Acquire(frame);
                     if (!recordIndex) continue;
@@ -415,8 +415,9 @@ namespace mir
             }
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mDrawRecords->ResetFrame(mFrameSync->Index());
-            mRayTracer->ResetDeformations(mFrameSync->Index());
+            mRayTracer->ResetDeformations(mFrameSync->Index(), mResources.get());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
+            mImGuiOverlay->Collect(mFrameSync->CompletedValue());
             CollectReleasedResources(mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
             mMaterialStore->RefreshTextures(*mResources, mFrameSync->CompletedValue(), frame->signalValue);

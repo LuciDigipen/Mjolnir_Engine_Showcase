@@ -21,6 +21,18 @@ terrain_streaming.local.json
 # Local code retrieval caches
 /.rag/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Blender recovery files; the editable .blend sources remain versioned.
+*.blend[0-9]*
+*.blend@
+*.blend~
+
+# Desktop-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
 
 # IDE
 /.idea

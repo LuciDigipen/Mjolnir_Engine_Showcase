@@ -12,6 +12,45 @@ part of that context's lifetime: no `CreateContext`, no fonts, no backend. See
 
 `mir::editor` · depends `mir::imguiruntime`, `mir::renderer`, `mir::window` (public); `mir::core`, `mir::editortheme`, `imgui`, `imguizmo`, `iconfontcppheaders` (private) · API `modules/editor/include/editor/` · maintainer Sumin Park · reviewed 2026-09-17
 
+## Content browser previews
+
+The content browser toolbar switches between List (the default) and Grid. List
+uses shared type icons and requests no texture previews. Grid shows texture
+previews and shared icons for scripts, folders, models, audio and other files.
+The Size slider sets grid images from 48 to 128 pixels. Images preserve their
+aspect ratio, transparent areas show a checkerboard, and hovering shows the full
+filename. Selection and file actions work in either view.
+
+Options sets the thumbnail cache capacity, 256 by default and at most 256. Zero
+turns texture previews off. View, size and capacity are local editor preferences,
+not project settings. Only visible grid cells request previews, excess visible
+cells use their type icon when capacity is exhausted.
+
+`EditorModule` owns `ContentThumbnailCache`. A dedicated async decoder filters
+cooked textures on workers to at most 128 pixels on the longest side, using
+cooked mips when suitable. Images used by materials may have only packed derived
+outputs, and external model images may be raw blobs. These files use a cancellable
+editor background lane to decode their source image, sharing the background image
+decoder. Their cache identity includes the import revision, so recooking refreshes
+them without changing material outputs. The preview preserves cooked color space and filters alpha in
+premultiplied form. Only the small output survives the decode. Browser work
+admits at most one new decode per frame, two outstanding decodes, and two small
+uploads per frame through the regular upload budget. New requests wait while the
+scene asset service is busy. With `--workers 0`, the
+asset service runs decoding inline.
+
+Leaving view cancels unneeded decode leases and retires incomplete uploads.
+Ready previews remain in an LRU until eviction. Thumbnail uploads leave 64 image
+table slots free for scene allocations. When the table fills, scene allocations
+reclaim the least recently used unused thumbnails, including those retained in
+List. Visible previews stay pinned through the current UI frame. Texture loads
+that cannot obtain a slot remain pending and retry without an asset reload.
+Thumbnail bytes also participate in the shared GPU residency budget. Changed cooked
+content invalidates old previews, and failed previews
+are remembered until reload. No disk thumbnail cache is written. Texture and
+ImGui descriptor retirement both respect frames in flight. Mesh/model rendering
+and real-time previews are outside this feature.
+
 ## Model
 
 Project > Particles opens the source stack editor for the current game's particle
@@ -390,12 +429,12 @@ JSON are pick-only. A current event no bank lists, typed earlier or into an
 unknown bank, still shows at the top as "(not listed)".
 
 **Audio in Project Settings.** With `IEditorAudio` set, the panel has an Audio
-section between Physics layers and External Tools. In Edit its sliders change the
-project's default music and SFX volume and mute in memory through `SetDefaults`.
-Save writes the `audio` section of `project_settings.json` and makes it what the
-pause menu's Restore defaults goes back to, and it changes nothing that is heard
-now. The defaults are heard on a machine with no per-user settings file, through the
-audio module's apply path, and never rewrite a player file. "Reload Saved Audio
+section between Physics layers and External Tools. In Edit its sliders change a
+draft of the project's default music and SFX volume and mute. Save writes the
+`audio` section of `project_settings.json`, applies the defaults only after the
+write succeeds and makes them what the pause menu's Restore defaults goes back
+to. The audio module applies the saved defaults when no per-user settings file
+exists, and never rewrites a player file. "Reload Saved Audio
 Defaults" reads the saved section back and shows the problem when the file is
 unusable. In Play the defaults are greyed out and a "While playing" group changes
 what is heard at once. `EditorModule` takes the volumes at `PlayBegin` and puts
@@ -403,23 +442,20 @@ them back at `PlayEnd`, so neither that group nor the pause menu's Audio screen
 changes anything for good, and the defaults are never written from them. With
 `--no-editor` the volumes are not put back, as in a game build.
 
-**Project Settings, Post Processing and Input Settings edit the project's own
-values.** Their widgets change the shared `RenderSettings`, `PostProcessingSettings`,
-`InputMap` and `PhysicsLayerTable` directly, so a change is live at once, a script's
-write shows in the panel, and Save writes the current value to disk and changes
-nothing in memory. No panel keeps a whole-settings draft. A widget whose value needs
-validation edits a short-lived buffer and commits only a valid value. The SSGI
-widgets edit `mSsgiEdit` and the DDGI widgets `mDdgiEdit`, each kept while one of its
-widgets is active, shown with its `ValidationError()`, assigned into the shared value
-only when valid and dropped when no widget is active, so the renderer never sees a
-value it rejects. A layer name edits a buffer for its slot, and the name reaches the
-shared table only when `CheckPhysicsLayers` passes on a copy that has it, with the
-reason shown under the field otherwise. The collision grid edits the table directly.
-A new action's name is held in `mNewActionName` and committed when it is non-empty and
-unused. The only other copies are those Save takes to clear its status message on the
-next edit. "Reload Saved Physics Layers" and "Reload Saved Audio Defaults" read the
-saved section into a temporary and assign only on success, and the physics layers stay
-greyed out in Play.
+**Project Settings, Post Processing and Input Settings apply on Save.** Their
+widgets edit panel-local drafts of `RenderSettings`, `PostProcessingSettings`,
+`InputMap`, `PhysicsLayerTable` and audio defaults. Opening a panel initializes
+its draft from the current project values. A successful Save writes that section
+to disk, then publishes the draft to the shared runtime value. A failed write
+keeps the active value unchanged and retains the draft for retry. Closing the
+panel discards unsaved edits, and reopening starts from the current active value.
+External Tools likewise applies the saved IDE settings on the next launch.
+
+SSGI, DDGI and layer names validate edits before accepting them into their drafts.
+Invalid GI values disable Rendering Save. "Reload Saved Physics Layers" and
+"Reload Saved Audio Defaults" apply a valid saved section and replace the draft
+only on success. Physics layers and audio defaults stay greyed out in Play.
+The explicitly live "While playing" audio controls still preview changes at once.
 
 Component edits go to `History` as commands, like entity actions, so each one
 can be undone. They change no `LoadedScene` entry, so `App` has nothing to do

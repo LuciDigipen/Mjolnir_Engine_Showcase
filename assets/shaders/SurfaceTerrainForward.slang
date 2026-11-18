@@ -57,8 +57,7 @@ TerrainVSOutput vertexMain(TerrainVSInput input, uint baseInstance : SV_StartIns
     const float4 worldPos = mul(pushData.model, float4(input.pos, 1.0));
     output.position = mul(viewProj, worldPos);
     output.worldPos = worldPos.xyz;
-    output.normal = normalize(pushData.normalCol0.xyz * input.normal.x +
-                              pushData.normalCol1.xyz * input.normal.y +
+    output.normal = normalize(pushData.normalCol0.xyz * input.normal.x + pushData.normalCol1.xyz * input.normal.y +
                               pushData.normalCol2.xyz * input.normal.z);
     output.uv = input.uv;
     output.color = float4(input.color, input.alpha);
@@ -67,11 +66,12 @@ TerrainVSOutput vertexMain(TerrainVSInput input, uint baseInstance : SV_StartIns
     return output;
 }
 
-[shader("fragment")]
+    [shader("fragment")]
 #ifdef MIR_SSGI_SURFACE
-RasterSurfaceOutput fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_IsFrontFace)
+    RasterSurfaceOutput fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_IsFrontFace)
 #else
-float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target
+    float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_IsFrontFace)
+    : SV_Target
 #endif
 {
     const DrawRecord record = gDrawRecords[input.baseInstance];
@@ -87,8 +87,8 @@ float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_Is
     context.uvDensity = 0.0;
     context.recordOffset = record.materialOffset;
 
-    SurfaceInput surfaceInput = TerrainFrontend::Build(input.worldPos, macroNormal, input.uv,
-        input.localPos, input.color, frontFace, 0.0);
+    SurfaceInput surfaceInput =
+        TerrainFrontend::Build(input.worldPos, macroNormal, input.uv, input.localPos, input.color, frontFace, 0.0);
     surfaceInput.layerWeights = TerrainLayerWeights(record.terrain, input.localPos);
     const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), pushData.tint);
 
@@ -99,8 +99,9 @@ float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_Is
 #ifdef MIR_SSGI_SURFACE
     const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, input.worldPos);
     const float3 color = ApplyFog(PbrTotalLighting(lighting), length(cameraPos.xyz - input.worldPos));
-    return MakeRasterSurface(float4(color, 1.0), normalize(surface.normalWS), 1, surface.albedo * surface.ao,
-        PbrDiffuseRadiance(lighting), PbrDirectLighting(lighting), 1.0 - surface.f0);
+    return MakeRasterSurface(float4(color, 1.0), normalize(surface.normalWS), 1,
+                             surface.albedo * surface.ao * (1.0 - surface.metallic), PbrDiffuseRadiance(lighting),
+                             PbrDirectLighting(lighting), 1.0 - max(surface.f0.x, max(surface.f0.y, surface.f0.z)));
 #else
     const float3 color = ShadePbr(visibility, surface, input.worldPos);
     return float4(ApplyFog(color, length(cameraPos.xyz - input.worldPos)), 1.0);

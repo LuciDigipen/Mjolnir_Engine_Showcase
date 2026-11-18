@@ -1,4 +1,4 @@
-engine_add_module(physics)
+engine_add_module(physics PCH_HEADERS glm/glm.hpp)
 
 # PUBLIC physics_layers: PhysicsWorld.h holds a PhysicsLayerTable
 target_link_libraries(engine_physics PUBLIC mir::core mir::physics_layers)

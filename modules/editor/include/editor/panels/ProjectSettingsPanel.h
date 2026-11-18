@@ -34,6 +34,9 @@ namespace mir
 
         void OnHidden()
         {
+            mRenderingDraft.reset();
+            mLayersDraft.reset();
+            mAudioDraft.reset();
             mLayersStatus.clear();
             mRenderingStatusMessage.clear();
             mSsgiEdit.reset();
@@ -50,13 +53,16 @@ namespace mir
         void DrawAudio(IEditorAudio &audio, bool editing);
         void DrawExternalTools(const std::filesystem::path &savePath);
         void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsLayerTable *sharedLayers, bool editing);
-        void ReloadLayers(const std::filesystem::path &savePath, PhysicsLayerTable &sharedLayers);
+        bool ReloadLayers(const std::filesystem::path &savePath, PhysicsLayerTable &sharedLayers);
 
+        std::optional<RenderSettings> mRenderingDraft;
+        std::optional<PhysicsLayerTable> mLayersDraft;
+        std::optional<EditorAudioLevels> mAudioDraft;
         std::string mRenderingStatusMessage;
         // What Save wrote, so the message clears on the next edit. Nothing else reads it.
         RenderSettings mRenderingSavedCopy;
         // The SSGI value being typed, kept only while one of its widgets is active so an invalid value never
-        // reaches the shared settings.
+        // reaches the draft.
         std::optional<SsgiSettings> mSsgiEdit;
         // The same for the DDGI value, whose widgets can also pass through a value it rejects.
         std::optional<DdgiSettings> mDdgiEdit;
@@ -67,7 +73,7 @@ namespace mir
         bool mGiSceneBoundsRequested = false;
 
         // The layer name being typed, by slot, kept while its field is active. A name another layer already
-        // uses reaches the shared table only once it is valid.
+        // uses reaches the draft only once it is valid.
         struct LayerNameEdit
         {
             int slot = 0;

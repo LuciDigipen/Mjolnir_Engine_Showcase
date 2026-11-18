@@ -11,6 +11,7 @@
 #include <editor/AssetImportManager.h>
 #include <editor/BuildJob.h>
 #include <editor/ContentBrowserWatcher.h>
+#include <editor/ContentThumbnailCache.h>
 #include <editor/Editor.h>
 #include <editor/EditorAudio.h>
 #include <editor/PrefabAuthoringAdapter.h>
@@ -126,6 +127,7 @@ namespace mir
 
         AssetImportManager mImport;
         ContentBrowserWatcher mContentBrowser;
+        ContentThumbnailCache mThumbnails;
         ShaderHotReload mShaderHotReload;
         // before mSceneOps and mEditor: they die after them, once Shutdown stopped the editor using them
         PrefabAuthoringAdapter mPrefabAuthoring;

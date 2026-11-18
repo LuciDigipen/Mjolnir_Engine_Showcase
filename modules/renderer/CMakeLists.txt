@@ -1,4 +1,4 @@
-engine_add_module(renderer)
+engine_add_module(renderer PCH_HEADERS glm/glm.hpp imgui.h nlohmann/json.hpp)
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/DlssConfig.h.in

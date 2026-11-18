@@ -1,7 +1,8 @@
 # Surface material pipeline
 
-*State as of 2026-10-31.* Shared surface materials and terrain rendering include
-periodic macro variation and distance-faded parallax occlusion.
+Shared surface materials and terrain rendering include periodic macro variation,
+distance-faded parallax occlusion and metallic surface maps. The glTF material
+contract is documented separately in [gltf-importer.md](gltf-importer.md).
 
 ## Source contract
 
@@ -34,7 +35,7 @@ A surface material is one UTF-8 JSON object. Unknown root keys are preserved in
   frontend compiles its own raster, RT and reflected-layout registration.
 - `parameters` is keyed by the reflected field name. Packing rejects a missing
   field, an extra shape or an unsupported type.
-- `textures` is optional. When present, only the six roles above are accepted;
+- `textures` is optional. The roles above and optional linear `metallic` are accepted;
   each supplied role needs `path` and `colorSpace`. Missing roles use the packing
   defaults below. Without textures the material has no packed texture ids.
 - `resolution` defaults to 2048 and selects the level-0 size of every packed
@@ -54,13 +55,13 @@ reflected fields.
 
 ## Packing
 
-The six source roles map to three RGBA8 textures:
+The source roles, including optional metallic, map to three RGBA8 textures:
 
 | Output | Format | R | G | B | A |
 |---|---|---|---|---|---|
 | `albedoTexture` | `RGBA8_SRGB` | BaseColor R | BaseColor G | BaseColor B | AO, linear |
 | `normalTexture` | `RGBA8_UNORM` | normal X | normal Y | normal Z | 255 |
-| `surfaceTexture` | `RGBA8_UNORM` | roughness | displacement | linearized specular (F0) | 255 |
+| `surfaceTexture` | `RGBA8_UNORM` | roughness | displacement | linearized specular (F0) | metallic |
 
 Rules:
 
@@ -75,7 +76,9 @@ Rules:
   filtered and stored as UNORM.
 - Each output has a complete mip chain down to 1x1. An absent role contributes
   the constant default: white BaseColor/AO, flat normal, roughness 1,
-  displacement 0.5, F0 0.04.
+  displacement 0.5, F0 0.04, metallic 0. Metallic is filtered as linear data.
+  Rebuild cooked assets when updating from the previous unused-alpha packing;
+  the material cooker fingerprint changes to invalidate that cache.
 
 `TextureAsset` content version 2 stores `format`, `colorSpace`, the level-0
 RGBA bytes and each higher mip's width, height, offset and length. Readers
@@ -180,6 +183,23 @@ struct RockMaterial : IMaterial
 
 The pass supplies `SurfaceCommon.slang`; a material must not include it or
 declare bindings. Sampling goes through `context.Sample(texture, uv)`.
+
+Initialize output with `SurfaceOutput output = (SurfaceOutput)0` and set
+`output.f90 = float3(1)` and `output.dielectricF90 = 1` for ordinary dielectrics.
+Set `dielectricF0` to the dielectric reflectance before mixing metals. `f0` is
+RGB, so metals can use colored reflectance. Set `metallic` and interpolate dielectric F0 toward
+albedo for a metallic surface. The common lighting also accepts `clearcoat`,
+`clearcoatRoughness`, `clearcoatNormalWS`, `emissive` and `unlit`. A nonzero coat
+needs a valid world-space coat normal. Existing untextured default materials
+keep metallic/coat zero. Custom material shaders must initialize the new fields
+when migrating from the previous output structure.
+
+`ApplyTangentNormal` supplies shared normal decoding, scale, Y-convention handling,
+interpolated tangent orthogonalization and finite fallback. Terrain materials
+retain their existing `normalYUp` flip control and terrain-specific tangent frame;
+glTF normals use +Y without a global flip. Ocean shading retains its analytic wave
+normal. Raster sampling uses gradients, and RT sampling uses the ray footprint and
+UV density. Geometric normals remain separate from mapped shading normals.
 
 A material that animates reads `jitterAndPad.z`: seconds from a steady clock,
 running in the editor and in Play, wrapped at 3600. Use whole cycles per 3600 s

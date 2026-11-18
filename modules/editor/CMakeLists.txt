@@ -3,7 +3,7 @@ if(NOT MJOLNIR_WITH_EDITOR)
     return()
 endif()
 
-engine_add_module(editor)
+engine_add_module(editor PCH_HEADERS glm/glm.hpp imgui.h nlohmann/json.hpp)
 
 find_package(Stb REQUIRED)
 target_include_directories(engine_editor PRIVATE ${Stb_INCLUDE_DIR})
@@ -44,6 +44,7 @@ target_sources(engine_editor PRIVATE
     src/editor/BuildJob.cpp
     src/editor/BuildSettings.cpp
     src/editor/ContentBrowserWatcher.cpp
+    src/editor/ContentThumbnailCache.cpp
     src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
@@ -58,6 +59,7 @@ target_sources(engine_editor PRIVATE
     src/editor/PrefabWorkspace.cpp
     src/editor/ShaderHotReload.cpp
     src/editor/SnapToTerrain.cpp
+    src/editor/TextureThumbnailDecoder.cpp
     src/editor/ViewPie.cpp
     src/editor/history/ActiveCameraEdit.cpp
     src/editor/history/AuthoredCommand.cpp
@@ -70,6 +72,7 @@ target_sources(engine_editor PRIVATE
     src/editor/history/History.cpp
     src/editor/history/SubtreeRecord.cpp
     src/editor/IdeSettings.cpp
+    src/editor/ImageDecode.cpp
     src/editor/MaterialDraft.cpp
     src/editor/MaterialEditor.cpp
     src/editor/MaterialRecipe.cpp

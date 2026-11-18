@@ -15,10 +15,10 @@
 
 namespace mir
 {
-    // A surface material's pipeline reads gDrawRecords; a legacy one does not.
-    constexpr bool NeedsDrawRecord(bool surfaceMaterial, bool hasMaterialRecord)
+    // Surface and model pipelines read gDrawRecords; other legacy ones do not.
+    constexpr bool NeedsDrawRecord(bool readsDrawRecords, bool hasMaterialRecord)
     {
-        return surfaceMaterial && hasMaterialRecord;
+        return readsDrawRecords && hasMaterialRecord;
     }
 
     // Reset at the start of a frame, then one index per draw that reads the records.

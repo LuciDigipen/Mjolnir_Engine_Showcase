@@ -1,4 +1,4 @@
-﻿engine_add_module(audio)
+﻿engine_add_module(audio PCH_HEADERS glm/glm.hpp nlohmann/json.hpp)
 
 find_package(Wwise REQUIRED)
 
