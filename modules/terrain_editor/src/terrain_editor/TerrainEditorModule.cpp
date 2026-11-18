@@ -53,6 +53,7 @@
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -169,9 +170,10 @@ namespace mir
     {
     public:
         Extension(TerrainEditMode &mode, TerrainEditPanel &panel, TerrainLayerWorkspace &workspace,
-            std::filesystem::path releasesRoot, TerrainBakeProject bakeProject, TerrainOverlayApplier overlay)
+            std::filesystem::path releasesRoot, TerrainBakeProject bakeProject, TerrainOverlayApplier overlay,
+            std::function<bool(const std::filesystem::path &)> queueCook)
             : mMode(mode), mPanel(panel), mWorkspace(workspace), mReleasesRoot(std::move(releasesRoot)),
-              mBakeProject(std::move(bakeProject)), mApplyOverlay(std::move(overlay))
+              mBakeProject(std::move(bakeProject)), mApplyOverlay(std::move(overlay)), mQueueCook(std::move(queueCook))
         {
         }
 
@@ -585,6 +587,9 @@ namespace mir
             }
             mMaterialRecipeHasMaterials = true;
             MigrateTerrainMaterialChannels(*document, mMaterialDraft.MakePlan());
+            // The runtime only sees the layered material once it is cooked; auto import may be off.
+            if (!written.layeredMaterial.empty() && mQueueCook)
+                mQueueCook(mWorkspace.AssetsDir() / written.layeredMaterial);
 
             const std::string binding = written.layeredMaterial.empty() ? mMaterialDraft.Layers().front().material
                                                                         : written.layeredMaterial;
@@ -873,6 +878,7 @@ namespace mir
         std::filesystem::path mReleasesRoot;
         TerrainBakeProject mBakeProject;
         TerrainOverlayApplier mApplyOverlay;
+        std::function<bool(const std::filesystem::path &)> mQueueCook;
         TerrainBaseCache mBase;
         TerrainBaseWeightsCache mWeights;
         std::map<uint64_t, TerrainEditOverlaySession> mOverlays;
@@ -1002,7 +1008,8 @@ namespace mir
         : mWorkspace(project.mAssetsDir),
           mExtension(std::make_unique<Extension>(mMode, mPanel, mWorkspace, TerrainReleasesRoot(project.mRootDir),
               TerrainBakeProject{ project.mRootDir, project.mAssetsDir, project.mAssetIdRoot, TerrainToolPath() },
-              std::move(overlay)))
+              std::move(overlay),
+              [&editor](const std::filesystem::path &path) { return editor.Import().QueueChanged(path); }))
     {
         mRegistration = editor.Get().AddExtension(*mExtension);
     }
