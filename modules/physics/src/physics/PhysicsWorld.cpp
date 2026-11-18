@@ -150,6 +150,24 @@ namespace mir
             return std::isfinite(size) && size > 0.0f;
         }
 
+        // Jolt asserts on a negative damping, and a non-finite one would poison the velocity it scales.
+        float DampingOf(float damping)
+        {
+            return std::isfinite(damping) ? std::max(damping, 0.0f) : 0.0f;
+        }
+
+        JPH::EMotionQuality MotionQualityOf(PhysicsMotionQuality quality)
+        {
+            return quality == PhysicsMotionQuality::LinearCast ? JPH::EMotionQuality::LinearCast
+                                                              : JPH::EMotionQuality::Discrete;
+        }
+
+        PhysicsMotionQuality MotionQualityOf(JPH::EMotionQuality quality)
+        {
+            return quality == JPH::EMotionQuality::LinearCast ? PhysicsMotionQuality::LinearCast
+                                                             : PhysicsMotionQuality::Discrete;
+        }
+
         // Every size the shape reads Fits; MakeBaseShape refuses the rest.
         bool HasSize(const BodyDesc &desc)
         {
@@ -395,6 +413,10 @@ namespace mir
                 settings.mRestitution = properties->mRestitution;
                 settings.mGravityFactor = properties->mGravityFactor;
                 settings.mAllowSleeping = properties->mAllowSleeping;
+                settings.mLinearDamping = DampingOf(properties->mLinearDamping);
+                settings.mAngularDamping = DampingOf(properties->mAngularDamping);
+                settings.mApplyGyroscopicForce = properties->mGyroscopicForce;
+                settings.mMotionQuality = MotionQualityOf(properties->mMotionQuality);
                 // the shape gives the inertia, the mass scales it; given whatever the motion, for a later switch
                 if (properties->mMass > 0.0f)
                 {
@@ -887,6 +909,97 @@ namespace mir
         // a body asleep stays asleep when sleeping is turned off; the body interface takes the lock again
         if (!allow)
             mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyDamping(BodyHandle body, float linear, float angular)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        {
+            const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+            if (!lock.Succeeded())
+                return;
+            JPH::Body &joltBody = lock.GetBody();
+            // a Static body has no motion state to hold a damping; the authored one is put on when it moves
+            if (joltBody.IsStatic())
+                return;
+            joltBody.GetMotionProperties()->SetLinearDamping(DampingOf(linear));
+            joltBody.GetMotionProperties()->SetAngularDamping(DampingOf(angular));
+        }
+        // after the lock is released: the body interface takes it again
+        mImpl->Bodies().ActivateBody(*id);
+    }
+
+    float PhysicsWorld::BodyLinearDamping(BodyHandle body) const
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return 0.0f;
+
+        const JPH::BodyLockRead lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+        if (!lock.Succeeded() || lock.GetBody().IsStatic())
+            return JPH::BodyCreationSettings().mLinearDamping;
+        return lock.GetBody().GetMotionProperties()->GetLinearDamping();
+    }
+
+    float PhysicsWorld::BodyAngularDamping(BodyHandle body) const
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return 0.0f;
+
+        const JPH::BodyLockRead lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+        if (!lock.Succeeded() || lock.GetBody().IsStatic())
+            return JPH::BodyCreationSettings().mAngularDamping;
+        return lock.GetBody().GetMotionProperties()->GetAngularDamping();
+    }
+
+    void PhysicsWorld::SetBodyGyroscopicForce(BodyHandle body, bool apply)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        {
+            const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+            if (!lock.Succeeded() || !lock.GetBody().IsRigidBody())
+                return;
+            lock.GetBody().SetApplyGyroscopicForce(apply);
+        }
+        mImpl->Bodies().ActivateBody(*id);
+    }
+
+    bool PhysicsWorld::BodyGyroscopicForce(BodyHandle body) const
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return false;
+
+        const JPH::BodyLockRead lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+        if (!lock.Succeeded() || !lock.GetBody().IsRigidBody())
+            return false;
+        return lock.GetBody().GetApplyGyroscopicForce();
+    }
+
+    void PhysicsWorld::SetBodyMotionQuality(BodyHandle body, PhysicsMotionQuality quality)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mImpl->Bodies().GetMotionType(*id) == JPH::EMotionType::Static)
+            return;
+
+        mImpl->Bodies().SetMotionQuality(*id, MotionQualityOf(quality));
+        mImpl->Bodies().ActivateBody(*id);
+    }
+
+    PhysicsMotionQuality PhysicsWorld::BodyMotionQuality(BodyHandle body) const
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mImpl->Bodies().GetMotionType(*id) == JPH::EMotionType::Static)
+            return PhysicsMotionQuality::Discrete;
+
+        return MotionQualityOf(mImpl->Bodies().GetMotionQuality(*id));
     }
 
     void PhysicsWorld::WakeBody(BodyHandle body)

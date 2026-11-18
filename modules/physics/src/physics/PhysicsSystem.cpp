@@ -60,6 +60,10 @@ namespace mir
             desc.mFriction = rigidBody.friction;
             desc.mRestitution = rigidBody.restitution;
             desc.mAllowSleeping = rigidBody.allowSleeping;
+            desc.mLinearDamping = rigidBody.linearDamping;
+            desc.mAngularDamping = rigidBody.angularDamping;
+            desc.mGyroscopicForce = rigidBody.gyroscopicForce;
+            desc.mMotionQuality = rigidBody.motionQuality;
             return desc;
         }
 
@@ -167,9 +171,15 @@ namespace mir
                 if (now.motion != applied.motion)
                 {
                     physics.SetBodyMotion(body, now.motion);
-                    // a mass edited while it could not apply is put on when the body starts to move by force
+                    // a mass or a damping edited while it could not apply is put on when the body starts to move by
+                    // force: a Static body has no motion state for them to live in
                     if (now.motion == PhysicsMotion::Dynamic)
+                    {
                         physics.SetBodyMass(body, now.mass);
+                        physics.SetBodyDamping(body, now.linearDamping, now.angularDamping);
+                        physics.SetBodyGyroscopicForce(body, now.gyroscopicForce);
+                        physics.SetBodyMotionQuality(body, now.motionQuality);
+                    }
                 }
 
                 if (scaled || now.shape != applied.shape || now.halfExtent != applied.halfExtent
@@ -190,6 +200,12 @@ namespace mir
                     physics.SetBodyMaterial(body, now.friction, now.restitution);
                 if (now.gravityFactor != applied.gravityFactor)
                     physics.SetBodyGravityFactor(body, now.gravityFactor);
+                if (now.linearDamping != applied.linearDamping || now.angularDamping != applied.angularDamping)
+                    physics.SetBodyDamping(body, now.linearDamping, now.angularDamping);
+                if (now.gyroscopicForce != applied.gyroscopicForce)
+                    physics.SetBodyGyroscopicForce(body, now.gyroscopicForce);
+                if (now.motionQuality != applied.motionQuality)
+                    physics.SetBodyMotionQuality(body, now.motionQuality);
                 if (now.allowSleeping != applied.allowSleeping)
                     physics.SetBodyAllowSleeping(body, now.allowSleeping);
                 if (now.detectStay != applied.detectStay)

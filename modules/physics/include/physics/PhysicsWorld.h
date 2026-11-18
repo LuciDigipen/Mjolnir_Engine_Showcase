@@ -59,6 +59,11 @@ namespace mir
         float mFriction = 0.2f;
         float mRestitution = 0.0f;
         bool mAllowSleeping = true;
+        // Jolt's own defaults, so an authored body keeps the motion it had before they were exposed.
+        float mLinearDamping = 0.05f;
+        float mAngularDamping = 0.05f;
+        bool mGyroscopicForce = false;
+        PhysicsMotionQuality mMotionQuality = PhysicsMotionQuality::Discrete;
     };
 
     struct ColliderView;
@@ -174,6 +179,19 @@ namespace mir
         // Scales the inertia with it; a mass at or below 0 is ignored.
         void SetBodyMass(BodyHandle body, float mass);
         void SetBodyAllowSleeping(BodyHandle body, bool allow);
+        // How fast a body loses velocity on its own; a negative value is taken as 0. A Static body has none until it
+        // moves.
+        void SetBodyDamping(BodyHandle body, float linear, float angular);
+        // Keeps a spinning body's angular momentum fixed in world space instead of letting its angular velocity drift.
+        void SetBodyGyroscopicForce(BodyHandle body, bool apply);
+        // LinearCast sweeps the body between steps instead of only sampling its ends.
+        void SetBodyMotionQuality(BodyHandle body, PhysicsMotionQuality quality);
+
+        // What the body holds now; a Static body has no motion state and answers the defaults.
+        float BodyLinearDamping(BodyHandle body) const;
+        float BodyAngularDamping(BodyHandle body) const;
+        bool BodyGyroscopicForce(BodyHandle body) const;
+        PhysicsMotionQuality BodyMotionQuality(BodyHandle body) const;
 
         // A Dynamic or Kinematic body that rests, or that has not been touched for a while, falls asleep.
         void WakeBody(BodyHandle body);

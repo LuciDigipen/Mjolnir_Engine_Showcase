@@ -43,6 +43,10 @@ namespace mir
         float restitution = 0.0f;
         bool allowSleeping = true;
         int layer = 0;
+        float linearDamping = 0.05f;
+        float angularDamping = 0.05f;
+        bool gyroscopicForce = false;
+        PhysicsMotionQuality motionQuality = PhysicsMotionQuality::Discrete;
 
         friend bool operator==(const AppliedBody &, const AppliedBody &) = default;
     };
@@ -71,6 +75,13 @@ namespace mir
         bool allowSleeping = true;
         // Which layer the collider is on, 0 to 31: what it may collide with, and what a ray cast can ask for.
         int layer = 0;
+        // Velocity fraction lost per second; 0 leaves the motion to forces alone.
+        float linearDamping = 0.05f;
+        float angularDamping = 0.05f;
+        // Keeps the angular momentum of a spinning body fixed in world space, so its angular velocity wanders.
+        bool gyroscopicForce = false;
+        // LinearCast sweeps the collider between steps, so a fast body cannot pass through thin geometry.
+        PhysicsMotionQuality motionQuality = PhysicsMotionQuality::Discrete;
 
         // Runtime state PhysicsSystem keeps; not in the field table, so never saved.
         struct Runtime
@@ -105,7 +116,8 @@ namespace mir
         return { rigidBody.motion, rigidBody.shape, rigidBody.halfExtent, rigidBody.radius, rigidBody.halfHeight,
             rigidBody.axis, rigidBody.offset, rigidBody.rotationOffset, rigidBody.isTrigger, rigidBody.detectStay,
             rigidBody.mass, rigidBody.gravityFactor, rigidBody.friction, rigidBody.restitution, rigidBody.allowSleeping,
-            rigidBody.layer };
+            rigidBody.layer, rigidBody.linearDamping, rigidBody.angularDamping, rigidBody.gyroscopicForce,
+            rigidBody.motionQuality };
     }
 
     // A body the simulation moves, as opposed to one it only collides against.
@@ -147,6 +159,13 @@ namespace mir
         { .mName = "restitution", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, restitution),
          .mClamped = true, .mMin = 0.0f, .mMax = 1.0f },
         { .mName = "allowSleeping", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, allowSleeping) },
+        { .mName = "linearDamping", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, linearDamping),
+         .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX }, // Jolt asserts on a negative damping
+        { .mName = "angularDamping", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, angularDamping),
+         .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX },
+        { .mName = "gyroscopicForce", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, gyroscopicForce) },
+        { .mName = "motionQuality", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, motionQuality),
+         .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsMotionQualityNames },
         { .mName = "layer", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, layer) },
     };
 

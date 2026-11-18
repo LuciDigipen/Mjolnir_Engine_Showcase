@@ -1715,3 +1715,82 @@ TEST_CASE("A far dynamic body lands on a far static one", "[physics][lwc]")
 
     CHECK(std::abs(restHeight[1] - restHeight[0]) <= 1e-4);
 }
+
+TEST_CASE("Damping, gyroscopic force and motion quality edited in Play reach the live body", "[physics][edit][damping]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody floating = kDynamicSphere;
+    floating.gravityFactor = 0.0f;
+    floating.allowSleeping = false;
+    floating.linearDamping = 0.0f;
+    floating.angularDamping = 0.0f;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), floating);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+
+    fixture.Physics().SetBodyLinearVelocity(handle, glm::vec3(2.0f, 0.0f, 0.0f));
+    fixture.Run(60);
+    CHECK(fixture.Physics().BodyLinearVelocity(handle).x == Catch::Approx(2.0f).margin(1e-3f));
+
+    BodyComponent(fixture, entity).linearDamping = 1.0f;
+    BodyComponent(fixture, entity).angularDamping = 1.0f;
+    BodyComponent(fixture, entity).gyroscopicForce = true;
+    BodyComponent(fixture, entity).motionQuality = mir::PhysicsMotionQuality::LinearCast;
+    fixture.Run(1);
+    CHECK(fixture.Physics().BodyLinearDamping(handle) == Catch::Approx(1.0f));
+    CHECK(fixture.Physics().BodyAngularDamping(handle) == Catch::Approx(1.0f));
+    CHECK(fixture.Physics().BodyGyroscopicForce(handle));
+    CHECK(fixture.Physics().BodyMotionQuality(handle) == mir::PhysicsMotionQuality::LinearCast);
+
+    fixture.Physics().SetBodyAngularVelocity(handle, glm::vec3(0.0f, 2.0f, 0.0f));
+    fixture.Run(59);
+    CHECK(fixture.Physics().BodyLinearVelocity(handle).x < 1.0f);
+    CHECK(fixture.Physics().BodyAngularVelocity(handle).y < 1.0f);
+}
+
+TEST_CASE("A shape rebuild keeps the damping, gyroscopic force and motion quality", "[physics][edit][damping]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody box{ .motion = mir::PhysicsMotion::Dynamic, .shape = mir::PhysicsShape::Box };
+    box.halfExtent = glm::vec3(0.5f);
+    box.gravityFactor = 0.0f;
+    box.allowSleeping = false;
+    box.linearDamping = 2.0f;
+    box.angularDamping = 0.5f;
+    box.gyroscopicForce = true;
+    box.motionQuality = mir::PhysicsMotionQuality::LinearCast;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), box);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+
+    BodyComponent(fixture, entity).halfExtent = glm::vec3(1.0f, 2.0f, 3.0f);
+    fixture.Run(1);
+
+    CHECK(BodyOfEntity(fixture, entity) == handle);
+    CHECK(fixture.Physics().BodyLinearDamping(handle) == Catch::Approx(2.0f));
+    CHECK(fixture.Physics().BodyAngularDamping(handle) == Catch::Approx(0.5f));
+    CHECK(fixture.Physics().BodyGyroscopicForce(handle));
+    CHECK(fixture.Physics().BodyMotionQuality(handle) == mir::PhysicsMotionQuality::LinearCast);
+}
+
+TEST_CASE("Damping and motion quality set on a Static body are put on when it moves", "[physics][edit][damping]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody rest = kDynamicSphere;
+    rest.motion = mir::PhysicsMotion::Static;
+    rest.gravityFactor = 0.0f;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), rest);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+
+    mir::LogHistory::Clear();
+    BodyComponent(fixture, entity).linearDamping = 3.0f;
+    BodyComponent(fixture, entity).motionQuality = mir::PhysicsMotionQuality::LinearCast;
+    fixture.Run(1);
+
+    BodyComponent(fixture, entity).motion = mir::PhysicsMotion::Dynamic;
+    fixture.Run(1);
+
+    CHECK(fixture.Physics().BodyLinearDamping(handle) == Catch::Approx(3.0f));
+    CHECK(fixture.Physics().BodyMotionQuality(handle) == mir::PhysicsMotionQuality::LinearCast);
+    // a Static body has no motion state, so Jolt is never asked and logs no assert
+    for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
+        CHECK(entry.message.find("Jolt assert") == std::string::npos);
+}

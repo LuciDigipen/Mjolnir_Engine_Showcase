@@ -14,6 +14,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
+#include <glm/trigonometric.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -579,4 +580,88 @@ TEST_CASE("A restricted static body stops only the dynamic bodies allowed to tou
     world.ClearContactRestriction(refused);
     StepFor(world, 120);
     CHECK(MetersOf(world, refused).y > 0.5);
+}
+
+namespace
+{
+    float DirectionChange(const glm::vec3 &from, const glm::vec3 &to)
+    {
+        const float dot = glm::dot(glm::normalize(from), glm::normalize(to));
+        return glm::degrees(std::acos(std::clamp(dot, -1.0f, 1.0f)));
+    }
+
+    mir::BodyHandle AddFloatingBox(mir::PhysicsWorld &world, const mir::WorldVec3 &center, const glm::vec3 &halfExtent,
+        const mir::BodyDesc &properties)
+    {
+        mir::BodyDesc desc = properties;
+        desc.mMotion = mir::PhysicsMotion::Dynamic;
+        desc.mShape = mir::PhysicsShape::Box;
+        desc.mPosition = At(center);
+        desc.mHalfExtent = halfExtent;
+        return world.CreateBody(desc);
+    }
+}
+
+TEST_CASE("Zero damping leaves a body's velocity alone and the default damping slows it", "[physics][damping]")
+{
+    mir::PhysicsWorld world;
+
+    mir::BodyDesc free;
+    free.mGravityFactor = 0.0f;
+    free.mAllowSleeping = false;
+    free.mLinearDamping = 0.0f;
+    free.mAngularDamping = 0.0f;
+    const mir::BodyHandle steady = AddFloatingBox(world, {}, glm::vec3(0.5f), free);
+
+    mir::BodyDesc damped;
+    damped.mGravityFactor = 0.0f;
+    damped.mAllowSleeping = false;
+    const mir::BodyHandle slowing = AddFloatingBox(world, mir::WorldVec3(100.0, 0.0, 0.0), glm::vec3(0.5f), damped);
+    // the defaults are the ones a body had before the fields were exposed
+    CHECK(world.BodyLinearDamping(slowing) == 0.05f);
+    CHECK(world.BodyAngularDamping(slowing) == 0.05f);
+    CHECK_FALSE(world.BodyGyroscopicForce(slowing));
+    CHECK(world.BodyMotionQuality(slowing) == mir::PhysicsMotionQuality::Discrete);
+
+    REQUIRE(world.SetBodyLinearVelocity(steady, glm::vec3(2.0f, 0.0f, 0.0f)));
+    REQUIRE(world.SetBodyAngularVelocity(steady, glm::vec3(0.0f, 1.0f, 0.0f)));
+    REQUIRE(world.SetBodyLinearVelocity(slowing, glm::vec3(2.0f, 0.0f, 0.0f)));
+    REQUIRE(world.SetBodyAngularVelocity(slowing, glm::vec3(0.0f, 1.0f, 0.0f)));
+
+    StepFor(world, 60);
+
+    const glm::vec3 steadyLinear = world.BodyLinearVelocity(steady);
+    const glm::vec3 steadyAngular = world.BodyAngularVelocity(steady);
+    CHECK(std::abs(steadyLinear.x - 2.0f) <= 1.0e-4f * 2.0f);
+    CHECK(std::abs(steadyAngular.y - 1.0f) <= 1.0e-4f);
+
+    CHECK(world.BodyLinearVelocity(slowing).x < 2.0f * 0.99f);
+    CHECK(world.BodyAngularVelocity(slowing).y < 1.0f * 0.99f);
+}
+
+TEST_CASE("The gyroscopic force turns the spin of an asymmetric body", "[physics][gyroscopic]")
+{
+    mir::PhysicsWorldDesc desc;
+    desc.mGravity = glm::vec3(0.0f);
+    mir::PhysicsWorld world(desc);
+
+    mir::BodyDesc properties;
+    properties.mAllowSleeping = false;
+    properties.mLinearDamping = 0.0f;
+    properties.mAngularDamping = 0.0f;
+    const glm::vec3 halfExtent(0.5f, 1.0f, 2.0f);
+    // off every principal axis of the box
+    const glm::vec3 spin = glm::normalize(glm::vec3(1.0f, 2.0f, 3.0f)) * 4.0f;
+
+    const mir::BodyHandle plain = AddFloatingBox(world, {}, halfExtent, properties);
+    mir::BodyDesc turned = properties;
+    turned.mGyroscopicForce = true;
+    const mir::BodyHandle gyroscopic = AddFloatingBox(world, mir::WorldVec3(100.0, 0.0, 0.0), halfExtent, turned);
+
+    REQUIRE(world.SetBodyAngularVelocity(plain, spin));
+    REQUIRE(world.SetBodyAngularVelocity(gyroscopic, spin));
+    StepFor(world, 60);
+
+    CHECK(DirectionChange(spin, world.BodyAngularVelocity(plain)) < 0.5f);
+    CHECK(DirectionChange(spin, world.BodyAngularVelocity(gyroscopic)) > 5.0f);
 }
