@@ -5,6 +5,7 @@ target_link_libraries(engine_flight
            mir::physics
            mir::input
            mir::assets
+    PRIVATE mir::renderer
 )
 
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -26,7 +27,9 @@ target_sources(engine_flight PRIVATE
     src/flight/FlightLandingGear.cpp
     src/flight/FlightModule.cpp
     src/flight/FlightPropulsion.cpp
+    src/flight/FlightReset.cpp
     src/flight/FlightStepGate.cpp
+    src/flight/FlightTelemetry.cpp
     src/flight/FlightTouchdownSystem.cpp
 )
 

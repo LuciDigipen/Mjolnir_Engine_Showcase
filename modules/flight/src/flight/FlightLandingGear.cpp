@@ -44,6 +44,8 @@ namespace mir
     {
         LandingGearState &gearState = runtime.gear;
         gearState.stepTouchdowns.Clear();
+        gearState.force = glm::vec3{0.0f};
+        gearState.moment = glm::vec3{0.0f};
 
         const AircraftState &state = runtime.state;
         const glm::quat toLocal = glm::inverse(state.rotation);
@@ -113,6 +115,8 @@ namespace mir
 
             runtime.accumulator.force += force;
             runtime.accumulator.moment += glm::cross(arm, force);
+            gearState.force += force;
+            gearState.moment += glm::cross(arm, force);
 
             const bool firstContact = !point.inContact;
             point.inContact = true;

@@ -13,6 +13,7 @@
 #include <flight/AerodynamicModel.h>
 #include <flight/FlightCurve.h>
 
+#include <glm/trigonometric.hpp>
 #include <glm/vec3.hpp>
 
 #include <cstddef>
@@ -109,6 +110,8 @@ namespace mir
         Camera camera;
         std::vector<Node> nodes;
         float throttleRate = 0.0f; // per second
+        // Below this margin to the L2 critical angle the stall warning is on.
+        float stallWarningMargin = glm::radians(5.0f);
         Actuators actuators;
         std::vector<Engine> engines;
         std::vector<Gear> gear;

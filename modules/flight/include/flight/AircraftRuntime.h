@@ -10,6 +10,7 @@
 
 #include <flight/AircraftConfig.h>
 #include <flight/AerodynamicModel.h>
+#include <flight/FlightTelemetry.h>
 
 #include <core/ecs/ComponentFields.h>
 #include <core/math/WorldReal.h>
@@ -150,11 +151,13 @@ namespace mir
         void Clear() { count = 0; }
     };
 
-    // Each gear's contact state this step and the touchdowns AfterStep moves to the pending list.
+    // Each gear's contact state this step, the step's touchdowns and the gear stage's force totals.
     struct LandingGearState
     {
         GearPointState points[kMaxGear]{};
         TouchdownList stepTouchdowns;
+        glm::vec3 force{0.0f};
+        glm::vec3 moment{0.0f};
     };
 
     struct AircraftRuntime
@@ -163,7 +166,10 @@ namespace mir
         ForceAccumulator accumulator;
         // Script- and system-written wind, consumed and cleared by the environment stage.
         glm::vec3 additionalWind{ 0.0f };
+        // The wind the environment stage used this step, kept for the post-step air data.
+        glm::vec3 stepWind{ 0.0f };
         AirData airData;
+        FlightTelemetry telemetry;
         ForceMoment aero;
         PropulsionState propulsion;
         LandingGearState gear;

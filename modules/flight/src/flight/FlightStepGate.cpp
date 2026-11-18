@@ -72,13 +72,26 @@ namespace mir
             });
     }
 
-    void FlightStepGate::AfterStep(World &world, PhysicsWorld &, float)
+    void FlightStepGate::AfterStep(World &world, PhysicsWorld &physics, float)
     {
+        const FlightEnvironment *environment = world.TryResource<FlightEnvironment>();
+        const FlightEnvironment fallbackEnvironment;
+
         world.GetOrCreateQuery<Aircraft, RigidBody>().ForEach(
-            [](Entity, Aircraft &aircraft, RigidBody &)
+            [&](Entity, Aircraft &aircraft, RigidBody &rigidBody)
             {
                 aircraft.runtime.pendingTouchdowns.Append(aircraft.runtime.gear.stepTouchdowns);
                 aircraft.runtime.gear.stepTouchdowns.Clear();
+
+                if (aircraft.runtime.config == nullptr || !HasDynamicBody(rigidBody))
+                    return;
+
+                const BodyHandle body = rigidBody.runtime.body;
+                const std::optional<WorldPosition> position = physics.BodyPosition(body);
+                if (!position)
+                    return;
+
+                RunTelemetry(aircraft, physics, *position, body, environment ? *environment : fallbackEnvironment);
             });
     }
 
@@ -86,8 +99,8 @@ namespace mir
     {
         AircraftRuntime &runtime = aircraft.runtime;
         const AtmosphereSample atmosphere = SampleAtmosphere(environment, runtime.state.position.y);
-        runtime.airData =
-            ComputeAirData(runtime.state, environment.wind + runtime.additionalWind, atmosphere);
+        runtime.stepWind = environment.wind + runtime.additionalWind;
+        runtime.airData = ComputeAirData(runtime.state, runtime.stepWind, atmosphere);
         runtime.additionalWind = glm::vec3{ 0.0f };
     }
 
@@ -152,5 +165,32 @@ namespace mir
         runtime.aero = AerodynamicModelFor(aircraft.tier).Evaluate(input, config.aero);
         runtime.accumulator.force += runtime.aero.force;
         runtime.accumulator.moment += runtime.aero.moment;
+    }
+
+    void FlightStepGate::RunTelemetry(Aircraft &aircraft, PhysicsWorld &physics, const WorldPosition &position,
+        BodyHandle body, const FlightEnvironment &environment)
+    {
+        AircraftRuntime &runtime = aircraft.runtime;
+
+        AircraftState state;
+        state.position = position.Meters();
+        state.rotation = physics.BodyRotation(body);
+        state.linearVelocity = physics.BodyLinearVelocity(body);
+        state.angularVelocity = physics.BodyAngularVelocity(body);
+        const glm::quat toLocal = glm::inverse(state.rotation);
+        state.linearVelocityBody = LocalToBody(toLocal * state.linearVelocity);
+        state.angularVelocityBody = LocalToBody(toLocal * state.angularVelocity);
+
+        const AtmosphereSample atmosphere = SampleAtmosphere(environment, position.Meters().y);
+        const AirData airData = ComputeAirData(state, runtime.stepWind, atmosphere);
+
+        const BodyHandle excluded[1] = {body};
+        RayFilter filter;
+        filter.mExclude = excluded;
+        const std::optional<RayHit> ground =
+            physics.RayCast(position, glm::vec3{0.0f, -1.0f, 0.0f}, kTelemetryGroundRayLength, filter);
+
+        FillFlightTelemetry(*runtime.config, state, airData, ground ? ground->mDistance : 0.0f, ground.has_value(),
+            runtime, runtime.telemetry);
     }
 }

@@ -31,5 +31,7 @@ namespace mir
         void RunLandingGear(Aircraft &aircraft, const WorldPosition &origin, PhysicsWorld &physics,
             BodyHandle body, float dt);
         void RunAerodynamics(Aircraft &aircraft, float dt);
+        void RunTelemetry(Aircraft &aircraft, PhysicsWorld &physics, const WorldPosition &position, BodyHandle body,
+            const FlightEnvironment &environment);
     };
 }

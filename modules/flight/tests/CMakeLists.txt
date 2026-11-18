@@ -9,4 +9,8 @@ engine_add_module_tests(flight
     FlightStepGate.tests.cpp
     LandingGear.tests.cpp
     Propulsion.tests.cpp
+    Telemetry.tests.cpp
 )
+
+# flight links renderer privately for camera cuts; the telemetry test adds a Camera and reads the cut list.
+target_link_libraries(engine_flight_tests PRIVATE mir::renderer)

@@ -30,9 +30,8 @@ namespace mir
         {
             return key == "version" || key == "mass" || key == "inertia" || key == "centerOfMass"
                 || key == "reference" || key == "camera" || key == "nodes"
-                || key == "throttleRate" || key == "actuators" || key == "engines" || key == "gear" || key == "aero"
-                // owned by a later issue, accepted and ignored for now
-                || key == "stallWarningMarginDeg";
+                || key == "throttleRate" || key == "stallWarningMarginDeg" || key == "actuators"
+                || key == "engines" || key == "gear" || key == "aero";
         }
 
         bool ReadNumber(const Json &value, const std::string &path, float &out, std::string &error)
@@ -842,6 +841,14 @@ namespace mir
             }
             if (!ReadPositiveNumber(*throttleRate, "throttleRate", config.throttleRate, error))
                 return false;
+
+            if (const auto margin = document.find("stallWarningMarginDeg"); margin != document.end())
+            {
+                float degrees = 0.0f;
+                if (!ReadNonNegativeNumber(*margin, "stallWarningMarginDeg", degrees, error))
+                    return false;
+                config.stallWarningMargin = glm::radians(degrees);
+            }
 
             if (!ParseActuators(document, config.actuators, error))
                 return false;

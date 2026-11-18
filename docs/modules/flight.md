@@ -2,7 +2,8 @@
 
 The shared fixed-wing flight model: the `Aircraft` component, the `*.aircraft.json` configuration asset and the per-step pipeline that turns controls into forces on a Jolt body. Games use it through a Prefab, a configuration file and Lua; it owns no rendering or UI.
 
-`mir::flight` · depends `mir::core`, `mir::physics`, `mir::input`, `mir::assets` · API `modules/flight/include/flight/` · maintainer Jackey Cen · reviewed 2026-11-18
+`mir::flight` · depends `mir::core`, `mir::physics`, `mir::input`, `mir::assets`; `mir::renderer` private, for
+camera cuts · API `modules/flight/include/flight/` · maintainer Jackey Cen · reviewed 2026-11-18
 
 ## Model
 
@@ -14,7 +15,9 @@ path once. The store keeps the decoded configs for the module's lifetime, and `A
 into it.
 
 `FlightStepGate` is the per-step pipeline. It reads the body state before the physics step and skips any
-aircraft whose config did not load.
+aircraft whose config did not load. After the step it re-reads the body, recomputes the air data with the wind
+that step used, raycasts the ground and fills `AircraftRuntime::telemetry`; the post-step body state never
+replaces the step's `state` or `airData`.
 
 `FlightEnvironment` is a World resource that `FlightModule` emplaces when absent: the sea level, the density
 model (ISA by default, or a constant density) and the global wind. The environment stage samples the
@@ -32,6 +35,10 @@ default playable model; `Aircraft::tier` defaults to it.
 `FlightTouchdownSystem` runs in LateUpdate, after the frame's fixed steps, and moves each aircraft's
 `pendingTouchdowns` into `touchdowns`, which then holds them for the whole next frame;
 `AircraftTouchdowns` exposes the list for scripts.
+
+`ResetAircraft` teleports an aircraft to a pose and speed through `PhysicsSystem::Teleport`, points its velocity
+along the new nose, resets the actuators, trim, gear contact state and engine rpm, and cuts every active
+`Camera`; it is the call behind a respawn or a start from the air.
 
 `FlightInputSystem` runs in Update, after PreUpdate's `InputSystem` and before the frame's fixed steps. For
 every `Aircraft` with `playerInput` it copies the pitch, roll, yaw, throttle and brake actions into
@@ -53,6 +60,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `AircraftConfigSystem`, `WriteMassProperties` | `<flight/AircraftConfigSystem.h>` | FixedUpdate system that writes mass properties |
 | `FlightModule` | `<flight/FlightModule.h>` | registers components, the input system, the config system and the step gate |
 | `FlightStepGate` | `<flight/FlightStepGate.h>` | the before/after step pipeline |
+| `FlightTelemetry`, `TelemetryForces`, `FillFlightTelemetry` | `<flight/FlightTelemetry.h>` | the post-step quantities a HUD reads, and the fill from a re-read state |
+| `ResetAircraft` | `<flight/FlightReset.h>` | teleports an aircraft and resets its velocity, actuators, gear state and engines |
 | `FlightInput`, `AddFlightDefaultActions` | `<flight/FlightInput.h>` | the flight action names and their default keyboard and gamepad bindings |
 | `FlightInputSystem` | `<flight/FlightInputSystem.h>` | Update system that reads the flight actions and queues discrete commands |
 | `StepActuators` | `<flight/FlightActuators.h>` | the pure actuator stage over an `ActuatorState` |
@@ -152,6 +161,29 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   `FlightTouchdownSystem` moves the list into `touchdowns` once per frame. Both lists hold `kTouchdownCapacity`
   (8) events and drop the rest; `touchdowns` keeps the last frame's events for scripts, and leaving the ground
   lets a later contact publish another event.
+- `FlightTelemetry` is filled in `AfterStep` for every aircraft with a config and a live dynamic body, from the
+  body state the step left. The environment stage stores the wind it used in `AircraftRuntime::stepWind` before
+  it clears `additionalWind`, so the post-step air data uses the same air the step did. `state` and `airData`
+  keep the step's starting values; the telemetry holds the post-step ones.
+- Telemetry units are SI and radians: true and indicated airspeed (the latter at sea-level density), pressure
+  altitude above the sea level, height above ground with `hasGround` from a downward ray of at most
+  `kTelemetryGroundRayLength` that skips the aircraft's own body, vertical speed along world +Y, heading 0 along
+  world -Z and increasing toward world +X, pitch, roll (positive right wing down), air angles, dynamic pressure,
+  Mach, load factor `-(aero + propulsion + gear force).z / (mass * 9.81)`, throttle, the per-engine rpm and the
+  per-gear compression with their counts, surface deflections, flaps and trim, and the body-frame force and
+  moment totals of the aerodynamic, propulsion and gear stages.
+- The stall margin is `L2CriticalAngleOfAttack(L2, actual flaps) - angleOfAttack` whenever the config has an L2
+  profile, whatever tier the aircraft flies; without one it reads `kTelemetryNoStallMargin` and never warns. The
+  warning is on when the true airspeed reaches `kAirDataMinSpeed` and the margin is below
+  `stallWarningMarginDeg`.
+- `ResetAircraft` refuses an entity without `Aircraft`, a live dynamic `RigidBody` or a loaded config. Otherwise
+  it teleports through `PhysicsSystem::Teleport`, points the linear velocity along the new nose with the given
+  airspeed, zeroes the angular velocity, sets `throttle` clamped to 0..1, clears the deflections, lag states,
+  trim, flap detent, gear contact state, command queue and pending touchdowns, sets each engine's rpm to
+  `idleRpm + throttle * (maxRpm - idleRpm)` and cuts every active `Camera`. Cleared contact lets the next ground
+  contact publish a touchdown.
+- `mir::renderer` is a private dependency, only for `CutCamera`: no renderer type appears in a flight public
+  header or in the pipeline.
 
 ## State
 
@@ -159,8 +191,9 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 resource, air data, actuator stage, propulsion stage, landing gear stage and the L1 and L2 aerodynamic models
 work. L2 is the default tier and includes the stall blend and flap table. `FlightStepGate` is attached, reads
 state and air data, and adds the propulsion, the gear and the selected tier's aerodynamic force and moment;
-`FlightTouchdownSystem` publishes the frame's touchdowns. L3 yields zero with a warning until its issue lands.
-There is no hot reload yet; the store is cleared only with the module.
+`AfterStep` fills the telemetry and `FlightTouchdownSystem` publishes the frame's touchdowns. `ResetAircraft`
+respawns an aircraft. L3 yields zero with a warning until its issue lands. There is no hot reload yet; the store
+is cleared only with the module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
@@ -176,7 +209,10 @@ continuity, flap lift, trim and control signs, adverse yaw, post-stall scaling, 
 zero-airspeed rest, determinism, `aero.L2` parsing and its error paths), `LandingGear` (settling without
 bouncing, roll and pitch, own-body exclusion, braking against free rolling, rudder steering both ways, a
 touchdown publishing one event per gear and no repeats, no gear force without gear points, `gear` parsing and
-its error paths) and `FlightStepGate` (control-moment signs, state from the step, detach).
+its error paths), `Telemetry` (the ground ray over flat ground and without ground, attitude from the body
+rotation, a one-g load factor, the stall margin and `stallWarningMarginDeg`, a reset's pose, velocity, controls
+and engine rpm, the camera cut and the refusal without `Aircraft`) and `FlightStepGate` (control-moment signs,
+state from the step, detach).
 
 ## Flight input
 
@@ -227,7 +263,7 @@ right rudder.
 | `gear` | array (may be empty) | #323 | required; raycast gear points |
 | `camera.eye` | vec3 | #449 (read by #457) | cockpit eye point |
 | `camera.chaseDistance` / `chaseHeight` | number >= 0 | #449 (read by #457) | chase camera offset behind/above |
-| `stallWarningMarginDeg` | number >= 0 | #455 | warn when alpha is within this margin of the critical alpha |
+| `stallWarningMarginDeg` | number >= 0 | #455 | optional, default 5; warn when alpha is within this margin of the critical alpha |
 | `nodes` | object string -> string | #449 | component name -> model node name; recorded only |
 | `aero.L1` / `aero.L2` / `aero.L3` | object | #452 / #453 / #462 | per-tier aerodynamic profiles |
 
