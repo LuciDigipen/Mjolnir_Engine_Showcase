@@ -10,6 +10,7 @@
 
 #include <flight/AircraftConfigSystem.h>
 #include <flight/ComponentRegistration.h>
+#include <flight/FlightEnvironment.h>
 
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
@@ -25,6 +26,9 @@ namespace mir
         // before PhysicsSystem (kNormal), so its edit sync sees the mass properties on the same step
         context.scheduler.AddSystem<AircraftConfigSystem>(SystemPhase::FixedUpdate,
             SystemOrder{SystemOrder::kEarly}, std::move(source));
+
+        if (!context.world.TryResource<FlightEnvironment>())
+            context.world.EmplaceResource<FlightEnvironment>();
 
         PhysicsStepGates *gates = context.world.TryResource<PhysicsStepGates>();
         if (!gates)

@@ -14,7 +14,13 @@ path once. The store keeps the decoded configs for the module's lifetime, and `A
 into it.
 
 `FlightStepGate` is the per-step pipeline. It reads the body state before the physics step and skips any
-aircraft whose config did not load. The pipeline stage functions are still empty.
+aircraft whose config did not load.
+
+`FlightEnvironment` is a World resource that `FlightModule` emplaces when absent: the sea level, the density
+model (ISA by default, or a constant density) and the global wind. The environment stage samples the
+atmosphere at the body position, adds the aircraft's `additionalWind` to the global wind and writes the
+result into `AircraftRuntime::airData`, then clears `additionalWind`. The gate reads the resource once per
+step and uses the defaults when it is missing. The later pipeline stage functions are still empty.
 
 ```cpp
 mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver));
@@ -30,6 +36,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 | `AircraftConfigSystem`, `WriteMassProperties` | `<flight/AircraftConfigSystem.h>` | FixedUpdate system that writes mass properties |
 | `FlightModule` | `<flight/FlightModule.h>` | registers components, the config system and the step gate |
 | `FlightStepGate` | `<flight/FlightStepGate.h>` | the before/after step pipeline |
+| `FlightEnvironment`, `DensityModel`, `AtmosphereSample`, `SampleAtmosphere` | `<flight/FlightEnvironment.h>` | the World's air resource and the density/sound sample at an altitude |
+| `AirData`, `ComputeAirData`, `kAirDataMinSpeed` | `<flight/AirData.h>` | body-frame velocity relative to the air and the quantities derived from it |
 | `BodyToLocal`, `LocalToBody`, `InertiaBodyToLocal` | `<flight/FlightFrames.h>` | the one body/local conversion |
 | `AngleOfAttack`, `Sideslip` | `<flight/FlightFrames.h>` | air-data angles from body velocity |
 
@@ -46,18 +54,29 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   then skips that aircraft.
 - `WriteMassProperties` never changes the motion type. It sets mass, the rotated custom inertia tensor, the
   rotated custom centre of mass, zero damping, the gyroscopic force and `LinearCast`.
+- `FlightEnvironment::wind` and `AircraftRuntime::additionalWind` are the velocity of the air in the world
+  frame, not the direction it blows from. The gate computes with their sum and clears `additionalWind` after
+  reading it, so a script or system must write it again every fixed step.
+- Below `kAirDataMinSpeed` the flow direction is undefined, so `angleOfAttack` and `sideslip` read 0 while
+  `trueAirspeed`, `dynamicPressure` and `mach` still follow the speed.
+- `SampleAtmosphere` reports the true altitude `worldY - seaLevelY` and clamps it to the model's range only
+  inside the ISA formula. ISA is the troposphere lapse up to the tropopause and an isothermal layer above;
+  the constant model returns `constantDensity` and a fixed speed of sound at every altitude.
 - Products of inertia in the file use the `RigidBody` convention: the file holds `Ixy, Ixz, Iyz` and the tensor
   holds their negatives. The parser rejects non-finite values and reports every error as `<json path>: <reason>`.
 
 ## State
 
-*As of 2026-11-18.* The configuration asset, parser, decoder, cached store and mass-property system work.
-`FlightStepGate` is attached and reads state, but its pipeline stages (environment, air data, actuators,
-propulsion, gear, aerodynamics) are stubs. There is no hot reload yet; the store is cleared only with the module.
+*As of 2026-11-18.* The configuration asset, parser, decoder, cached store, mass-property system, environment
+resource and air data work. `FlightStepGate` is attached and reads state and air data, but the actuator,
+propulsion, gear and aerodynamic stages are stubs. There is no hot reload yet; the store is cleared only with
+the module.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
-mass-property rotation, an aircraft through one fixed step), `FlightFrames` (axis mapping, round trip, gravity,
-air angles) and `FlightStepGate` (control-moment signs, state from the step, detach).
+mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated
+aircraft, rest and reverse flow, ISA and constant density, the additional wind through a fixed step),
+`FlightFrames` (axis mapping, round trip, gravity, air angles) and `FlightStepGate` (control-moment signs,
+state from the step, detach).
 
 ## Configuration format
 

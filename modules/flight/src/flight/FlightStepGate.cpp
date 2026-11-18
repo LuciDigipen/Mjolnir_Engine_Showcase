@@ -9,6 +9,7 @@
 #include <flight/FlightStepGate.h>
 
 #include <flight/AircraftRuntime.h>
+#include <flight/FlightEnvironment.h>
 #include <flight/FlightFrames.h>
 #include <flight/components/Aircraft.h>
 
@@ -25,6 +26,9 @@ namespace mir
 {
     void FlightStepGate::BeforeStep(World &world, PhysicsWorld &physics, float dt)
     {
+        const FlightEnvironment *environment = world.TryResource<FlightEnvironment>();
+        const FlightEnvironment fallbackEnvironment;
+
         world.GetOrCreateQuery<Aircraft, RigidBody>().ForEach(
             [&](Entity, Aircraft &aircraft, RigidBody &rigidBody)
             {
@@ -49,7 +53,7 @@ namespace mir
                 state.angularVelocityBody = LocalToBody(toLocal * state.angularVelocity);
                 aircraft.runtime.accumulator = {};
 
-                RunEnvironmentAndAirData(aircraft, dt);
+                RunEnvironmentAndAirData(aircraft, environment ? *environment : fallbackEnvironment, dt);
                 RunActuators(aircraft, dt);
                 RunPropulsion(aircraft, dt);
                 RunLandingGear(aircraft, dt);
@@ -65,7 +69,14 @@ namespace mir
 
     void FlightStepGate::AfterStep(World &, PhysicsWorld &, float) {}
 
-    void FlightStepGate::RunEnvironmentAndAirData(Aircraft &, float) {}
+    void FlightStepGate::RunEnvironmentAndAirData(Aircraft &aircraft, const FlightEnvironment &environment, float)
+    {
+        AircraftRuntime &runtime = aircraft.runtime;
+        const AtmosphereSample atmosphere = SampleAtmosphere(environment, runtime.state.position.y);
+        runtime.airData =
+            ComputeAirData(runtime.state, environment.wind + runtime.additionalWind, atmosphere);
+        runtime.additionalWind = glm::vec3{ 0.0f };
+    }
 
     void FlightStepGate::RunActuators(Aircraft &, float) {}
 

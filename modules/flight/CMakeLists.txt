@@ -14,7 +14,9 @@ target_sources(engine_flight PRIVATE
     src/flight/AircraftConfig.cpp
     src/flight/AircraftConfigStore.cpp
     src/flight/AircraftConfigSystem.cpp
+    src/flight/AirData.cpp
     src/flight/ComponentRegistration.cpp
+    src/flight/FlightEnvironment.cpp
     src/flight/FlightFrames.cpp
     src/flight/FlightModule.cpp
     src/flight/FlightStepGate.cpp

@@ -13,6 +13,7 @@
 namespace mir
 {
     struct Aircraft;
+    struct FlightEnvironment;
 
     class FlightStepGate final : public PhysicsStepGate
     {
@@ -22,7 +23,7 @@ namespace mir
 
       private:
         // Environment and air data, actuators, propulsion, landing gear, aerodynamics, in this order.
-        void RunEnvironmentAndAirData(Aircraft &aircraft, float dt);
+        void RunEnvironmentAndAirData(Aircraft &aircraft, const FlightEnvironment &environment, float dt);
         void RunActuators(Aircraft &aircraft, float dt);
         void RunPropulsion(Aircraft &aircraft, float dt);
         void RunLandingGear(Aircraft &aircraft, float dt);
