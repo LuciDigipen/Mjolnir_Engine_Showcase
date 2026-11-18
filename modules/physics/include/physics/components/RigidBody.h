@@ -47,6 +47,11 @@ namespace mir
         float angularDamping = 0.05f;
         bool gyroscopicForce = false;
         PhysicsMotionQuality motionQuality = PhysicsMotionQuality::Discrete;
+        bool customInertia = false;
+        glm::vec3 inertiaDiagonal{ 1.0f, 1.0f, 1.0f };
+        glm::vec3 inertiaProducts{ 0.0f };
+        bool customCenterOfMass = false;
+        glm::vec3 centerOfMassOffset{ 0.0f };
 
         friend bool operator==(const AppliedBody &, const AppliedBody &) = default;
     };
@@ -82,6 +87,16 @@ namespace mir
         bool gyroscopicForce = false;
         // LinearCast sweeps the collider between steps, so a fast body cannot pass through thin geometry.
         PhysicsMotionQuality motionQuality = PhysicsMotionQuality::Discrete;
+        // Takes the inertia tensor from inertiaDiagonal and inertiaProducts instead of the shape's.
+        bool customInertia = false;
+        // Moments about the entity's own axes: Ixx, Iyy, Izz, in kg m^2.
+        glm::vec3 inertiaDiagonal{ 1.0f, 1.0f, 1.0f };
+        // Products of inertia Ixy, Ixz, Iyz; the tensor is [[Ixx,-Ixy,-Ixz],[-Ixy,Iyy,-Iyz],[-Ixz,-Iyz,Izz]].
+        glm::vec3 inertiaProducts{ 0.0f };
+        // Places the centre of mass away from the shape's centre, with the shape and the Transform staying where they are.
+        bool customCenterOfMass = false;
+        // Centre of mass in the entity's own axes, in metres.
+        glm::vec3 centerOfMassOffset{ 0.0f };
 
         // Runtime state PhysicsSystem keeps; not in the field table, so never saved.
         struct Runtime
@@ -117,7 +132,8 @@ namespace mir
             rigidBody.axis, rigidBody.offset, rigidBody.rotationOffset, rigidBody.isTrigger, rigidBody.detectStay,
             rigidBody.mass, rigidBody.gravityFactor, rigidBody.friction, rigidBody.restitution, rigidBody.allowSleeping,
             rigidBody.layer, rigidBody.linearDamping, rigidBody.angularDamping, rigidBody.gyroscopicForce,
-            rigidBody.motionQuality };
+            rigidBody.motionQuality, rigidBody.customInertia, rigidBody.inertiaDiagonal, rigidBody.inertiaProducts,
+            rigidBody.customCenterOfMass, rigidBody.centerOfMassOffset };
     }
 
     // A body the simulation moves, as opposed to one it only collides against.
@@ -166,6 +182,11 @@ namespace mir
         { .mName = "gyroscopicForce", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, gyroscopicForce) },
         { .mName = "motionQuality", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, motionQuality),
          .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsMotionQualityNames },
+        { .mName = "customInertia", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, customInertia) },
+        { .mName = "inertiaDiagonal", .mKind = FieldKind::Vec3, .mOffset = offsetof(RigidBody, inertiaDiagonal) },
+        { .mName = "inertiaProducts", .mKind = FieldKind::Vec3, .mOffset = offsetof(RigidBody, inertiaProducts) },
+        { .mName = "customCenterOfMass", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, customCenterOfMass) },
+        { .mName = "centerOfMassOffset", .mKind = FieldKind::Vec3, .mOffset = offsetof(RigidBody, centerOfMassOffset) },
         { .mName = "layer", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, layer) },
     };
 

@@ -1883,3 +1883,48 @@ TEST_CASE("Damping and motion quality set on a Static body are put on when it mo
     for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
         CHECK(entry.message.find("Jolt assert") == std::string::npos);
 }
+
+TEST_CASE("Inertia and centre of mass edited in Play reach the live body", "[physics][edit][inertia]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody box{ .motion = mir::PhysicsMotion::Dynamic, .shape = mir::PhysicsShape::Box };
+    box.halfExtent = glm::vec3(0.5f);
+    box.gravityFactor = 0.0f;
+    box.allowSleeping = false;
+    box.linearDamping = 0.0f;
+    box.angularDamping = 0.0f;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), box);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+
+    const auto response = [&]
+    {
+        fixture.Physics().SetBodyAngularVelocity(handle, glm::vec3(0.0f));
+        fixture.Physics().AddTorque(handle, glm::vec3(0.0f, 16.0f, 0.0f));
+        fixture.Run(1);
+        return fixture.Physics().BodyAngularVelocity(handle).y;
+    };
+
+    BodyComponent(fixture, entity).customInertia = true;
+    BodyComponent(fixture, entity).inertiaDiagonal = glm::vec3(2.0f, 8.0f, 4.0f);
+    fixture.Run(1);
+    const float first = response();
+    CHECK(std::abs(first - 16.0f / 8.0f * kStep) <= 1.0e-3f * (16.0f / 8.0f * kStep));
+
+    BodyComponent(fixture, entity).inertiaDiagonal = glm::vec3(2.0f, 20.0f, 4.0f);
+    fixture.Run(1);
+    const float second = response();
+    CHECK(std::abs(second - 16.0f / 20.0f * kStep) <= 1.0e-3f * (16.0f / 20.0f * kStep));
+
+    BodyComponent(fixture, entity).customCenterOfMass = true;
+    BodyComponent(fixture, entity).centerOfMassOffset = glm::vec3(1.0f, 0.0f, 0.0f);
+    fixture.Run(1);
+    CHECK(fixture.TransformOf(entity).Position().y == Catch::Approx(5.0).margin(1e-5));
+    const float afterRebuild = response();
+    CHECK(std::abs(afterRebuild - second) <= 1.0e-3f * std::abs(second));
+
+    fixture.Physics().SetBodyAngularVelocity(handle, glm::vec3(0.0f));
+    fixture.Physics().AddForceAtOffset(handle, glm::vec3(0.0f, 10.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
+    fixture.Run(1);
+    const float expectedZ = -10.0f / 4.0f * kStep;
+    CHECK(std::abs(fixture.Physics().BodyAngularVelocity(handle).z - expectedZ) <= 1.0e-3f * std::abs(expectedZ));
+}

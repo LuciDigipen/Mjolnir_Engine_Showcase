@@ -64,6 +64,11 @@ namespace mir
             desc.mAngularDamping = rigidBody.angularDamping;
             desc.mGyroscopicForce = rigidBody.gyroscopicForce;
             desc.mMotionQuality = rigidBody.motionQuality;
+            desc.mCustomInertia = rigidBody.customInertia;
+            desc.mInertiaDiagonal = rigidBody.inertiaDiagonal;
+            desc.mInertiaProducts = rigidBody.inertiaProducts;
+            desc.mCustomCenterOfMass = rigidBody.customCenterOfMass;
+            desc.mCenterOfMassOffset = rigidBody.centerOfMassOffset;
             return desc;
         }
 
@@ -184,7 +189,8 @@ namespace mir
                     // force: a Static body has no motion state for them to live in
                     if (now.motion == PhysicsMotion::Dynamic)
                     {
-                        physics.SetBodyMass(body, now.mass);
+                        physics.SetBodyMassProperties(
+                            body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
                         physics.SetBodyDamping(body, now.linearDamping, now.angularDamping);
                         physics.SetBodyGyroscopicForce(body, now.gyroscopicForce);
                         physics.SetBodyMotionQuality(body, now.motionQuality);
@@ -193,13 +199,22 @@ namespace mir
 
                 if (scaled || now.shape != applied.shape || now.halfExtent != applied.halfExtent
                     || now.radius != applied.radius || now.halfHeight != applied.halfHeight || now.axis != applied.axis
-                    || now.offset != applied.offset || now.rotationOffset != applied.rotationOffset)
+                    || now.offset != applied.offset || now.rotationOffset != applied.rotationOffset
+                    || now.customCenterOfMass != applied.customCenterOfMass
+                    || now.centerOfMassOffset != applied.centerOfMassOffset)
                 {
                     physics.SetBodyShape(body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
                     rigidBody.runtime.builtScale = scale;
                 }
-                else if (now.mass != applied.mass)
-                    physics.SetBodyMass(body, now.mass);
+                else
+                {
+                    if (now.mass != applied.mass)
+                        physics.SetBodyMass(body, now.mass);
+                    if (now.customInertia != applied.customInertia || now.inertiaDiagonal != applied.inertiaDiagonal
+                        || now.inertiaProducts != applied.inertiaProducts)
+                        physics.SetBodyMassProperties(
+                            body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
+                }
 
                 if (now.layer != applied.layer)
                     physics.SetBodyLayer(body, LayerOf(rigidBody, entity));

@@ -64,6 +64,16 @@ namespace mir
         float mAngularDamping = 0.05f;
         bool mGyroscopicForce = false;
         PhysicsMotionQuality mMotionQuality = PhysicsMotionQuality::Discrete;
+        // Takes the inertia tensor from mInertiaDiagonal and mInertiaProducts instead of the shape's.
+        bool mCustomInertia = false;
+        // Moments about the body's own axes: Ixx, Iyy, Izz, in kg m^2.
+        glm::vec3 mInertiaDiagonal{1.0f, 1.0f, 1.0f};
+        // Products of inertia Ixy, Ixz, Iyz; the tensor is [[Ixx,-Ixy,-Ixz],[-Ixy,Iyy,-Iyz],[-Ixz,-Iyz,Izz]].
+        glm::vec3 mInertiaProducts{0.0f};
+        // Places the centre of mass away from the shape's centre, with the shape and the Transform staying where they are.
+        bool mCustomCenterOfMass = false;
+        // Centre of mass in the body's own axes, in metres.
+        glm::vec3 mCenterOfMassOffset{0.0f};
     };
 
     struct ColliderView;
@@ -176,8 +186,12 @@ namespace mir
         void SetBodyLayer(BodyHandle body, int layer);
         void SetBodyMaterial(BodyHandle body, float friction, float restitution);
         void SetBodyGravityFactor(BodyHandle body, float factor);
-        // Scales the inertia with it; a mass at or below 0 is ignored.
+        // Scales the inertia with it; a mass at or below 0 is ignored. A supplied inertia tensor is absolute and
+        // does not scale, so only the mass changes.
         void SetBodyMass(BodyHandle body, float mass);
+        // Puts the mass rules of desc on the body's current shape, without rebuilding it. A supplied inertia tensor
+        // replaces the shape's; without one the shape's inertia is scaled to desc.mMass, as SetBodyMass does.
+        void SetBodyMassProperties(BodyHandle body, const BodyDesc &desc);
         void SetBodyAllowSleeping(BodyHandle body, bool allow);
         // How fast a body loses velocity on its own; a negative value is taken as 0. A Static body has none until it
         // moves.
@@ -215,6 +229,7 @@ namespace mir
         bool AddTorque(BodyHandle body, const glm::vec3 &torque);
         bool AddImpulse(BodyHandle body, const glm::vec3 &impulse);
         bool AddAngularImpulse(BodyHandle body, const glm::vec3 &angularImpulse);
+        // The offset is in the body's own axes, measured from the centre of mass.
         bool AddForceAtOffset(BodyHandle body, const glm::vec3 &force, const glm::vec3 &localOffset);
         bool AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse, const glm::vec3 &localOffset);
 

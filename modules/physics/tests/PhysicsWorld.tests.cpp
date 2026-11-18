@@ -9,8 +9,10 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <core/log/LogHistory.h>
 #include <physics/PhysicsWorld.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
@@ -18,8 +20,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 
 namespace
 {
@@ -664,4 +668,158 @@ TEST_CASE("The gyroscopic force turns the spin of an asymmetric body", "[physics
 
     CHECK(DirectionChange(spin, world.BodyAngularVelocity(plain)) < 0.5f);
     CHECK(DirectionChange(spin, world.BodyAngularVelocity(gyroscopic)) > 5.0f);
+}
+
+TEST_CASE("A supplied inertia tensor sets the angular response", "[physics][inertia]")
+{
+    mir::PhysicsWorldDesc desc;
+    desc.mGravity = glm::vec3(0.0f);
+    mir::PhysicsWorld world(desc);
+
+    mir::BodyDesc properties;
+    properties.mAllowSleeping = false;
+    properties.mLinearDamping = 0.0f;
+    properties.mAngularDamping = 0.0f;
+    properties.mCustomInertia = true;
+    properties.mInertiaDiagonal = glm::vec3(2.0f, 8.0f, 4.0f);
+
+    const mir::BodyHandle custom = AddFloatingBox(world, {}, glm::vec3(0.5f), properties);
+    const mir::BodyHandle shapeDerived =
+        AddFloatingBox(world, mir::WorldVec3(100.0, 0.0, 0.0), glm::vec3(0.5f), mir::BodyDesc{
+            .mAllowSleeping = false, .mLinearDamping = 0.0f, .mAngularDamping = 0.0f});
+
+    const glm::vec3 torque(0.0f, 16.0f, 0.0f);
+    world.AddTorque(custom, torque);
+    world.AddTorque(shapeDerived, torque);
+    world.Step(kStep);
+
+    const float expected = torque.y / 8.0f * kStep;
+    const float customY = world.BodyAngularVelocity(custom).y;
+    const float shapeDerivedY = world.BodyAngularVelocity(shapeDerived).y;
+    CHECK(std::abs(customY - expected) <= 1.0e-3f * std::abs(expected));
+    CHECK(std::abs(shapeDerivedY - expected) > 1.0e-3f);
+}
+
+TEST_CASE("Force and impulse offsets are measured from the centre of mass", "[physics][inertia][centerOfMass]")
+{
+    mir::PhysicsWorldDesc desc;
+    desc.mGravity = glm::vec3(0.0f);
+    mir::PhysicsWorld world(desc);
+
+    mir::BodyDesc properties;
+    properties.mAllowSleeping = false;
+    properties.mLinearDamping = 0.0f;
+    properties.mAngularDamping = 0.0f;
+    properties.mCustomInertia = true;
+    properties.mInertiaDiagonal = glm::vec3(2.0f, 8.0f, 4.0f);
+    properties.mCustomCenterOfMass = true;
+    properties.mCenterOfMassOffset = glm::vec3(1.0f, 0.0f, 0.0f);
+    const mir::BodyHandle body = AddFloatingBox(world, {}, glm::vec3(0.5f), properties);
+    world.Step(kStep);
+    CHECK(MetersOf(world, body) == mir::WorldVec3(0.0));
+
+    const glm::vec3 force(0.0f, 10.0f, 0.0f);
+    world.AddForceAtOffset(body, force, glm::vec3(0.0f));
+    world.Step(kStep);
+    CHECK(glm::length(world.BodyAngularVelocity(body)) <= 1.0e-6f);
+
+    world.SetBodyAngularVelocity(body, glm::vec3(0.0f));
+    world.AddForceAtOffset(body, force, glm::vec3(-1.0f, 0.0f, 0.0f));
+    world.Step(kStep);
+    const float expectedForce = -10.0f / 4.0f * kStep;
+    CHECK(std::abs(world.BodyAngularVelocity(body).z - expectedForce) <= 1.0e-3f * std::abs(expectedForce));
+
+    world.SetBodyAngularVelocity(body, glm::vec3(0.0f));
+    world.AddImpulseAtOffset(body, force, glm::vec3(0.0f));
+    CHECK(glm::length(world.BodyAngularVelocity(body)) <= 1.0e-6f);
+
+    world.AddImpulseAtOffset(body, force, glm::vec3(-1.0f, 0.0f, 0.0f));
+    const float expectedImpulse = -10.0f / 4.0f;
+    CHECK(std::abs(world.BodyAngularVelocity(body).z - expectedImpulse) <= 1.0e-3f * std::abs(expectedImpulse));
+}
+
+TEST_CASE("A supplied inertia tensor survives a shape rebuild and a mass change", "[physics][inertia]")
+{
+    mir::PhysicsWorldDesc desc;
+    desc.mGravity = glm::vec3(0.0f);
+    mir::PhysicsWorld world(desc);
+
+    mir::BodyDesc properties;
+    properties.mAllowSleeping = false;
+    properties.mLinearDamping = 0.0f;
+    properties.mAngularDamping = 0.0f;
+    properties.mCustomInertia = true;
+    properties.mInertiaDiagonal = glm::vec3(2.0f, 8.0f, 4.0f);
+    const mir::BodyHandle body = AddFloatingBox(world, {}, glm::vec3(0.5f), properties);
+
+    const auto response = [&]
+    {
+        world.SetBodyTransform(body, At(0.0, 0.0, 0.0), mir::kIdentityRotation);
+        world.SetBodyLinearVelocity(body, glm::vec3(0.0f));
+        world.SetBodyAngularVelocity(body, glm::vec3(0.0f));
+        world.AddTorque(body, glm::vec3(0.0f, 16.0f, 0.0f));
+        world.Step(kStep);
+        return world.BodyAngularVelocity(body).y;
+    };
+    const float expected = 16.0f / 8.0f * kStep;
+    const float original = response();
+    REQUIRE(std::abs(original - expected) <= 1.0e-3f * expected);
+
+    mir::BodyDesc rebuilt = properties;
+    rebuilt.mHalfExtent = glm::vec3(1.0f, 2.0f, 3.0f);
+    world.SetBodyShape(body, rebuilt);
+    const float afterShape = response();
+
+    world.SetBodyMass(body, 50.0f);
+    const float afterMass = response();
+
+    CHECK(std::abs(afterShape - original) <= 1.0e-3f * std::abs(original));
+    CHECK(std::abs(afterMass - original) <= 1.0e-3f * std::abs(original));
+
+    world.SetBodyLinearVelocity(body, glm::vec3(0.0f));
+    world.AddImpulse(body, glm::vec3(0.0f, 50.0f, 0.0f));
+    CHECK(std::abs(world.BodyLinearVelocity(body).y - 1.0f) <= 1.0e-3f);
+}
+
+TEST_CASE("An invalid inertia tensor falls back to the shape's and is logged", "[physics][inertia]")
+{
+    mir::PhysicsWorldDesc desc;
+    desc.mGravity = glm::vec3(0.0f);
+    mir::PhysicsWorld world(desc);
+
+    mir::BodyDesc properties;
+    properties.mAllowSleeping = false;
+    properties.mLinearDamping = 0.0f;
+    properties.mAngularDamping = 0.0f;
+    properties.mCustomInertia = true;
+
+    const mir::BodyHandle shapeDerived =
+        AddFloatingBox(world, {}, glm::vec3(0.5f), mir::BodyDesc{
+            .mAllowSleeping = false, .mLinearDamping = 0.0f, .mAngularDamping = 0.0f});
+
+    mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "mir_physics_inertia.log").string() });
+    mir::LogHistory::Clear();
+    mir::BodyDesc nonPositive = properties;
+    nonPositive.mInertiaDiagonal = glm::vec3(0.0f, 8.0f, 4.0f);
+    const mir::BodyHandle refusedDiagonal =
+        AddFloatingBox(world, mir::WorldVec3(100.0, 0.0, 0.0), glm::vec3(0.5f), nonPositive);
+
+    mir::BodyDesc nonDefinite = properties;
+    nonDefinite.mInertiaDiagonal = glm::vec3(1.0f, 1.0f, 1.0f);
+    nonDefinite.mInertiaProducts = glm::vec3(2.0f, 0.0f, 0.0f);
+    const mir::BodyHandle refusedProducts =
+        AddFloatingBox(world, mir::WorldVec3(200.0, 0.0, 0.0), glm::vec3(0.5f), nonDefinite);
+
+    bool logged = false;
+    for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
+        logged = logged || entry.message.find("inertia tensor") != std::string::npos;
+    CHECK(logged);
+
+    for (const mir::BodyHandle body : {shapeDerived, refusedDiagonal, refusedProducts})
+        world.AddTorque(body, glm::vec3(0.0f, 16.0f, 0.0f));
+    world.Step(kStep);
+
+    const float expected = world.BodyAngularVelocity(shapeDerived).y;
+    CHECK(world.BodyAngularVelocity(refusedDiagonal).y == Catch::Approx(expected));
+    CHECK(world.BodyAngularVelocity(refusedProducts).y == Catch::Approx(expected));
 }

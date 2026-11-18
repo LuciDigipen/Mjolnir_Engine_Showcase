@@ -37,6 +37,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/EmptyShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -223,20 +224,88 @@ namespace mir
             return new JPH::BoxShape(ToJolt(halfExtent));
         }
 
-        // The base shape placed in the body's frame by the capsule axis and the collider offset.
-        // A size Jolt cannot build gives a shape with no volume that collides with nothing, so the body keeps
-        // its handle and a later edit swaps the real shape in.
+        // The base shape placed in the body's frame by the capsule axis and the collider offset, then the centre of
+        // mass moved away from the shape's centre. A size Jolt cannot build gives a shape with no volume that
+        // collides with nothing, so the body keeps its handle and a later edit swaps the real shape in.
         const JPH::Shape *MakeShape(const BodyDesc &desc)
         {
-            const JPH::Shape *base = MakeBaseShape(desc);
-            if (base == nullptr)
-                return new JPH::EmptyShape();
+            const JPH::Shape *shape = MakeBaseShape(desc);
+            if (shape == nullptr)
+                shape = new JPH::EmptyShape();
+            else
+            {
+                const glm::quat rotation = desc.mRotationOffset
+                    * (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
+                if (rotation != kIdentityRotation || desc.mOffset != glm::vec3(0.0f))
+                    shape = new JPH::RotatedTranslatedShape(ToJolt(desc.mOffset), ToJolt(rotation), shape);
+            }
 
-            const glm::quat rotation = desc.mRotationOffset
-                * (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
-            if (rotation == kIdentityRotation && desc.mOffset == glm::vec3(0.0f))
-                return base;
-            return new JPH::RotatedTranslatedShape(ToJolt(desc.mOffset), ToJolt(rotation), base);
+            if (desc.mCustomCenterOfMass && desc.mCenterOfMassOffset != glm::vec3(0.0f))
+                return new JPH::OffsetCenterOfMassShape(shape, ToJolt(desc.mCenterOfMassOffset));
+            return shape;
+        }
+
+        bool Finite(const glm::vec3 &value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        // Sylvester's criterion: the symmetric tensor is positive definite when every leading principal minor is.
+        bool PositiveDefinite(const glm::vec3 &diagonal, const glm::vec3 &products)
+        {
+            const double a = diagonal.x, b = diagonal.y, c = diagonal.z;
+            const double xy = products.x, xz = products.y, yz = products.z;
+            const double det2 = a * b - xy * xy;
+            const double det3 = a * b * c - a * yz * yz - b * xz * xz - c * xy * xy - 2.0 * xy * xz * yz;
+            return a > 0.0 && b > 0.0 && c > 0.0 && det2 > 0.0 && det3 > 0.0;
+        }
+
+        // Off-diagonal entries in the tensor are the negated products of inertia.
+        JPH::Mat44 InertiaTensor(const glm::vec3 &diagonal, const glm::vec3 &products)
+        {
+            const JPH::Vec3 d = ToJolt(diagonal);
+            const JPH::Vec3 p = ToJolt(products);
+            return JPH::Mat44(
+                JPH::Vec4(d.GetX(), -p.GetX(), -p.GetY(), 0.0f),
+                JPH::Vec4(-p.GetX(), d.GetY(), -p.GetZ(), 0.0f),
+                JPH::Vec4(-p.GetY(), -p.GetZ(), d.GetZ(), 0.0f),
+                JPH::Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        }
+
+        // The body's mass and inertia from desc: a supplied tensor is absolute, anything else is the shape's scaled
+        // to the mass. A tensor that is not finite or not positive definite is logged and refused.
+        struct MassOverride
+        {
+            bool mProvided = false;
+            JPH::MassProperties mProperties;
+        };
+
+        MassOverride MassOf(const BodyDesc &desc, const JPH::Shape &shape)
+        {
+            MassOverride result;
+            if (!desc.mCustomInertia)
+                return result;
+
+            if (!Finite(desc.mInertiaDiagonal) || !Finite(desc.mInertiaProducts)
+                || !PositiveDefinite(desc.mInertiaDiagonal, desc.mInertiaProducts))
+            {
+                MIR_LOG_ERROR("PhysicsWorld: the inertia tensor must be finite and positive definite (a positive "
+                              "diagonal and every leading minor above 0); using the shape-derived inertia");
+                return result;
+            }
+
+            const float mass = desc.mMass > 0.0f ? desc.mMass : shape.GetMassProperties().mMass;
+            if (!(mass > 0.0f) || !std::isfinite(mass))
+            {
+                MIR_LOG_ERROR("PhysicsWorld: a supplied inertia tensor needs a mass above 0; using the shape-derived "
+                              "inertia");
+                return result;
+            }
+
+            result.mProvided = true;
+            result.mProperties.mMass = mass;
+            result.mProperties.mInertia = InertiaTensor(desc.mInertiaDiagonal, desc.mInertiaProducts);
+            return result;
         }
 
         // Places the shape's center: offset is in the body's own frame.
@@ -401,6 +470,7 @@ namespace mir
             // Kinematic bodies move, so they live in the moving layer and start awake
             const bool moving = Moves(motion);
 
+            MassOverride customMass;
             JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation), MotionTypeOf(motion),
                                                detail::Layers::Of(layer, moving));
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
@@ -418,7 +488,13 @@ namespace mir
                 settings.mApplyGyroscopicForce = properties->mGyroscopicForce;
                 settings.mMotionQuality = MotionQualityOf(properties->mMotionQuality);
                 // the shape gives the inertia, the mass scales it; given whatever the motion, for a later switch
-                if (properties->mMass > 0.0f)
+                customMass = MassOf(*properties, *owned);
+                if (customMass.mProvided)
+                {
+                    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+                    settings.mMassPropertiesOverride = customMass.mProperties;
+                }
+                else if (properties->mMass > 0.0f)
                 {
                     settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
                     settings.mMassPropertiesOverride.mMass = properties->mMass;
@@ -434,12 +510,46 @@ namespace mir
                 return {};
             }
 
+            if (customMass.mProvided)
+                mCustomInertiaBodies.insert(id.GetIndexAndSequenceNumber());
+
             if (!moving)
                 mBroadPhaseDirty = true;
             else if (dynamic)
                 Bodies().SetCollisionGroup(id, JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id.GetIndex()));
 
             return BodyHandle{id.GetIndexAndSequenceNumber()};
+        }
+
+        // The mass and inertia rules of desc on the body's current shape, without rebuilding it. A supplied tensor
+        // replaces the shape's and is absolute; otherwise the shape's inertia is scaled to the mass.
+        void ApplyMassProperties(BodyHandle body, JPH::BodyID id, const BodyDesc &desc)
+        {
+            const JPH::RefConst<JPH::Shape> shape = Bodies().GetShape(id);
+            const MassOverride custom = MassOf(desc, *shape);
+            // recorded even while the body is Static, so a later switch to Dynamic keeps it
+            if (custom.mProvided)
+                mCustomInertiaBodies.insert(body.mId);
+            else
+                mCustomInertiaBodies.erase(body.mId);
+
+            JPH::MassProperties properties = custom.mProperties;
+            if (!custom.mProvided)
+            {
+                properties = shape->GetMassProperties();
+                if (desc.mMass > 0.0f && properties.mMass > 0.0f)
+                    properties.ScaleToMass(desc.mMass);
+            }
+
+            {
+                const JPH::BodyLockWrite lock(mSystem.GetBodyLockInterface(), id);
+                // a Static body has no motion state to hold them; they are put on when it moves
+                if (!lock.Succeeded() || lock.GetBody().GetMotionType() != JPH::EMotionType::Dynamic)
+                    return;
+                lock.GetBody().GetMotionProperties()->SetMassProperties(JPH::EAllowedDOFs::All, properties);
+            }
+            // after the lock is released: the body interface takes it again
+            Bodies().ActivateBody(id);
         }
 
         // What a call moves a body by decides which bodies take it.
@@ -561,6 +671,8 @@ namespace mir
         std::unordered_map<uint32_t, SharedHeightField> mHeightFieldShapes;
         JPH::Ref<detail::ContactRestriction> mRestriction = new detail::ContactRestriction();
         std::unordered_map<uint32_t, Held> mHeld;
+        // Handle ids of the bodies whose inertia is the supplied tensor rather than the shape's.
+        std::unordered_set<uint32_t> mCustomInertiaBodies;
         // Handle ids of the bodies whose pairs get Stay events.
         std::unordered_set<uint32_t> mStayBodies;
     };
@@ -622,6 +734,7 @@ namespace mir
         mImpl->mHeightFieldInfo.erase(body.mId);
         mImpl->mHeightFieldShapes.erase(body.mId);
         mImpl->mHeld.erase(body.mId);
+        mImpl->mCustomInertiaBodies.erase(body.mId);
         mImpl->mStayBodies.erase(body.mId);
         mImpl->mRestriction->mAllowed.erase(id->GetIndex());
 
@@ -809,8 +922,8 @@ namespace mir
 
         const JPH::RefConst<JPH::Shape> shape(MakeShape(desc));
         mImpl->Bodies().SetShape(*id, shape, true, JPH::EActivation::Activate);
-        // the shape's own volume gave the mass back, so the authored one is put on again
-        SetBodyMass(body, desc.mMass);
+        // the shape's own volume gave the mass back, so the authored one and the supplied tensor are put on again
+        mImpl->ApplyMassProperties(body, *id, desc);
         mImpl->mBroadPhaseDirty = true;
         mImpl->WakeAround(*id);
     }
@@ -883,15 +996,30 @@ namespace mir
         if (!id || mass <= 0.0f)
             return;
 
+        const bool customInertia = mImpl->mCustomInertiaBodies.find(body.mId) != mImpl->mCustomInertiaBodies.end();
         {
             const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
             // a Static body has no mass of its own to scale until it moves, and Jolt asserts on asking it
             if (!lock.Succeeded() || lock.GetBody().GetMotionType() != JPH::EMotionType::Dynamic)
                 return;
-            lock.GetBody().GetMotionProperties()->ScaleToMass(mass);
+            JPH::MotionProperties *motion = lock.GetBody().GetMotionProperties();
+            // a supplied tensor is absolute, so only the mass follows
+            if (customInertia)
+                motion->SetInverseMass(1.0f / mass);
+            else
+                motion->ScaleToMass(mass);
         }
         // after the lock is released: the body interface takes it again
         mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyMassProperties(BodyHandle body, const BodyDesc &desc)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        mImpl->ApplyMassProperties(body, *id, desc);
     }
 
     void PhysicsWorld::SetBodyAllowSleeping(BodyHandle body, bool allow)
@@ -1300,6 +1428,9 @@ namespace mir
             view.mPosition = *origin;
             view.mRotation = FromJolt(body.GetRotation());
             const JPH::Shape *shape = body.GetShape();
+            // the centre of mass offset leaves the collider where it was
+            if (shape->GetSubType() == JPH::EShapeSubType::OffsetCenterOfMass)
+                shape = static_cast<const JPH::OffsetCenterOfMassShape &>(*shape).GetInnerShape();
             if (shape->GetSubType() == JPH::EShapeSubType::RotatedTranslated)
             {
                 const auto &placed = static_cast<const JPH::RotatedTranslatedShape &>(*shape);
