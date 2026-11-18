@@ -44,7 +44,9 @@ its static curve, scaled by the axial speed factor and the density ratio, at the
 centre of mass; the gear stage raycasts every gear down the body and adds a spring-damper normal force with
 rolling, braking and side friction at the contact point; the aerodynamics stage evaluates the selected tier's
 profile into a body-frame `ForceMoment` and adds it to the accumulator. A gear's first contact also queues a
-touchdown. A tier without a profile in the config adds nothing and warns once per aircraft config. L2 is the
+touchdown. The stages still run for a body that terrain streaming holds until its collision loads, but the
+accumulator is not applied, since a held body refuses forces. A tier without a profile in the config adds
+nothing and warns once per aircraft config. L2 is the
 default playable model; `Aircraft::tier` defaults to it. L3 reads its own tables and its generator samples
 L2.
 

@@ -64,6 +64,10 @@ namespace mir
                 RunLandingGear(aircraft, *position, physics, body, dt);
                 RunAerodynamics(aircraft, dt);
 
+                // Terrain streaming holds a body until the collision under it loads; a held body refuses forces.
+                if (physics.IsBodyHeld(body))
+                    return;
+
                 const ForceAccumulator &accumulator = aircraft.runtime.accumulator;
                 if (accumulator.force != glm::vec3{0.0f})
                     physics.AddForce(body, state.rotation * BodyToLocal(accumulator.force));

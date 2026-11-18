@@ -19,6 +19,7 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <core/log/Log.h>
 #include <physics/ComponentRegistration.h>
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsSystem.h>
@@ -28,10 +29,12 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/geometric.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -266,4 +269,38 @@ TEST_CASE("The flight gate detaches when the module goes", "[flight][gate]")
 
     CHECK(fixture.world.Resource<mir::PhysicsStepGates>().mGates.empty());
     fixture.Run(1);
+}
+
+TEST_CASE("A held body gets no flight force and logs nothing", "[flight][gate]")
+{
+    std::string thrusting(kFlightConfig);
+    const std::string engine = R"("engines": [{ "position": [1.0, 0.0, 0.0], "direction": [1, 0, 0], "idleRpm": 700,
+        "maxRpm": 2700, "rpmTau": 0.5, "staticThrust": [[0, 2000], [1, 2000]], "speedFactor": [[0, 1], [100, 1]] }])";
+    thrusting.replace(thrusting.find(R"("engines": [])"), std::string_view(R"("engines": [])").size(), engine);
+    const RawConfig config(thrusting);
+    REQUIRE(config.view.has_value());
+
+    FlightFixture fixture;
+    mir::FlightModule flight(fixture.ModuleContext(),
+        [&config](std::string_view path, std::string &) -> const mir::AssetBlobView *
+        {
+            return path == "plane.aircraft.json" ? &*config.view : nullptr;
+        });
+    fixture.Start();
+    const mir::Entity entity = fixture.AddAircraft("plane.aircraft.json");
+    fixture.Run(1);
+
+    const mir::BodyHandle body = fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body;
+    const glm::dvec3 before = fixture.Physics().BodyPosition(body)->Meters();
+    fixture.Physics().HoldBody(body);
+    // Errors are only counted while the log is open.
+    mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "flight_held_body.log").string() });
+    const uint64_t errors = mir::ErrorCount();
+
+    fixture.Run(5);
+
+    CHECK(mir::ErrorCount() == errors);
+    mir::ShutdownLog();
+    const glm::dvec3 after = fixture.Physics().BodyPosition(body)->Meters();
+    CHECK(glm::length(after - before) == Catch::Approx(0.0).margin(kTolerance));
 }
