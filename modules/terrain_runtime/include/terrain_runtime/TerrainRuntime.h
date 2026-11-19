@@ -11,6 +11,7 @@
 #include <terrain_runtime/TerrainGroundBridge.h>
 #include <terrain_runtime/TerrainRender.h>
 #include <terrain_runtime/TerrainJobExecutor.h>
+#include <terrain_runtime/TerrainRuntimeCache.h>
 
 #include <project/GameProject.h>
 #include <core/ecs/Entity.h>
@@ -45,6 +46,7 @@ namespace mir
     class PhysicsWorld;
     class TerrainGroundBridge;
     class SurfaceMaterialLibrary;
+    class TerrainStreamingConfiguration;
     class VulkanRenderer;
     class World;
 
@@ -62,11 +64,12 @@ namespace mir
       public:
         ~TerrainRuntime() override;
 
-        // Loads the game's streaming settings; when they are valid, emplaces them and a TerrainStreamer, sets up
-        // the renderer's mesh streaming and draws terrain per viewport through the World's ViewDrawSources, and
-        // guards each fixed step through its PhysicsStepGates.
+        // Loads the game's streaming settings; when they are valid, joins the shared cache (making it when none is
+        // given), draws terrain per viewport through the World's ViewDrawSources and guards each fixed step through
+        // its PhysicsStepGates.
         void Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
-                  const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs);
+                  const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs,
+                  std::shared_ptr<TerrainRuntimeCache> cache = {});
 
         // The one point per frame where finished terrain reads, mesh builds and uploads are installed; call
         // before any system runs.
@@ -80,11 +83,18 @@ namespace mir
         // prewarmed lets its work go until Stop.
         void BeginPlay();
 
-        // Retires every GPU mesh the terrain holds and forgets its builds; the next frame builds what it draws again.
-        void ForgetMeshes();
-
-        // On scene unload. The terrain retires its own GPU meshes, nothing else frees them.
+        // On scene unload. Releases no other runtime holds retire their meshes, payloads and collision here.
         void Unload();
+
+        // While another runtime draws the same cache: the viewports' streamer interests and draw lists go, and the
+        // releases stay held so their payloads and meshes are still warm when Resume draws them again.
+        void Suspend();
+        void Resume();
+
+        const std::shared_ptr<TerrainRuntimeCache> &Cache() const
+        {
+            return mCache;
+        }
 
         // Each viewport selects its own units, wants their payloads and draws what is ready.
         void Prepare(std::span<const ViewCamera> views) override;
@@ -149,9 +159,15 @@ namespace mir
             return mWorld != nullptr;
         }
         TerrainStreamer *Streamer() const;
+        TerrainMeshResidency *Meshes() const;
+        // Removes every viewport's streamer interest and drops its selector and draw list.
+        void ClearViews();
 
         // Applies a changed effective configuration to the streamer and both residencies.
         void ApplyConfiguration(TerrainStreamer &streamer);
+        // The budgets of the cache this runtime makes, logged once.
+        void LogBudgets(const TerrainStreamingSettings &settings, VulkanRenderer &renderer, JobExecutor &jobs,
+                        const TerrainStreamingConfiguration &configuration);
         double Now() const;
         void Apply(TerrainSceneSpec spec, std::vector<TerrainReleaseAdoption> adopted = {});
         std::vector<InstanceResources> Build(TerrainWorld &next);
@@ -211,11 +227,11 @@ namespace mir
         // The World's GroundQuery source; registered before any scene terrain resolves.
         std::unique_ptr<TerrainGroundBridge> mGround;
 
-        // The streamer's worker pool, which also builds meshes and collision pieces.
-        std::shared_ptr<TerrainJobExecutor> mPool;
-        std::unique_ptr<TerrainGpuUploader> mUploader;
-        // Null without valid settings or renderer mesh streaming.
-        std::unique_ptr<TerrainMeshResidency> mMeshes;
+        // The shared job pool, payloads and GPU meshes; null without valid settings.
+        std::shared_ptr<TerrainRuntimeCache> mCache;
+        // Which releases this runtime holds, and whether another runtime draws the cache instead.
+        TerrainCacheOwner mCacheOwner = 0;
+        bool mSuspended = false;
         std::shared_ptr<Colliders> mColliders;
         // Null without valid settings.
         std::unique_ptr<TerrainCollisionResidency> mCollision;
@@ -240,7 +256,6 @@ namespace mir
         // Parallel to TerrainWorld::Instances() while a frame is prepared.
         std::vector<TerrainSelectionInstance> mSelection;
         double mFrameTime = 0.0;
-        std::chrono::steady_clock::time_point mStart = std::chrono::steady_clock::now();
 
         // Logged once per loaded scene.
         std::unordered_set<std::string> mReported;

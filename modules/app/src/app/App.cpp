@@ -229,7 +229,8 @@ namespace mir
         #endif
             simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
                 app.mParticlesGpu, rendering->Rendering()),
-            terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
+            terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs, true,
+                app.mTerrain.Cache())
         {
             state.gameShell.SetControlsOptions(&app.mControlsOptions);
         #if MIR_WITH_AUDIO
@@ -617,6 +618,8 @@ namespace mir
     #if MIR_WITH_EDITOR
         mEditor.PreparePlay();
     #endif
+        // Play draws the shared terrain cache; the authored World's demands would compete with it.
+        mTerrain.Runtime().Suspend();
         try
         {
             mRuntime = std::make_unique<RuntimeSession>(*this);
@@ -651,6 +654,7 @@ namespace mir
             mEditor.FinishPlay();
         #endif
             prefabs.SetFrozen(false);
+            mTerrain.Runtime().Resume();
             return;
         }
         SetPlayState(mWorldState.world, PlayState::Running);
@@ -680,6 +684,7 @@ namespace mir
         mImGui.SetInputWorld(nullptr);
         mRenderer.ActivateWorld(nullptr);
         mRuntime.reset();
+        mTerrain.Runtime().Resume();
 
     #if MIR_WITH_EDITOR
         mEditor.FinishPlay();

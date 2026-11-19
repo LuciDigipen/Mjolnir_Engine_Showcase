@@ -194,21 +194,33 @@ namespace mir
     TerrainRuntime::~TerrainRuntime()
     {
         mGround.reset();
-        // Finish runtime-owned builds before their collaborators die, but keep the
-        // shared lane open for a streamer that outlives or replaces this runtime.
-        if (mPool) mPool->WaitIdle();
-        if (!mWorld)
-            return;
-        if (ViewDrawSources *sources = mWorld->TryResource<ViewDrawSources>())
-            std::erase(sources->sources, static_cast<IViewDrawSource *>(this));
-        if (PhysicsStepGates *gates = mWorld->TryResource<PhysicsStepGates>())
-            std::erase(gates->mGates, static_cast<PhysicsStepGate *>(this));
+        // Finish this runtime's builds before its collaborators die, but keep the shared lane open for the runtime
+        // that outlives it.
+        if (mCache)
+        {
+            for (ViewState &view : mViews)
+                mCache->Streamer().RemoveInterest(view.interest);
+            mViews.clear();
+            if (mCollision)
+                mCollision->ReleaseInterest(mCache->Streamer());
+            mCache->WaitIdle();
+        }
+        if (mWorld)
+        {
+            if (ViewDrawSources *sources = mWorld->TryResource<ViewDrawSources>())
+                std::erase(sources->sources, static_cast<IViewDrawSource *>(this));
+            if (PhysicsStepGates *gates = mWorld->TryResource<PhysicsStepGates>())
+                std::erase(gates->mGates, static_cast<PhysicsStepGate *>(this));
+        }
         if (mCollision)
             mCollision->Clear();
+        if (mCache)
+            mCache->RemoveOwner(mCacheOwner);
     }
 
     void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
-                              const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs)
+                              const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs,
+                              std::shared_ptr<TerrainRuntimeCache> cache)
     {
         mWorld = &world;
         mRenderer = &renderer;
@@ -243,59 +255,84 @@ namespace mir
 
         const TerrainStreamingSettings &settings = *configuration.Effective();
         mSeenSettings = settings;
-        mPool = std::make_shared<TerrainJobExecutor>(jobs, settings.io.workerThreads);
-        world.EmplaceResource<TerrainStreamer>(settings, mPool);
+        if (cache)
+        {
+            mCache = std::move(cache);
+            mCacheOwner = mCache->AddOwner();
+            const TerrainStreamingStats streaming = mCache->Streamer().Stats();
+            const TerrainMeshStats meshes = mCache->Meshes().Stats();
+            MIR_LOG_INFO("Terrain: sharing the Edit runtime's terrain cache: {} payloads ({:.2f} MiB) resident, "
+                         "{:.2f} MiB of GPU meshes held",
+                         streaming.ready, MiB(streaming.residentBytes), MiB(meshes.heldBytes));
+        }
+        else
+        {
+            const TerrainStreamingSettings::Gpu &gpu = settings.gpu;
+            // A smaller ring only slows uploads, so terrain carries on.
+            if (!renderer.RequestStagingBytes(gpu.stagingBytes))
+                MIR_LOG_WARN("Terrain asked for a {:.1f} MiB staging ring and the renderer kept its current one, so "
+                             "its meshes upload over more frames",
+                             MiB(gpu.stagingBytes));
+            mCache = std::make_shared<TerrainRuntimeCache>(settings, jobs, renderer);
+            mCacheOwner = mCache->AddOwner();
+            LogBudgets(settings, renderer, jobs, configuration);
+        }
+
+        mSwitch = std::make_unique<TerrainReleaseSwitch>(mCache->Executor(), mReleasesRoot, TerrainReleaseOpener{},
+                                                         [this] { return Now(); });
+        mStagingVersion = mSwitch->StagingVersion();
+
+        const TerrainStreamingSettings::Collision &collision = settings.collision;
+        mColliders = std::make_shared<Colliders>(*this);
+        mCollision = std::make_unique<TerrainCollisionResidency>(collision, mCache->Executor(), mColliders);
+        PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>();
+        if (!gates)
+            gates = &world.EmplaceResource<PhysicsStepGates>();
+        gates->mGates.push_back(this);
+    }
+
+    // The cache's budgets and policy, logged once where the cache is made.
+    void TerrainRuntime::LogBudgets(const TerrainStreamingSettings &settings, VulkanRenderer &renderer,
+                                    JobExecutor &jobs, const TerrainStreamingConfiguration &configuration)
+    {
         MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} shared slots ({} engine workers), {} residency{}",
-                     MiB(settings.cpu.budgetBytes), mPool->Concurrency(), jobs.WorkerCount(),
+                     MiB(settings.cpu.budgetBytes), mCache->Concurrency(), jobs.WorkerCount(),
                      TerrainResidencyModeName(*settings.residency.mode),
                      configuration.LocalFileFound() ? " (machine-local overrides applied)" : "");
         MIR_LOG_INFO("Terrain views: refine above {} px, merge below {} px, prefetch to {} px within {:.1f} MiB",
                      settings.view.refineErrorPixels, settings.view.mergeErrorPixels, settings.view.prefetchErrorPixels,
                      MiB(*settings.view.prefetchBudgetBytes));
 
-        mSwitch = std::make_unique<TerrainReleaseSwitch>(mPool, mReleasesRoot, TerrainReleaseOpener{},
-                                                         [this] { return Now(); });
-        mStagingVersion = mSwitch->StagingVersion();
-
-        const TerrainStreamingSettings::Collision &collision = settings.collision;
-        mColliders = std::make_shared<Colliders>(*this);
-        mCollision = std::make_unique<TerrainCollisionResidency>(collision, mPool, mColliders);
-        PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>();
-        if (!gates)
-            gates = &world.EmplaceResource<PhysicsStepGates>();
-        gates->mGates.push_back(this);
         std::string spacings;
-        for (const double spacing : collision.spacingsMeters)
+        for (const double spacing : settings.collision.spacingsMeters)
             spacings += std::format("{}{}", spacings.empty() ? "" : "/", spacing);
         MIR_LOG_INFO("Terrain collision: {} m spacings within {} m, Interest pieces of {} tiles overlapping {} m, "
                      "{} s assumed load latency plus {} s, {} s prefetch, {:.0f} MiB of shapes kept {} s; bodies "
                      "accept coarse pieces within {} m",
-                     spacings, collision.maxErrorMeters, collision.pieceTiles, collision.seamOverlapMeters,
-                     collision.loadLatencySeconds, collision.latencyMarginSeconds, collision.prefetchSeconds,
-                     MiB(collision.budgetBytes), collision.retainSeconds, collision.bodyToleranceMeters);
-
-        const TerrainStreamingSettings::Gpu &gpu = settings.gpu;
-        // A smaller ring only slows uploads, so terrain carries on.
-        if (!renderer.RequestStagingBytes(gpu.stagingBytes))
-            MIR_LOG_WARN("Terrain asked for a {:.1f} MiB staging ring and the renderer kept its current one, so its "
-                         "meshes upload over more frames",
-                         MiB(gpu.stagingBytes));
-        mUploader = std::make_unique<TerrainGpuUploader>(renderer);
-        mMeshes = std::make_unique<TerrainMeshResidency>(gpu, mPool, *mUploader);
+                     spacings, settings.collision.maxErrorMeters, settings.collision.pieceTiles,
+                     settings.collision.seamOverlapMeters, settings.collision.loadLatencySeconds,
+                     settings.collision.latencyMarginSeconds, settings.collision.prefetchSeconds,
+                     MiB(settings.collision.budgetBytes), settings.collision.retainSeconds,
+                     settings.collision.bodyToleranceMeters);
         MIR_LOG_INFO("Terrain GPU meshes: {:.0f} MiB budget, {:.1f} MiB uploaded a frame through a {:.1f} MiB staging "
                      "ring, kept {} s after their last want or draw",
-                     MiB(gpu.budgetBytes), MiB(renderer.UploadFrameBudget()),
-                     MiB(renderer.MeshStreaming().desc.stagingBytes), gpu.meshRetainSeconds);
+                     MiB(settings.gpu.budgetBytes), MiB(renderer.UploadFrameBudget()),
+                     MiB(renderer.MeshStreaming().desc.stagingBytes), settings.gpu.meshRetainSeconds);
     }
 
     TerrainStreamer *TerrainRuntime::Streamer() const
     {
-        return mWorld ? mWorld->TryResource<TerrainStreamer>() : nullptr;
+        return mCache ? &mCache->Streamer() : nullptr;
+    }
+
+    TerrainMeshResidency *TerrainRuntime::Meshes() const
+    {
+        return mCache ? &mCache->Meshes() : nullptr;
     }
 
     double TerrainRuntime::Now() const
     {
-        return std::chrono::duration<double>(std::chrono::steady_clock::now() - mStart).count();
+        return mCache ? mCache->Now() : 0.0;
     }
 
     // The project configuration is edited in place, so each frame compares its effective value with the last seen.
@@ -333,8 +370,8 @@ namespace mir
             for (auto &[asset, staged] : view.staged)
                 staged->ApplySettings(next.view);
         }
-        if (mMeshes)
-            mMeshes->ApplySettings(next.gpu);
+        if (TerrainMeshResidency *meshes = Meshes())
+            meshes->ApplySettings(next.gpu);
         if (mCollision)
             mCollision->ApplySettings(next.collision);
         mSeenSettings = next;
@@ -342,6 +379,8 @@ namespace mir
 
     void TerrainRuntime::Update()
     {
+        if (mSuspended)
+            return;
         TerrainStreamer *streamer = Streamer();
         if (streamer && mWorld)
             ApplyConfiguration(*streamer);
@@ -360,8 +399,8 @@ namespace mir
                 ResolveBinding(resources);
             mSurfaceMaterials->AcknowledgeGeneration(0, mSurfaceMaterials->Generation());
         }
-        if (mMeshes)
-            mMeshes->Install();
+        if (TerrainMeshResidency *meshes = Meshes())
+            meshes->Install();
         if (mCollision && streamer)
         {
             // No step runs between frames, so colliders may change here.
@@ -430,35 +469,54 @@ namespace mir
         ApplyResidencies();
     }
 
-    void TerrainRuntime::ForgetMeshes()
+    void TerrainRuntime::Suspend()
     {
         if (!Bound())
             return;
-        if (mMeshes)
-        {
-            // The terrain's meshes are its own to retire. The renderer is not asked to free everything on a scene
-            // unload, prefab previews still use it.
-            mMeshes->RetireAll();
-            mMeshes->Forget();
-        }
+        mSuspended = true;
+        if (mCollision && mCache)
+            mCollision->ReleaseInterest(mCache->Streamer());
+        ClearViews();
+    }
+
+    void TerrainRuntime::Resume()
+    {
+        mSuspended = false;
+    }
+
+    void TerrainRuntime::ClearViews()
+    {
+        TerrainStreamer *streamer = Streamer();
         for (ViewState &view : mViews)
+        {
+            if (streamer)
+                streamer->RemoveInterest(view.interest);
+            view.staged.clear();
             view.draws.clear();
+        }
+        // A fresh interest and selector per viewport, re-added by the next Prepare.
+        mViews.clear();
+        mFrameViews.clear();
+        mFrameWants.clear();
+        mSelection.clear();
     }
 
     void TerrainRuntime::Unload()
     {
         if (!Bound())
             return;
-        ForgetMeshes();
+        ClearViews();
         if (mCollision)
+        {
+            if (TerrainStreamer *streamer = Streamer())
+                mCollision->ReleaseInterest(*streamer);
             mCollision->Clear();
+        }
         if (mSwitch)
         {
             mSwitch->Clear();
             mStagingVersion = mSwitch->StagingVersion();
         }
-        for (ViewState &view : mViews)
-            view.staged.clear();
         mStagedWarm.clear();
         mStagedProblems.clear();
         mGuards.clear();
@@ -470,6 +528,9 @@ namespace mir
         mPendingSpec = {};
         mTagSpec = {};
         mReported.clear();
+        // The other runtime's holds keep what it still draws; otherwise these releases' meshes retire now.
+        if (mCache)
+            mCache->SetHeldReleases(mCacheOwner, {});
     }
 
     void TerrainRuntime::Apply(TerrainSceneSpec spec, std::vector<TerrainReleaseAdoption> adopted)
@@ -516,13 +577,14 @@ namespace mir
             TerrainReleaseUsage cpu, gpu, pieces;
         };
         std::vector<Leaving> leaving;
+        TerrainMeshResidency *meshes = Meshes();
         for (const TerrainReleaseAdoption &adoption : adopted)
             for (const TerrainWorld::AssetState &asset : current.Assets())
                 if (asset.asset == adoption.release->Info().asset && asset.release)
                 {
                     const TerrainReleaseInfo &from = asset.release->Info();
                     leaving.push_back({&adoption, from.release, streamer->Usage(from),
-                                       mMeshes ? mMeshes->Usage(from) : TerrainReleaseUsage{},
+                                       meshes ? meshes->Usage(from) : TerrainReleaseUsage{},
                                        mCollision ? mCollision->Usage(from) : TerrainReleaseUsage{}});
                 }
 
@@ -745,8 +807,8 @@ namespace mir
                                        streamer->ModeOf(release->Info()).value_or(TerrainResidencyMode::Interest)});
                 }
         }
-        if (mMeshes)
-            mMeshes->RetireReleases(keep);
+        if (mCache)
+            mCache->SetHeldReleases(mCacheOwner, keep);
         if (mCollision)
             mCollision->SetInstances(active, prewarm);
         mStagingVersion = mSwitch ? mSwitch->StagingVersion() : 0;
@@ -774,7 +836,7 @@ namespace mir
             if (problem == mStagedProblems.end())
                 problem = mStagedProblems.emplace(info.release.value, MissingMeshPayloads(*release)).first;
             const auto warm = mStagedWarm.find(info.asset.value);
-            TerrainPrewarmReport report = MeasureTerrainPrewarm(info, *streamer, mMeshes.get(), mCollision.get(),
+            TerrainPrewarmReport report = MeasureTerrainPrewarm(info, *streamer, Meshes(), mCollision.get(),
                                                                 warm != mStagedWarm.end() && warm->second);
             if (report.failure.empty())
                 report.failure = problem->second;
@@ -1042,7 +1104,8 @@ namespace mir
         mFrameViews.clear();
         mSelection.clear();
         TerrainStreamer *streamer = Streamer();
-        if (!Bound() || !streamer || !mMeshes)
+        TerrainMeshResidency *meshes = Meshes();
+        if (!Bound() || !streamer || !meshes || mSuspended)
             return;
         mFrameTime = Now();
         const TerrainStreamingSettings::View &settings = streamer->Settings().view;
@@ -1050,10 +1113,10 @@ namespace mir
         // A BLAS only when the project traces; meshes made the other way are made again.
         const RenderSettings *render = mWorld->TryResource<RenderSettings>();
         const bool rayTracing = render && mRenderer->RayTracingActive(render->rayTracing);
-        if (rayTracing != mUploader->RayTracing())
+        if (rayTracing != mCache->RayTracing())
         {
-            mMeshes->RetireAll();
-            mUploader->SetRayTracing(rayTracing);
+            meshes->RetireAll();
+            mCache->SetRayTracing(rayTracing);
         }
 
         for (const TerrainInstanceState &instance : mWorld->Resource<TerrainWorld>().Instances())
@@ -1132,7 +1195,7 @@ namespace mir
         std::vector<TerrainSelectionInstance> meshInstances = mSelection;
         for (const auto &[asset, instances] : staged)
             meshInstances.insert(meshInstances.end(), instances.begin(), instances.end());
-        mMeshes->Request(meshInstances, mFrameWants, *streamer, mFrameTime);
+        meshes->Request(meshInstances, mFrameWants, *streamer, mFrameTime);
         ReportMeshFailures();
         for (const ViewCamera &camera : views)
             for (size_t i = 0; i < mViews.size(); ++i)
@@ -1157,7 +1220,7 @@ namespace mir
     void TerrainRuntime::AppendVolumeDraws(size_t view, WorldPosition origin, const glm::mat4 &viewProj,
                                            std::vector<WorldDrawItem> &out)
     {
-        if (view >= mFrameViews.size() || !mMeshes)
+        if (view >= mFrameViews.size() || !Meshes())
             return;
         std::vector<TerrainDrawUnit> units;
         mViews[mFrameViews[view]].selector->Collect({origin, viewProj}, Ready(), units);
@@ -1166,7 +1229,7 @@ namespace mir
 
     std::optional<size_t> TerrainRuntime::AreasLoading() const
     {
-        if (!Bound() || !Streamer() || !mMeshes || mWorld->Resource<TerrainWorld>().Instances().empty())
+        if (!Bound() || !Streamer() || !Meshes() || mWorld->Resource<TerrainWorld>().Instances().empty())
             return 0;
         if (mFrameViews.empty())
             return std::nullopt;
@@ -1181,12 +1244,13 @@ namespace mir
 
     TerrainUnitReady TerrainRuntime::Ready() const
     {
-        return [this](const TerrainDrawUnit &unit) { return mMeshes->Ready(unit.geometry); };
+        const TerrainMeshResidency *meshes = Meshes();
+        return [meshes](const TerrainDrawUnit &unit) { return meshes != nullptr && meshes->Ready(unit.geometry); };
     }
 
     void TerrainRuntime::AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out)
     {
-        if (view >= mFrameViews.size() || !mMeshes)
+        if (view >= mFrameViews.size() || !Meshes())
             return;
         std::vector<TerrainDrawUnit> units;
         mViews[mFrameViews[view]].selector->CollectForRayTracing(Ready(), units);
@@ -1195,13 +1259,16 @@ namespace mir
 
     void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain)
     {
+        TerrainMeshResidency *meshes = Meshes();
+        if (!meshes)
+            return;
         const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
         for (const TerrainDrawUnit &unit : units)
         {
             if (unit.instance >= instances.size())
                 continue;
-            const TerrainResidentMesh *mesh = retain ? mMeshes->Acquire(unit.geometry, mFrameTime)
-                : mMeshes->FindReady(unit.geometry);
+            const TerrainResidentMesh *mesh = retain ? meshes->Acquire(unit.geometry, mFrameTime)
+                : meshes->FindReady(unit.geometry);
             if (!mesh)
                 continue;
             const MaterialHandle material =
@@ -1215,7 +1282,7 @@ namespace mir
     void TerrainRuntime::ReportMeshFailures()
     {
         const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
-        for (const auto &[key, error] : mMeshes->TakeFailures())
+        for (const auto &[key, error] : Meshes()->TakeFailures())
         {
             // The switch reports it and keeps the loaded release.
             if (IsStaged(key.asset, key.release))
@@ -1242,7 +1309,7 @@ namespace mir
         for (const auto &[key, count] : byLevel)
             levels += std::format("{}{} {} L{}", levels.empty() ? "" : ", ", count,
                                   key.first == TerrainUnitKind::Tile ? "tile" : "Region", key.second);
-        const TerrainMeshStats m = mMeshes->Stats();
+        const TerrainMeshStats m = Meshes()->Stats();
         std::string summary = std::format(
             "{} tiles and {} Regions drawn [{}] ({} coarser and {} other stand-ins, {} areas loading); wants {} "
             "visible and {} prefetch payloads ({:.2f} MiB, {} past the prefetch budget); GPU meshes {} ready, {} "
