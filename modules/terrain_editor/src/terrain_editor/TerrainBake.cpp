@@ -80,16 +80,16 @@ namespace mir
         request.mSourcePath = std::string(recipePath);
         request.mGameDir = project.mGameDir;
         request.mCandidateDir = workDir / "candidate";
-        request.mReportFile = workDir / "sync.json";
+        request.mReportDirectory = workDir;
         request.mAsset = path.asset;
         return request;
     }
 
-    std::vector<std::string> TerrainBakeArguments(const TerrainBakeRequest &request)
+    std::vector<std::string> TerrainBakeArguments(const TerrainBakeRequest &request, const fs::path &reportFile)
     {
         return { "sync", "--recipe", GenericPathUtf8(request.mRecipe), "--id-root", request.mIdRoot, "--source-path",
             request.mSourcePath, "--game-dir", GenericPathUtf8(request.mGameDir), "--candidate",
-            GenericPathUtf8(request.mCandidateDir), "--report", GenericPathUtf8(request.mReportFile) };
+            GenericPathUtf8(request.mCandidateDir), "--report", GenericPathUtf8(reportFile) };
     }
 
     std::filesystem::path ReadTerrainToolPath(const std::filesystem::path &workspaceFile)
@@ -135,7 +135,7 @@ namespace mir
         }
 
         const auto publish = json.find("publish");
-        if (json.value("ok", false) && publish != json.end() && publish->is_object())
+        if (exitCode == 0 && json.value("ok", false) && publish != json.end() && publish->is_object())
         {
             if (const std::optional<uint64_t> current = IdOf(*publish, "current"))
             {
@@ -162,14 +162,10 @@ namespace mir
         switch (report.mOutcome)
         {
         case TerrainBakeOutcome::Published:
+        case TerrainBakeOutcome::UpToDate:
             if (!report.mRelease || loaded == nullptr || !(loaded->release == *report.mRelease))
                 return TerrainBakeOverlayAction::Wait;
             return TerrainBakeOverlayAction::Discard;
-        case TerrainBakeOutcome::UpToDate:
-            if (!report.mFingerprint || loaded == nullptr)
-                return TerrainBakeOverlayAction::Wait;
-            return loaded->source == *report.mFingerprint ? TerrainBakeOverlayAction::Discard
-                                                         : TerrainBakeOverlayAction::Keep;
         case TerrainBakeOutcome::Canceled:
         case TerrainBakeOutcome::Failed:
             return TerrainBakeOverlayAction::Keep;

@@ -432,6 +432,26 @@ TEST_CASE("Generated material paths distinguish recipe directories and preserve 
     CHECK(ReadFile(northPath) == before);
 }
 
+TEST_CASE("An overlong UTF-8 terrain material binding leaves the recipe untouched",
+    "[terrain_editor][materiallayers]")
+{
+    namespace fs = std::filesystem;
+    DraftFixture fixture("binding_bytes");
+    const auto recipe = fixture.mAssets / u8"terrain/\U0001F30B\U0001F30B\U0001F30B\U0001F30B"
+                                           u8"\U0001F30B\U0001F30B\U0001F30B\U0001F30B.terrain.json";
+    WriteFile(recipe, kTwoLayerRecipe);
+    TerrainMaterialLayersDraft draft;
+    std::string error;
+    REQUIRE(draft.Load({fixture.mAssets, recipe, "materials/sand.material.json"}, error));
+    CHECK(mir::GenericPathUtf8(recipe.lexically_relative(fixture.mAssets)).size() < 64);
+    REQUIRE(draft.MaterialBindingPath().size() >= 64);
+    draft.Row(1).name = "clay";
+    const auto written = mir::WriteTerrainMaterialLayersFiles(draft);
+    CHECK(written.error.find("bytes") != std::string::npos);
+    CHECK(ReadFile(recipe) == kTwoLayerRecipe);
+    CHECK_FALSE(fs::exists(fixture.mAssets / fs::u8path(draft.MaterialBindingPath())));
+}
+
 TEST_CASE("Generated materials can be reused by their recipe and foreign assets are preserved",
     "[terrain_editor][materiallayers]")
 {

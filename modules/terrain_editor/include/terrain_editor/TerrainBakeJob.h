@@ -85,6 +85,7 @@ namespace mir
         TerrainBakeProcessFactory mFactory;
         std::unique_ptr<TerrainBakeProcess> mProcess;
         TerrainBakeRequest mRequest;
+        std::filesystem::path mReportFile;
         std::optional<TerrainBakeResult> mResult;
         std::chrono::steady_clock::time_point mStarted;
         uint64_t mStartChange = 0;

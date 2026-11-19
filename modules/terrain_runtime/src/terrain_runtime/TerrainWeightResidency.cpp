@@ -14,6 +14,7 @@
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <tuple>
 #include <utility>
 
 namespace mir
@@ -199,20 +200,27 @@ namespace mir
     {
         if (bytes > mBudgetBytes)
             return false;
+        const auto priority = [this](const TerrainWeightUnit &unit, float lastDistance) {
+            const auto want = mWants.find(unit);
+            const bool retained = want == mWants.end();
+            return std::tuple{retained, RankOrder(unit.kind), retained ? lastDistance : want->second.distance};
+        };
+        const auto minimum = incoming ? std::optional{priority(*incoming, distance)} : std::nullopt;
         uint64_t held = HeldBytes();
         while (held > mBudgetBytes - bytes)
         {
             auto farthest = mEntries.end();
+            auto lowest = minimum;
             for (auto it = mEntries.begin(); it != mEntries.end(); ++it)
             {
-                const int order = RankOrder(it->first.kind);
                 if (it->second.state == WeightState::Failed)
                     continue;
-                if (incoming && std::pair{order, it->second.distance} <= std::pair{RankOrder(incoming->kind), distance})
-                    continue;
-                if (farthest == mEntries.end() || order > RankOrder(farthest->first.kind) ||
-                    (order == RankOrder(farthest->first.kind) && it->second.distance > farthest->second.distance))
+                const auto rank = priority(it->first, it->second.distance);
+                if (!lowest || rank > *lowest)
+                {
                     farthest = it;
+                    lowest = rank;
+                }
             }
             if (farthest == mEntries.end())
                 return false;
@@ -342,12 +350,7 @@ namespace mir
     void TerrainWeightResidency::Install(double now)
     {
         if (std::exchange(mBudgetReduced, false))
-        {
-            for (auto &[key, entry] : mEntries)
-                if (const auto want = mWants.find(key); want != mWants.end())
-                    entry.distance = want->second.distance;
             MakeRoom(0);
-        }
         TakeFinished();
 
         std::vector<TerrainWeightUnit> retired;

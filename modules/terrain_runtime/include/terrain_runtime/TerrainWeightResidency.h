@@ -96,8 +96,8 @@ namespace mir
 
     // Main-thread object. A wanted unit's weight payload is read on the executor, uploaded once the read
     // finishes, and kept until it has gone unrequested for the mesh retain time or its release carries a
-    // different payload. Budget pressure retires tiles before Regions and, within a kind, the farthest unit
-    // first. Draws read the words through Words; a unit whose texture is not ready yet draws without weights.
+    // different payload. Budget pressure evicts unrequested textures first. Within either group, tiles go
+    // before Regions and farther units before nearer ones. Draws without a ready texture omit the weights.
     class TerrainWeightResidency
     {
       public:

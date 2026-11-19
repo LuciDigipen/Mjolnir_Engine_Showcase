@@ -10,6 +10,7 @@
 
 #include <TerrainBake.h>
 #include <TerrainFinalSurface.h>
+#include <TerrainGenerator.h>
 #include <TerrainMaterial.h>
 #include <TerrainPackage.h>
 #include <TerrainSync.h>
@@ -345,6 +346,65 @@ TEST_CASE("A recipe without materials keeps its releases free of weight payloads
                       {
                           return file.first.ends_with(".wpack");
                       }));
+}
+
+TEST_CASE("A coarse sculpt and fine paint survive saving and baking one tile", "[terraintool][weights][edits]")
+{
+    WeightTree tree("mixed_paint");
+    const auto path = CopyRecipeFixture("mixed-2x2.terrain.json", tree.scratch.path / "mixed");
+    const auto text = ReadText(path);
+    REQUIRE(text);
+    auto json = Json::parse(*text);
+    json["materials"]["layers"] = Json::array({Json{{"name", "base"}}, Json{{"name", "sand"}}});
+    REQUIRE(WriteText(tree.recipe, json.dump()));
+    const TerrainRecipe recipe = RecipeOf(tree.recipe);
+    const TileCoord tile{0, -1};
+    const auto coarse = recipe.SourceLayout(tile);
+    REQUIRE(coarse);
+    REQUIRE(coarse->IntervalsPerTile() < recipe.layout.IntervalsPerTile());
+    TerrainEditLayer layer = AdditiveEditLayer("sculpt and paint");
+    const GlobalSampleIndex sculpt{3, coarse->TileFirstSample(-1) + 3};
+    const GlobalSampleIndex paint{3, recipe.layout.TileFirstSample(-1) + 3};
+    SetTerrainEditSample(layer, *coarse, sculpt, 4.0f);
+    const TerrainEditTile heightOnly = layer.tiles.at(tile);
+    TerrainWeightTile base;
+    base.tile = tile;
+    base.intervals = recipe.layout.IntervalsPerTile();
+    base.layers = {"base", "sand"};
+    base.weights.resize(2 * base.SampleCount(), 0.0f);
+    std::fill_n(base.weights.begin(), base.SampleCount(), 1.0f);
+    REQUIRE(CompositeTerrainEditWeights(base, std::span(&layer, 1)));
+
+    SetTerrainEditWeightSample(layer, recipe.layout, paint, "sand", 1.0f);
+    REQUIRE(layer.tiles.at(tile).values == heightOnly.values);
+    WriteEditLayers(tree.recipe, std::span(&layer, 1));
+    const TerrainRecipe reopened = RecipeOf(tree.recipe);
+    REQUIRE(reopened.editStack);
+    REQUIRE(reopened.editStack->size() == 1);
+    CHECK(reopened.editStack->front() == layer);
+
+    const fs::path out = tree.scratch.path / "baked";
+    const TerrainReport baked = RunTerrainBake(tree.Bake(out));
+    for (const auto &d : baked.diagnostics)
+        UNSCOPED_INFO(FormatDiagnostic(d));
+    REQUIRE(baked.Ok());
+    const auto handle = TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(out));
+    REQUIRE(handle);
+    const auto heights = handle.value->ReadTile({tree.asset, tile});
+    REQUIRE(heights);
+    CHECK(heights.value->IntervalsPerTile() == coarse->IntervalsPerTile());
+    auto generated = TileHeights::Create(tile, coarse->IntervalsPerTile());
+    REQUIRE(generated);
+    REQUIRE(TerrainGenerator(recipe).FillTile(*coarse, tile, generated->Samples()).Ok());
+    CHECK(heights.value->At(3, 3) == generated->At(3, 3) + 4.0f);
+    const auto weights = handle.value->ReadWeights(tile);
+    REQUIRE(weights);
+    REQUIRE(weights.value->intervals == recipe.layout.IntervalsPerTile());
+    const auto sand = std::ranges::find(weights.value->layers, "sand");
+    REQUIRE(sand != weights.value->layers.end());
+    const size_t slot = size_t(sand - weights.value->layers.begin());
+    const size_t texel = 3 * size_t(weights.value->intervals + 1) + 3;
+    CHECK(weights.value->bytes[texel * kTerrainWeightSlots + slot] == std::byte{255});
 }
 
 TEST_CASE("A weight-only change reuses the height payloads and publishes a new release",

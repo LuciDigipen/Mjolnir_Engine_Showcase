@@ -179,6 +179,32 @@ TEST_CASE("Package follows the game's current and clears the rest of its output"
     CHECK(ReleaseDirNames(TerrainAssetReleasesDir(TerrainReleasesRoot(gameDir), asset)).size() == 2);
 }
 
+TEST_CASE("Package keeps a pinned output release until its reader closes", "[terraintool][package]")
+{
+    ScratchDir scratch("package_reader");
+    const fs::path gameDir = scratch.path / "game";
+    const fs::path outDir = scratch.path / "output";
+    const fs::path outRoot = TerrainReleasesRoot(outDir);
+    const AssetId asset = ExampleAsset();
+    const auto a = PublishToGame(scratch.path, gameDir, "a");
+    REQUIRE(Package(gameDir, outDir).Ok());
+    const auto b = PublishToGame(scratch.path, gameDir, "b");
+    {
+        const auto reader = OpenCurrentTerrainRelease(outRoot, asset);
+        REQUIRE(reader);
+        const auto tiles = ReadAllTiles(*reader.value);
+        const auto report = Package(gameDir, outDir);
+        REQUIRE(report.Ok());
+        CHECK(report.publish->current == b);
+        CHECK(DetailOf(report, check::kPrune).find("in use") != std::string::npos);
+        CHECK(ReadAllTiles(*reader.value) == tiles);
+        REQUIRE(Package(gameDir, outDir).Ok());
+        CHECK(fs::exists(TerrainReleaseDir(outRoot, asset, a)));
+    }
+    REQUIRE(Package(gameDir, outDir).Ok());
+    CHECK_FALSE(fs::exists(TerrainReleaseDir(outRoot, asset, a)));
+}
+
 TEST_CASE("A failed or interrupted package keeps the output's current release readable",
           "[terraintool][package][fault]")
 {
@@ -268,9 +294,18 @@ TEST_CASE("Package refuses what it cannot ship and repairs a damaged copy of its
         REQUIRE(Package(gameDir, outDir).Ok());
         const fs::path outA = TerrainReleaseDir(outRoot, asset, a);
         const TileLocation where = Locate(outA, {0, 0});
-        std::vector<std::byte> pack = ReadFile(outA / where.pack);
-        pack.resize(pack.size() / 2);
-        WriteFile(outA / where.pack, pack);
+        {
+            const auto reader = OpenCurrentTerrainRelease(outRoot, asset);
+            REQUIRE(reader);
+            std::vector<std::byte> pack = ReadFile(outA / where.pack);
+            pack.resize(pack.size() / 2);
+            WriteFile(outA / where.pack, pack);
+            const auto blocked = Package(gameDir, outDir);
+            CHECK_FALSE(blocked.Ok());
+            REQUIRE_FALSE(blocked.diagnostics.empty());
+            CHECK(blocked.diagnostics.front().message.find("in use") != std::string::npos);
+            CHECK(ReadFile(outA / where.pack) == pack);
+        }
 
         const TerrainReport report = Package(gameDir, outDir);
         REQUIRE(report.Ok());

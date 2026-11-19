@@ -17,7 +17,6 @@
 #include <cmath>
 #include <format>
 #include <set>
-#include <tuple>
 #include <utility>
 
 namespace mir
@@ -90,8 +89,31 @@ namespace mir
             return true;
         }
 
-        // The tiles SetTerrainEditSample writes a shared sample into.
-        std::array<TileCoord, 4> HoldingTiles(const TerrainLayout &layout, GlobalSampleIndex sample, std::size_t &count)
+        struct TileSample
+        {
+            TileCoord tile;
+            int32_t intervals;
+            int32_t x;
+            int32_t z;
+            size_t Index() const { return size_t(z) * size_t(intervals + 1) + size_t(x); }
+        };
+
+        std::optional<TileSample> LocalSample(const TileContextMap &contexts, TileCoord tile, int32_t intervals,
+                                              GlobalSampleIndex sample)
+        {
+            const auto found = contexts.find(tile);
+            if (found == contexts.end())
+                return std::nullopt;
+            const int32_t target = found->second.layout.IntervalsPerTile();
+            const int64_t x = (sample.x - int64_t(tile.x) * intervals) * target;
+            const int64_t z = (sample.z - int64_t(tile.z) * intervals) * target;
+            if (x % intervals || z % intervals)
+                return std::nullopt;
+            return TileSample{tile, target, static_cast<int32_t>(x / intervals), static_cast<int32_t>(z / intervals)};
+        }
+
+        std::array<TileSample, 4> HoldingTiles(const TileContextMap &contexts, const TerrainLayout &layout,
+                                               GlobalSampleIndex sample, std::size_t &count)
         {
             const int32_t intervals = layout.IntervalsPerTile();
             const int64_t firstX = FloorDiv(sample.x, intervals);
@@ -106,7 +128,7 @@ namespace mir
             if (sample.z - firstZ * intervals == 0)
                 tilesZ[countZ++] = firstZ - 1;
 
-            std::array<TileCoord, 4> tiles{};
+            std::array<TileSample, 4> tiles{};
             count = 0;
             const TileRange range = layout.Tiles();
             for (std::size_t ix = 0; ix < countX; ++ix)
@@ -116,18 +138,12 @@ namespace mir
                     if (tilesX[ix] < range.min.x || tilesX[ix] > range.max.x || tilesZ[iz] < range.min.z ||
                         tilesZ[iz] > range.max.z)
                         continue;
-                    tiles[count++] = { static_cast<int32_t>(tilesX[ix]), static_cast<int32_t>(tilesZ[iz]) };
+                    const TileCoord coord{static_cast<int32_t>(tilesX[ix]), static_cast<int32_t>(tilesZ[iz])};
+                    if (const auto local = LocalSample(contexts, coord, intervals, sample))
+                        tiles[count++] = *local;
                 }
             }
             return tiles;
-        }
-
-        std::size_t SampleIndex(const TerrainEditTile &tile, int32_t intervals, GlobalSampleIndex sample)
-        {
-            const int64_t localX = sample.x - static_cast<int64_t>(tile.tile.x) * intervals;
-            const int64_t localZ = sample.z - static_cast<int64_t>(tile.tile.z) * intervals;
-            return static_cast<std::size_t>(localZ) * static_cast<std::size_t>(intervals + 1) +
-                   static_cast<std::size_t>(localX);
         }
 
         std::optional<float> CompositeAt(const TileContextMap &contexts, const TileContext &current, int64_t x,
@@ -136,17 +152,10 @@ namespace mir
             const int32_t intervals = current.layout.IntervalsPerTile();
             const TileCoord owner{ static_cast<int32_t>(FloorDiv(x, intervals)),
                                    static_cast<int32_t>(FloorDiv(z, intervals)) };
-            const auto found = contexts.find(owner);
-            if (found == contexts.end())
+            const auto local = LocalSample(contexts, owner, intervals, {x, z});
+            if (!local)
                 return std::nullopt;
-
-            const TileContext &context = found->second;
-            const int64_t localX = x - static_cast<int64_t>(owner.x) * context.layout.IntervalsPerTile();
-            const int64_t localZ = z - static_cast<int64_t>(owner.z) * context.layout.IntervalsPerTile();
-            const int32_t side = context.layout.IntervalsPerTile();
-            if (localX < 0 || localZ < 0 || localX > side || localZ > side)
-                return std::nullopt;
-            return context.composite.At(static_cast<int32_t>(localX), static_cast<int32_t>(localZ));
+            return contexts.at(owner).composite.At(local->x, local->z);
         }
     }
 
@@ -260,7 +269,7 @@ namespace mir
 
         const bool alphaBlend = mLayer.info.heightBlend == TerrainEditBlend::AlphaBlend;
         TerrainEditTileStates tentative;
-        std::set<std::tuple<uint64_t, int64_t, int64_t>> visited;
+        std::set<std::pair<int64_t, int64_t>> visited;
         const double centerX = center.Meters().x;
         const double centerZ = center.Meters().z;
         const double radiusSquared = radius * radius;
@@ -279,23 +288,22 @@ namespace mir
                     continue;
                 const int32_t intervals = context.layout.IntervalsPerTile();
 
-                for (int64_t sampleZ = samples->min.z; sampleZ <= samples->max.z; ++sampleZ)
+                const int64_t stride = mSource.reference.IntervalsPerTile() / intervals;
+                const SampleRange clipped = ClipBrushSamples(context.layout, *samples, centerX, centerZ, radius);
+                for (int64_t sampleZ = clipped.min.z; sampleZ <= clipped.max.z; ++sampleZ)
                 {
-                    for (int64_t sampleX = samples->min.x; sampleX <= samples->max.x; ++sampleX)
+                    for (int64_t sampleX = clipped.min.x; sampleX <= clipped.max.x; ++sampleX)
                     {
                         const GlobalSampleIndex sample{ sampleX, sampleZ };
                         if (context.layout.IsPaddingSample(sample))
                             continue;
-                        // Shared edges are visited once, or their layer value would take the dab twice.
-                        const auto key = std::make_tuple(std::bit_cast<uint64_t>(context.layout.SampleSpacing()),
-                                                         sampleX, sampleZ);
-                        if (!visited.emplace(key).second)
-                            continue;
-
                         const double dx = context.layout.SamplePosition(sampleX) - centerX;
                         const double dz = context.layout.SamplePosition(sampleZ) - centerZ;
                         const double distanceSquared = dx * dx + dz * dz;
                         if (distanceSquared > radiusSquared)
+                            continue;
+                        // An edge sample can belong to tiles on different source grids.
+                        if (!visited.emplace(sampleX * stride, sampleZ * stride).second)
                             continue;
 
                         const int64_t localX = sampleX - static_cast<int64_t>(coord.x) * intervals;
@@ -350,13 +358,13 @@ namespace mir
                         float oldValue = 0.0f;
                         float oldAlpha = 0.0f;
                         std::size_t heldCount = 0;
-                        const std::array<TileCoord, 4> held = HoldingTiles(context.layout, sample, heldCount);
+                        const auto held = HoldingTiles(contexts, context.layout, sample, heldCount);
                         for (std::size_t i = 0; i < heldCount; ++i)
                         {
-                            const auto tile = mLayer.tiles.find(held[i]);
+                            const auto tile = mLayer.tiles.find(held[i].tile);
                             if (tile == mLayer.tiles.end())
                                 continue;
-                            const std::size_t index = SampleIndex(tile->second, intervals, sample);
+                            const std::size_t index = held[i].Index();
                             if (index >= tile->second.values.size())
                                 continue;
                             oldValue = tile->second.values[index];
@@ -384,14 +392,14 @@ namespace mir
                         bool needsWrite = false;
                         for (std::size_t i = 0; i < heldCount && !needsWrite; ++i)
                         {
-                            const auto tile = mLayer.tiles.find(held[i]);
+                            const auto tile = mLayer.tiles.find(held[i].tile);
                             if (tile == mLayer.tiles.end())
                             {
                                 needsWrite = !SameFloatBits(newValue, 0.0f) ||
                                              (alphaBlend && !SameFloatBits(newAlpha, 0.0f));
                                 continue;
                             }
-                            const std::size_t index = SampleIndex(tile->second, intervals, sample);
+                            const std::size_t index = held[i].Index();
                             if (index >= tile->second.values.size())
                             {
                                 needsWrite = !SameFloatBits(newValue, 0.0f) ||
@@ -408,15 +416,17 @@ namespace mir
 
                         for (std::size_t i = 0; i < heldCount; ++i)
                         {
-                            if (tentative.contains(held[i]))
-                                continue;
-                            const auto tile = mLayer.tiles.find(held[i]);
-                            tentative.emplace(held[i],
-                                              tile == mLayer.tiles.end()
-                                                  ? std::nullopt
-                                                  : std::optional<TerrainEditTile>(tile->second));
+                            const TileSample &local = held[i];
+                            if (!tentative.contains(local.tile))
+                            {
+                                const auto tile = mLayer.tiles.find(local.tile);
+                                tentative.emplace(local.tile,
+                                    tile == mLayer.tiles.end() ? std::nullopt
+                                                               : std::optional<TerrainEditTile>(tile->second));
+                            }
+                            SetTerrainEditTileSample(mLayer, local.tile, local.intervals, local.x, local.z,
+                                                   newValue, alphaBlend ? newAlpha : 0.0f);
                         }
-                        SetTerrainEditSample(mLayer, context.layout, sample, newValue, alphaBlend ? newAlpha : 0.0f);
                     }
                 }
             }

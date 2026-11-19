@@ -10,6 +10,7 @@
 
 #include <terrain_editor/TerrainLayerDocument.h>
 
+#include <core/ecs/ComponentFields.h>
 #include <core/fs/FileIO.h>
 #include <core/fs/Paths.h>
 #include <renderer/TerrainMaterialAsset.h>
@@ -295,6 +296,9 @@ namespace mir
             if (!IsAssetRelative(material) || !fs::is_regular_file(mInput.assetsRoot / material, ignored))
                 return std::format("Surface material '{}' does not exist under the assets root.", row.material);
         }
+        if (const auto binding = MaterialBindingPath(); binding.size() >= kFieldStringCapacity)
+            return std::format("The terrain material path is {} bytes. The entity field accepts at most {}: '{}'.",
+                binding.size(), kFieldStringCapacity - 1, binding);
         return {};
     }
 
@@ -329,6 +333,13 @@ namespace mir
         if (recipe.ends_with(kTerrainRecipeSuffix))
             recipe.resize(recipe.size() - kTerrainRecipeSuffix.size());
         return "materials/" + recipe + ".terrainmaterial.json";
+    }
+
+    std::string TerrainMaterialLayersDraft::MaterialBindingPath() const
+    {
+        if (mLayers.empty())
+            return {};
+        return mLayers.size() == 1 ? mLayers.front().material : LayeredMaterialPath();
     }
 
     TerrainMaterialLayersWriteResult WriteTerrainMaterialLayersFiles(const TerrainMaterialLayersDraft &draft)
@@ -470,6 +481,8 @@ namespace mir
                 {
                     migration.deleted += static_cast<std::size_t>(removed.end() - removed.begin());
                     edit.weights.erase(removed.begin(), removed.end());
+                    if (edit.weights.empty())
+                        edit.weightIntervals = 0;
                 }
 
                 bool renamed = false;

@@ -26,6 +26,7 @@ namespace mir
 {
     inline constexpr uint32_t kTerrainEditFormatVersion = 1;
     inline constexpr uint32_t kTerrainEditWeightFormatVersion = 2;
+    inline constexpr uint32_t kTerrainEditMixedGridFormatVersion = 3;
     inline constexpr uint32_t kTerrainEditManifestVersion = 1;
 
     enum class TerrainEditBlend : uint32_t
@@ -62,6 +63,9 @@ namespace mir
         std::vector<float> alpha;
         // Paint channels, one per material layer name, sorted by name.
         std::vector<TerrainEditWeight> weights;
+        // Nonzero only when paint and height use different grids.
+        int32_t weightIntervals = 0;
+        int32_t WeightIntervals() const { return weightIntervals == 0 ? intervals : weightIntervals; }
 
         bool operator==(const TerrainEditTile &) const = default;
     };
@@ -107,7 +111,8 @@ namespace mir
 
     // Version 2 is the version 1 header and checksum around 16-byte channel entries, the payloads in
     // channel order, and the weight channels' length-prefixed name table. A tile without weight
-    // channels keeps the version 1 layout byte for byte.
+    // channels keeps the version 1 layout byte for byte. Version 3 adds the paint grid's interval count
+    // immediately after the header when the height and paint grids differ.
 
     // Enabled layers only, ascending priority then sequence; equal keys keep their stack position.
     std::vector<const TerrainEditLayer *> TerrainEditCompositingOrder(std::span<const TerrainEditLayer> layers);
@@ -128,6 +133,9 @@ namespace mir
     // Writes into every layout tile holding the sample; an absent tile is created zero-filled.
     void SetTerrainEditSample(TerrainEditLayer &layer, const TerrainLayout &layout, GlobalSampleIndex sample,
                               float value, float alpha = 0.0f);
+    // Writes the local sample of a single tile on its own source grid.
+    void SetTerrainEditTileSample(TerrainEditLayer &layer, TileCoord tile, int32_t intervals, int32_t x, int32_t z,
+                                  float value, float alpha);
 
     void SetTerrainEditWeightSample(TerrainEditLayer &layer, const TerrainLayout &layout, GlobalSampleIndex sample,
                                     std::string_view materialLayer, float value);

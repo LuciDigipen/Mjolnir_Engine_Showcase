@@ -748,31 +748,32 @@ namespace mir::terrainbake
         if (!loaded)
             return {std::nullopt, {{"edits", loaded.error.message}}};
 
-        // Edit tiles sit on the reference grid, so a coarser source tile cannot hold one.
         struct StrayTile
         {
             TileCoord tile;
             const TerrainEditLayer *layer = nullptr;
-            std::optional<double> spacing;
+            std::optional<TerrainLayout> source;
         };
         std::optional<StrayTile> stray;
         for (const TerrainEditLayer &layer : *loaded.value)
             for (const auto &entry : layer.tiles)
             {
-                const std::optional<double> spacing = recipe.SourceSpacing(entry.first);
-                if (spacing && *spacing == recipe.layout.SampleSpacing())
+                const auto source = recipe.SourceLayout(entry.first);
+                const TerrainEditTile &tile = entry.second;
+                if (source && (tile.values.empty() || tile.intervals == source->IntervalsPerTile()) &&
+                    (tile.weights.empty() || tile.WeightIntervals() == recipe.layout.IntervalsPerTile()))
                     continue;
                 if (!stray || std::pair(entry.first.z, entry.first.x) <
                                   std::pair(stray->tile.z, stray->tile.x))
-                    stray = StrayTile{entry.first, &layer, spacing};
+                    stray = StrayTile{entry.first, &layer, source};
             }
         if (stray)
             return {std::nullopt,
                     {{"edits",
-                      stray->spacing ? std::format("layer \"{}\" stores tile ({}, {}) on {} m source spacing; edit "
-                                                   "layers require the reference spacing {} m",
+                      stray->source ? std::format("layer \"{}\" tile ({}, {}) requires heights on its {} m source "
+                                                   "grid and paint on the {} m reference grid",
                                                    stray->layer->info.name, stray->tile.x, stray->tile.z,
-                                                   *stray->spacing, recipe.layout.SampleSpacing())
+                                                   stray->source->SampleSpacing(), recipe.layout.SampleSpacing())
                                      : std::format("layer \"{}\" stores tile ({}, {}), which is outside the map",
                                                    stray->layer->info.name, stray->tile.x, stray->tile.z)}}};
 

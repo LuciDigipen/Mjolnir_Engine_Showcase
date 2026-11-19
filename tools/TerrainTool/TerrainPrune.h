@@ -27,6 +27,9 @@ namespace mir::terrainbake
         std::chrono::milliseconds lockWait{0};
     };
 
+    // Under the asset's publish lock. Returns the reason a release could not be removed.
+    std::string RemoveUnusedTerrainRelease(const std::filesystem::path &assetDir, TerrainReleaseId release);
+
     // Deletes every release of the asset but current that no reader holds, and every stale .partial directory.
     // Only a holder of the asset's publish lock may call this. What it cannot remove is reported, never failed.
     void PruneTerrainReleases(const std::filesystem::path &releasesRoot, AssetId asset, TerrainReport &report);

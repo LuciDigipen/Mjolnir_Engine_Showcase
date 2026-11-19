@@ -36,7 +36,7 @@ namespace mir
         std::string mSourcePath;
         std::filesystem::path mGameDir;
         std::filesystem::path mCandidateDir;
-        std::filesystem::path mReportFile;
+        std::filesystem::path mReportDirectory;
         AssetId mAsset;
     };
 
@@ -44,7 +44,8 @@ namespace mir
     std::optional<TerrainBakeRequest> MakeTerrainBakeRequest(const TerrainBakeProject &project,
                                                              std::string_view recipePath, std::string &error);
 
-    std::vector<std::string> TerrainBakeArguments(const TerrainBakeRequest &request);
+    std::vector<std::string> TerrainBakeArguments(const TerrainBakeRequest &request,
+                                                  const std::filesystem::path &reportFile);
 
     // The build writes this binding next to MjolnirEngine.
     std::filesystem::path ReadTerrainToolPath(const std::filesystem::path &workspaceFile);
@@ -66,7 +67,7 @@ namespace mir
         std::optional<TerrainSourceFingerprint> mFingerprint;
     };
 
-    // A missing or unreadable report is a failure; a written report decides even when the exit code was lost.
+    // A successful sync needs both a successful process exit and its completed report.
     TerrainBakeReport ReadTerrainBakeReport(const std::filesystem::path &reportFile, int exitCode);
 
     enum class TerrainBakeOverlayAction : uint8_t

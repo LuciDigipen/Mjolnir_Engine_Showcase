@@ -10,24 +10,24 @@
 
 #include <terrain/TerrainRelease.h>
 
-#include <core/fs/FileIO.h>
-
+#include <array>
 #include <format>
+#include <fstream>
 #include <utility>
 
 namespace mir
 {
     namespace
     {
-        constexpr std::size_t kPointerProbeBytes = 64;
-
-        std::optional<std::string> PeekPointer(const std::filesystem::path &releasesRoot, AssetId asset)
+        std::optional<TerrainReleaseId> PeekPointer(const std::filesystem::path &path)
         {
-            const std::optional<std::vector<std::byte>> bytes =
-                ReadFirstBytes(TerrainBaseHeightsPointerPath(releasesRoot, asset), kPointerProbeBytes);
-            if (!bytes)
+            // Allow the hex key and an optional CRLF, with one extra byte to detect a malformed pointer.
+            std::array<char, 19> bytes{};
+            std::ifstream file(path, std::ios::binary);
+            file.read(bytes.data(), bytes.size());
+            if (file.bad())
                 return std::nullopt;
-            return std::string(reinterpret_cast<const char *>(bytes->data()), bytes->size());
+            return ParseTerrainCurrentPointer({bytes.data(), static_cast<std::size_t>(file.gcount())}).value;
         }
     }
 
@@ -40,10 +40,10 @@ namespace mir
             return false;
         }
 
-        const std::optional<std::string> pointer = PeekPointer(releasesRoot, asset);
-        if (mTried && mAsset == asset && pointer == mPointerText)
+        const auto pointer = PeekPointer(TerrainBaseHeightsPointerPath(releasesRoot, asset));
+        if (mTried && mAsset == asset && pointer == mPointer)
             return mBase.has_value();
-        return Open(releasesRoot, asset);
+        return Open(releasesRoot, asset, pointer);
     }
 
     void TerrainBaseCache::Clear()
@@ -51,16 +51,17 @@ namespace mir
         mBase.reset();
         mAsset = kNullAssetId;
         mError.clear();
-        mPointerText.reset();
+        mPointer.reset();
         mTried = false;
         mTiles.clear();
     }
 
-    bool TerrainBaseCache::Open(const std::filesystem::path &releasesRoot, AssetId asset)
+    bool TerrainBaseCache::Open(const std::filesystem::path &releasesRoot, AssetId asset,
+                                std::optional<TerrainReleaseId> pointer)
     {
         mAsset = asset;
         mTried = true;
-        mPointerText = PeekPointer(releasesRoot, asset);
+        mPointer = pointer;
         mBase.reset();
         mError.clear();
         mTiles.clear();
@@ -72,6 +73,7 @@ namespace mir
             return false;
         }
         mBase.emplace(std::move(*opened.value));
+        mPointer = TerrainReleaseId(mBase->Key().value);
         return true;
     }
 
@@ -141,10 +143,10 @@ namespace mir
             return false;
         }
 
-        const std::optional<std::string> pointer = PeekPointer(releasesRoot, asset);
-        if (mTried && mAsset == asset && pointer == mPointerText)
+        const auto pointer = PeekPointer(TerrainBaseWeightsPointerPath(releasesRoot, asset));
+        if (mTried && mAsset == asset && pointer == mPointer)
             return mBase.has_value();
-        return Open(releasesRoot, asset);
+        return Open(releasesRoot, asset, pointer);
     }
 
     void TerrainBaseWeightsCache::Clear()
@@ -152,16 +154,17 @@ namespace mir
         mBase.reset();
         mAsset = kNullAssetId;
         mError.clear();
-        mPointerText.reset();
+        mPointer.reset();
         mTried = false;
         mTiles.clear();
     }
 
-    bool TerrainBaseWeightsCache::Open(const std::filesystem::path &releasesRoot, AssetId asset)
+    bool TerrainBaseWeightsCache::Open(const std::filesystem::path &releasesRoot, AssetId asset,
+                                       std::optional<TerrainReleaseId> pointer)
     {
         mAsset = asset;
         mTried = true;
-        mPointerText = PeekPointer(releasesRoot, asset);
+        mPointer = pointer;
         mBase.reset();
         mError.clear();
         mTiles.clear();
@@ -173,6 +176,7 @@ namespace mir
             return false;
         }
         mBase.emplace(std::move(*opened.value));
+        mPointer = TerrainReleaseId(mBase->Key().value);
         return true;
     }
 

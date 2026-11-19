@@ -10,6 +10,7 @@
 #include <terrain_editor/TerrainEditBase.h>
 #include <terrain_editor/TerrainEditOverlay.h>
 
+#include <core/fs/FileIO.h>
 #include <terrain/TerrainEditLayer.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainOverlay.h>
@@ -411,6 +412,62 @@ TEST_CASE("The overlay builds weight tiles for weight edits and keeps unchanged 
     const std::vector<std::string> otherTable{ "base", "clay" };
     CHECK(session.Build(kAsset, layers, base, weights, kWeightTable, otherTable, 77, reason) == nullptr);
     CHECK(reason.find("layer table") != std::string::npos);
+}
+
+TEST_CASE("Open editor caches follow their own hex pointers when sync publishes",
+    "[terrain_editor][overlay][weights]")
+{
+    using namespace mir;
+    namespace fs = std::filesystem;
+    const auto root = MakeScratchDir();
+    struct Cleanup
+    {
+        fs::path root;
+        ~Cleanup() { std::error_code ec; fs::remove_all(root, ec); }
+    } cleanup{root};
+
+    TerrainBaseCache heights;
+    TerrainBaseWeightsCache weights;
+    CHECK_FALSE(heights.Ensure(root, kAsset));
+    CHECK_FALSE(weights.Ensure(root, kAsset));
+
+    const Surface surface;
+    const TerrainSourceFingerprint heightKey(1);
+    const TerrainReleaseInfo info{kAsset, heightKey, kTerrainFormatVersion, TerrainReleaseId(heightKey.value)};
+    const std::array tiles{TerrainTileWrite{surface.base.at({0, 0}).get()},
+        TerrainTileWrite{surface.base.at({1, 0}).get()}};
+    const auto heightsRelease = EncodeTerrainRelease(info, std::span(&surface.layout, 1), tiles);
+    REQUIRE(heightsRelease);
+    const auto heightDir = TerrainBaseHeightsDir(root, kAsset, heightKey);
+    fs::create_directories(heightDir);
+    REQUIRE(WriteBytes(heightDir / kTerrainIndexFileName, heightsRelease.value->index));
+    for (const auto &pack : heightsRelease.value->packs)
+        REQUIRE(WriteBytes(heightDir / pack.fileName, pack.bytes));
+    REQUIRE(WriteText(TerrainBaseHeightsPointerPath(root, kAsset), TerrainIdHex(heightKey.value)));
+    REQUIRE(heights.Ensure(root, kAsset));
+    CHECK(heights.KeyValue() == heightKey.value);
+    CHECK_FALSE(weights.Ensure(root, kAsset));
+
+    const auto publishWeights = [&](TerrainSourceFingerprint key) {
+        const auto dir = TerrainBaseWeightsDir(root, kAsset, key);
+        const std::array tiles{MakeBaseWeights({0, 0}), MakeBaseWeights({1, 0})};
+        const auto encoded = EncodeTerrainBaseWeights(kAsset, key, surface.layout, kWeightTable, tiles);
+        REQUIRE(encoded);
+        fs::create_directories(dir);
+        REQUIRE(WriteBytes(dir / kTerrainBaseWeightsIndexFileName, encoded.value->index));
+        REQUIRE(WriteBytes(dir / kTerrainBaseWeightsPackFileName, encoded.value->pack));
+        REQUIRE(WriteTextAtomic(TerrainBaseWeightsPointerPath(root, kAsset), TerrainIdHex(key.value)));
+        REQUIRE(weights.Ensure(root, kAsset));
+        CHECK(weights.KeyValue() == key.value);
+        const auto tile = weights.ReadTile({0, 0});
+        REQUIRE(tile);
+        return *tile.value;
+    };
+    const auto first = publishWeights(TerrainSourceFingerprint(2));
+    const auto second = publishWeights(TerrainSourceFingerprint(3));
+    CHECK(first != second);
+    REQUIRE(heights.Ensure(root, kAsset));
+    CHECK(heights.KeyValue() == heightKey.value);
 }
 
 TEST_CASE("Paint availability disables each missing prerequisite with its message",

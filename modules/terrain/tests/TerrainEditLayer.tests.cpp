@@ -495,7 +495,7 @@ TEST_CASE("A layer tile blob rejects every malformed input", "[terrain][edit]")
     SECTION("unsupported version")
     {
         std::vector<std::byte> bad = good;
-        StoreU32(bad, kVersionOffset, 3);
+        StoreU32(bad, kVersionOffset, kTerrainEditMixedGridFormatVersion + 1);
         const TerrainResult<TerrainEditDecodedTile> result = decode(bad);
         CHECK_FALSE(result);
         CHECK(result.error.code == Code::Unsupported);
@@ -750,6 +750,33 @@ TEST_CASE("Tiles with weight channels round trip and keep height optional", "[te
     REQUIRE(bothDecoded);
     CHECK(bothDecoded.value->blend == TerrainEditBlend::AlphaBlend);
     CHECK(bothDecoded.value->tile == both);
+}
+
+TEST_CASE("Sculpting a painted tile preserves its reference grid and encodes both sample counts", "[terrain][edit]")
+{
+    const TerrainLayout fine = EditLayout();
+    const auto coarse = TerrainLayout::Create(fine.SampleSpacing() * 2.0, fine.IntervalsPerTile() / 2, fine.Bounds());
+    REQUIRE(coarse);
+    TerrainEditLayer layer = Layer("mixed", 0, 0, TerrainEditBlend::AlphaBlend);
+    SetTerrainEditWeightSample(layer, fine, {1, 1}, "sand", 0.5f);
+    const auto paint = layer.tiles.at({0, 0}).weights;
+    SetTerrainEditSample(layer, *coarse, {1, 1}, 2.0f, 0.25f);
+    const auto &tile = layer.tiles.at({0, 0});
+    CHECK(tile.intervals == coarse->IntervalsPerTile());
+    CHECK(tile.WeightIntervals() == fine.IntervalsPerTile());
+    CHECK(tile.weights == paint);
+    const auto bytes = EncodeTerrainEditTile(tile, layer.info.heightBlend);
+    REQUIRE(bytes);
+    CHECK(GetU32(*bytes.value, kVersionOffset) == kTerrainEditMixedGridFormatVersion);
+    const auto decoded = DecodeTerrainEditTile(*bytes.value);
+    REQUIRE(decoded);
+    CHECK(decoded.value->tile == tile);
+    CHECK(decoded.value->blend == layer.info.heightBlend);
+
+    auto malformed = *bytes.value;
+    StoreU32(malformed, kHeaderSize, 0);
+    Reseal(malformed);
+    CHECK(DecodeTerrainEditTile(malformed).error.code == Code::Malformed);
 }
 
 TEST_CASE("A version 2 tile blob rejects malformed channels and names", "[terrain][edit]")

@@ -12,6 +12,9 @@
 
 #include <core/platform/Process.h>
 
+#include <atomic>
+#include <format>
+#include <system_error>
 #include <utility>
 
 namespace mir
@@ -38,6 +41,19 @@ namespace mir
             const std::u8string text = path.u8string();
             return { reinterpret_cast<const char *>(text.data()), text.size() };
         }
+
+        std::filesystem::path NextReportFile(const std::filesystem::path &directory, std::error_code &ec)
+        {
+            static std::atomic<uint64_t> sequence{0};
+            std::filesystem::create_directories(directory, ec);
+            while (!ec)
+            {
+                const auto run = directory / std::format("sync-{}-{}", CurrentProcessId(), sequence++);
+                if (std::filesystem::create_directory(run, ec))
+                    return run / "report.json";
+            }
+            return {};
+        }
     } // namespace
 
     std::unique_ptr<TerrainBakeProcess> MakeChildTerrainBakeProcess()
@@ -63,7 +79,7 @@ namespace mir
     TerrainBakeJob::~TerrainBakeJob()
     {
         if (mRunning && mProcess)
-            mProcess->Terminate();
+            Cancel();
     }
 
     bool TerrainBakeJob::Start(TerrainBakeStart start)
@@ -98,8 +114,18 @@ namespace mir
             return false;
         }
 
+        std::error_code ec;
+        const auto reportFile = NextReportFile(mRequest.mReportDirectory, ec);
+        if (ec)
+        {
+            TerrainBakeReport report;
+            report.mMessage = "Cannot select a TerrainTool report file: " + ec.message();
+            Finish(std::move(report));
+            return false;
+        }
+        mReportFile = reportFile;
         mProcess = mFactory ? mFactory() : nullptr;
-        if (!mProcess || !mProcess->Start(mRequest.mTool, TerrainBakeArguments(mRequest)))
+        if (!mProcess || !mProcess->Start(mRequest.mTool, TerrainBakeArguments(mRequest, mReportFile)))
         {
             mProcess.reset();
             TerrainBakeReport report;
@@ -119,7 +145,7 @@ namespace mir
             return;
 
         if (const std::optional<int> exitCode = mProcess->Poll())
-            Finish(ReadTerrainBakeReport(mRequest.mReportFile, *exitCode));
+            Finish(ReadTerrainBakeReport(mReportFile, *exitCode));
     }
 
     void TerrainBakeJob::Cancel()
@@ -151,6 +177,13 @@ namespace mir
 
     void TerrainBakeJob::Finish(TerrainBakeReport report)
     {
+        if (!mReportFile.empty())
+        {
+            std::error_code ignored;
+            std::filesystem::remove(mReportFile, ignored);
+            std::filesystem::remove(mReportFile.parent_path(), ignored);
+            mReportFile.clear();
+        }
         TerrainBakeResult result;
         result.mReport = std::move(report);
         result.mAsset = mRequest.mAsset;

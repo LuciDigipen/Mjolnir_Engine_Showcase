@@ -317,10 +317,12 @@ namespace mir
                 continue;
 
             const TerrainEditTile &tile = found->second;
-            if (tile.intervals != base.intervals)
+            if (tile.weights.empty())
+                continue;
+            if (tile.WeightIntervals() != base.intervals)
                 return Fail<TerrainEditWeightComposite>(
                     Code::InvalidInput, std::format("layer '{}' tile ({}, {}) has {} intervals, the base has {}",
-                                                    layer->info.name, base.tile.x, base.tile.z, tile.intervals,
+                                                    layer->info.name, base.tile.x, base.tile.z, tile.WeightIntervals(),
                                                     base.intervals));
 
             for (const TerrainEditWeight &channel : tile.weights)
@@ -371,25 +373,38 @@ namespace mir
                               float value, float alpha)
     {
         const int32_t intervals = layout.IntervalsPerTile();
-        const size_t count = SampleCount(intervals);
-        const bool alphaBlend = layer.info.heightBlend == TerrainEditBlend::AlphaBlend;
-
         size_t heldCount = 0;
         const std::array<TileCoord, 4> held = HoldingTiles(layout, sample, heldCount);
         for (size_t i = 0; i < heldCount; ++i)
         {
             const TileCoord coord = held[i];
-            TerrainEditTile &tile = layer.tiles[coord];
-            tile.tile = coord;
-            tile.intervals = intervals;
-            tile.values.resize(count, 0.0f);
-            if (alphaBlend)
-                tile.alpha.resize(count, 0.0f);
+            const int32_t x = static_cast<int32_t>(sample.x - int64_t(coord.x) * intervals);
+            const int32_t z = static_cast<int32_t>(sample.z - int64_t(coord.z) * intervals);
+            SetTerrainEditTileSample(layer, coord, intervals, x, z, value, alpha);
+        }
+    }
 
-            const size_t index = SampleIndex(coord, intervals, sample);
-            tile.values[index] = value;
-            if (alphaBlend)
-                tile.alpha[index] = alpha;
+    void SetTerrainEditTileSample(TerrainEditLayer &layer, TileCoord coord, int32_t intervals, int32_t x, int32_t z,
+                                  float value, float alpha)
+    {
+        if (intervals < 1 || intervals > kMaxTerrainTileIntervals || x < 0 || x > intervals || z < 0 || z > intervals)
+            return;
+        TerrainEditTile &tile = layer.tiles[coord];
+        tile.tile = coord;
+        if (!tile.weights.empty())
+        {
+            const int32_t paintIntervals = tile.WeightIntervals();
+            tile.weightIntervals = intervals == paintIntervals ? 0 : paintIntervals;
+        }
+        tile.intervals = intervals;
+        const size_t count = SampleCount(intervals);
+        const size_t index = size_t(z) * size_t(intervals + 1) + size_t(x);
+        tile.values.resize(count, 0.0f);
+        tile.values[index] = value;
+        if (layer.info.heightBlend == TerrainEditBlend::AlphaBlend)
+        {
+            tile.alpha.resize(count, 0.0f);
+            tile.alpha[index] = alpha;
         }
     }
 
@@ -409,7 +424,9 @@ namespace mir
             const TileCoord coord = held[i];
             TerrainEditTile &tile = layer.tiles[coord];
             tile.tile = coord;
-            tile.intervals = intervals;
+            if (tile.values.empty())
+                tile.intervals = intervals;
+            tile.weightIntervals = tile.intervals == intervals ? 0 : intervals;
 
             const auto lower = std::lower_bound(tile.weights.begin(), tile.weights.end(), materialLayer,
                                                 [](const TerrainEditWeight &channel, std::string_view name)
@@ -441,18 +458,20 @@ namespace mir
                 return true;
             }
             const TerrainEditTile &tile = found->second;
-            if (tile.intervals != intervals)
-                return false;
-
             out = 0.0f;
             if (tile.values.empty())
                 return true;
-            if (alpha ? tile.alpha.size() != count : tile.values.size() != count)
+            if (tile.intervals < 1 || tile.intervals > kMaxTerrainTileIntervals)
+                return false;
+            const size_t heightCount = SampleCount(tile.intervals);
+            if (alpha ? tile.alpha.size() != heightCount : tile.values.size() != heightCount)
                 return false;
 
-            const int64_t localX = x - static_cast<int64_t>(coord.x) * intervals;
-            const int64_t localZ = z - static_cast<int64_t>(coord.z) * intervals;
-            const size_t index = static_cast<size_t>(localZ) * side + static_cast<size_t>(localX);
+            const int64_t localX = (x - int64_t(coord.x) * intervals) * tile.intervals;
+            const int64_t localZ = (z - int64_t(coord.z) * intervals) * tile.intervals;
+            if (localX % intervals || localZ % intervals)
+                return false;
+            const size_t index = size_t(localZ / intervals) * size_t(tile.intervals + 1) + size_t(localX / intervals);
             out = alpha ? tile.alpha[index] : tile.values[index];
             return true;
         };
@@ -463,7 +482,7 @@ namespace mir
             if (found == layer.tiles.end())
                 return true;
             const TerrainEditTile &tile = found->second;
-            if (tile.intervals != intervals)
+            if (!tile.weights.empty() && tile.WeightIntervals() != intervals)
                 return false;
             for (const TerrainEditWeight &channel : tile.weights)
             {
@@ -601,6 +620,8 @@ namespace mir
             return {std::move(bytes), {}};
         }
 
+        if (!hasHeight && tile.weightIntervals != 0)
+            return Fail<std::vector<std::byte>>(Code::InvalidInput, "a paint-only tile must use its tile grid");
         if (!hasHeight && !tile.alpha.empty())
             return Fail<std::vector<std::byte>>(
                 Code::InvalidInput, std::format("tile ({}, {}) has alpha values but no height values", tile.tile.x,
@@ -631,6 +652,10 @@ namespace mir
             }
         }
 
+        const int32_t paintIntervals = tile.WeightIntervals();
+        if (paintIntervals < 1 || paintIntervals > kMaxTerrainTileIntervals)
+            return Fail<std::vector<std::byte>>(Code::InvalidInput, "the paint grid interval count is out of range");
+        const size_t paintCount = SampleCount(paintIntervals);
         std::string_view previous;
         for (const TerrainEditWeight &channel : tile.weights)
         {
@@ -643,12 +668,12 @@ namespace mir
                     Code::InvalidInput, std::format("tile ({}, {}) weight channels are not in name order at \"{}\"",
                                                     tile.tile.x, tile.tile.z, channel.layer));
             previous = channel.layer;
-            if (channel.values.size() != count)
+            if (channel.values.size() != paintCount)
                 return Fail<std::vector<std::byte>>(
                     Code::InvalidInput,
                     std::format("tile ({}, {}) weight channel \"{}\" has {} values, expected {}", tile.tile.x, tile.tile.z,
-                                channel.layer, channel.values.size(), count));
-            for (size_t index = 0; index < count; ++index)
+                                channel.layer, channel.values.size(), paintCount));
+            for (size_t index = 0; index < paintCount; ++index)
                 if (!(channel.values[index] >= 0.0f && channel.values[index] <= 1.0f))
                     return Fail<std::vector<std::byte>>(
                         Code::InvalidInput,
@@ -669,11 +694,14 @@ namespace mir
         std::vector<std::byte> bytes;
         detail::LeWriter out(bytes);
         out.U32(kMagic);
-        out.U32(kTerrainEditWeightFormatVersion);
+        const bool mixed = paintIntervals != tile.intervals;
+        out.U32(mixed ? kTerrainEditMixedGridFormatVersion : kTerrainEditWeightFormatVersion);
         out.I32(tile.tile.x);
         out.I32(tile.tile.z);
         out.U32(static_cast<uint32_t>(tile.intervals));
         out.U32(channelCount);
+        if (mixed)
+            out.U32(static_cast<uint32_t>(paintIntervals));
 
         if (hasHeight)
         {
@@ -722,7 +750,8 @@ namespace mir
         if (detail::LoadU32(bytes, kMagicOffset) != kMagic)
             return Fail<TerrainEditDecodedTile>(Code::Malformed, "tile blob magic is not an edit tile");
         const uint32_t version = detail::LoadU32(bytes, kVersionOffset);
-        if (version != kTerrainEditFormatVersion && version != kTerrainEditWeightFormatVersion)
+        const bool mixed = version == kTerrainEditMixedGridFormatVersion;
+        if (version != kTerrainEditFormatVersion && version != kTerrainEditWeightFormatVersion && !mixed)
             return Fail<TerrainEditDecodedTile>(Code::Unsupported,
                                                 std::format("tile blob version {} is not supported", version));
 
@@ -746,8 +775,12 @@ namespace mir
                                              1u + static_cast<uint32_t>(kMaxTerrainMaterialLayers)));
 
         const size_t channelTableBytes = static_cast<size_t>(channelCount) * kWeightChannelSize;
-        if (bytes.size() < kHeaderSize + channelTableBytes + kTrailerSize)
+        const size_t headerSize = kHeaderSize + (mixed ? sizeof(uint32_t) : 0);
+        if (bytes.size() < headerSize + channelTableBytes + kTrailerSize)
             return Fail<TerrainEditDecodedTile>(Code::Malformed, "tile blob channel table is truncated");
+        const uint32_t paintIntervals = mixed ? detail::LoadU32(bytes, kHeaderSize) : intervals;
+        if (paintIntervals < 1 || paintIntervals > static_cast<uint32_t>(kMaxTerrainTileIntervals))
+            return Fail<TerrainEditDecodedTile>(Code::Malformed, "tile blob paint grid interval count is out of range");
 
         struct ChannelEntry
         {
@@ -763,7 +796,7 @@ namespace mir
         size_t weightCount = 0;
         for (size_t channel = 0; channel < channelCount; ++channel)
         {
-            const size_t at = kHeaderSize + channel * kWeightChannelSize;
+            const size_t at = headerSize + channel * kWeightChannelSize;
             ChannelEntry &entry = entries[channel];
             entry.kind = detail::LoadU32(bytes, at + kKindOffset);
             entry.blend = detail::LoadU32(bytes, at + kBlendOffset);
@@ -802,9 +835,12 @@ namespace mir
         }
 
         const size_t count = SampleCount(static_cast<int32_t>(intervals));
-        const size_t payload = kHeaderSize + channelTableBytes;
+        if (mixed && (!hasHeight || weightCount == 0 || paintIntervals == intervals))
+            return Fail<TerrainEditDecodedTile>(Code::Malformed, "tile blob does not contain two distinct grids");
+        const size_t paintCount = SampleCount(static_cast<int32_t>(paintIntervals));
+        const size_t payload = headerSize + channelTableBytes;
         const size_t heightBytes = hasHeight ? count * sizeof(float) * (hasAlpha ? 2 : 1) : 0;
-        const size_t weightBytes = weightCount * count * sizeof(float);
+        const size_t weightBytes = weightCount * paintCount * sizeof(float);
         const size_t tableStart = payload + heightBytes + weightBytes;
         const size_t body = bytes.size() - kTrailerSize;
         if (tableStart > body)
@@ -858,6 +894,7 @@ namespace mir
         decoded.blend = blend;
         decoded.tile.tile = {tileX, tileZ};
         decoded.tile.intervals = static_cast<int32_t>(intervals);
+        decoded.tile.weightIntervals = mixed ? static_cast<int32_t>(paintIntervals) : 0;
 
         size_t at = payload;
         if (hasHeight)
@@ -877,8 +914,8 @@ namespace mir
         {
             TerrainEditWeight channel;
             channel.layer = name;
-            channel.values.resize(count);
-            for (size_t index = 0; index < count; ++index, at += sizeof(float))
+            channel.values.resize(paintCount);
+            for (size_t index = 0; index < paintCount; ++index, at += sizeof(float))
                 channel.values[index] = detail::LoadF32(bytes, at);
             decoded.tile.weights.push_back(std::move(channel));
         }
@@ -892,7 +929,7 @@ namespace mir
                 return Fail<TerrainEditDecodedTile>(
                     Code::Corrupt, std::format("tile ({}, {}) alpha {} is outside 0 to 1", tileX, tileZ, index));
         for (const TerrainEditWeight &channel : decoded.tile.weights)
-            for (size_t index = 0; index < count; ++index)
+            for (size_t index = 0; index < paintCount; ++index)
                 if (!(channel.values[index] >= 0.0f && channel.values[index] <= 1.0f))
                     return Fail<TerrainEditDecodedTile>(
                         Code::Corrupt, std::format("tile ({}, {}) weight channel \"{}\" value {} is outside 0 to 1",

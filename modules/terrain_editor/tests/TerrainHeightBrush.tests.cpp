@@ -24,6 +24,25 @@
 #include <optional>
 #include <vector>
 
+TEST_CASE("A small brush clips dense sample grids and keeps shared edge samples",
+    "[terrain_editor][brush]")
+{
+    const auto layout = mir::TerrainLayout::Create(0.125, 512, {-64.0, 0.0, 64.0, 64.0});
+    REQUIRE(layout);
+    const auto right = layout->TileSamples({0, 0});
+    const auto left = layout->TileSamples({-1, 0});
+    REQUIRE(right);
+    REQUIRE(left);
+    const auto clippedRight = mir::ClipBrushSamples(*layout, *right, 0.0, 8.0, 1.5);
+    const auto clippedLeft = mir::ClipBrushSamples(*layout, *left, 0.0, 8.0, 1.5);
+    CHECK(clippedRight.min.x == 0);
+    CHECK(clippedLeft.max.x == 0);
+    CHECK(clippedLeft.min.x == -12);
+    CHECK(clippedRight.max.x == 12);
+    CHECK(clippedRight.min.z == 52);
+    CHECK(clippedRight.max.z == 76);
+}
+
 namespace
 {
     using mir::CompositeTerrainEditLayers;
@@ -211,6 +230,37 @@ TEST_CASE("A height brush moves the composite inside its radius on both layer bl
         CheckBrush(TerrainBrush::Smooth, blend);
         CheckBrush(TerrainBrush::Flatten, blend);
     }
+}
+
+TEST_CASE("A sculpt dab updates the common edge once on each tile's source grid", "[terrain_editor][brush]")
+{
+    Surface surface;
+    const auto coarse = TerrainLayout::Create(2.0, 2, surface.layout.Bounds());
+    REQUIRE(coarse);
+    const TileCoord right{1, 0};
+    const auto coarseBase = TileHeights::Create(right, coarse->IntervalsPerTile());
+    REQUIRE(coarseBase);
+    surface.base[right] = std::make_shared<const TileHeights>(*coarseBase);
+    auto source = surface.Source();
+    source.layout = [&](TileCoord tile) { return tile == right ? coarse : std::optional{surface.layout}; };
+    std::vector<TerrainEditLayer> layers{MakeLayer(TerrainEditBlend::Additive)};
+    TerrainBrushStroke stroke(layers.front(), layers, source, 0.0);
+    TerrainBrushSettings settings;
+    settings.brush = TerrainBrush::RaiseLower;
+    settings.radius = 1.25;
+    settings.strength = 1.0;
+    settings.falloff = 0.5;
+    const auto center = TerrainLocalPosition::FromMeters({4.0, 0.0, 2.0});
+    REQUIRE(center);
+    REQUIRE(stroke.Dab(*center, settings, 1.0).Ok());
+    const auto &fineTile = layers.front().tiles.at({0, 0});
+    const auto &coarseTile = layers.front().tiles.at(right);
+    REQUIRE(fineTile.values.size() == 25);
+    REQUIRE(coarseTile.values.size() == 9);
+    CHECK(fineTile.values[2 * 5 + 4] == mir::kTerrainRaiseMetersPerSecond);
+    CHECK(coarseTile.values[1 * 3] == fineTile.values[2 * 5 + 4]);
+    CHECK(fineTile.values[1 * 5 + 4] > 0.0f);
+    CHECK(ValidateTerrainEditSharedSamples(layers.front(), surface.layout).empty());
 }
 
 namespace

@@ -206,8 +206,8 @@ namespace mir
                 mMaterialPublication.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
             {
                 const std::string error = mMaterialPublication.get();
-                if (error.empty()) SucceedMaterial("Shader published and material queued for import." + mBindingNote);
-                else FailMaterial("Material files saved. " + error + mBindingNote);
+                if (error.empty()) SucceedMaterial("Shader published and material queued for import.");
+                else FailMaterial("Material files saved. " + error);
             }
             if (mPainting && (SelectedAsset() != mStrokeAsset || mWorkspace.SelectedLayer() != mStrokeSequence))
                 FinishStroke(context.mHistory);
@@ -225,8 +225,7 @@ namespace mir
                 return;
             if (ImGui::Begin("Terrain"))
             {
-                if (!(SelectedAsset() == mMaterialDraftAsset))
-                    ReloadMaterialDraft(context, SelectedAsset());
+                SyncMaterialDraft(context);
 
                 TerrainLayerDocument *document = mWorkspace.SelectedDocument();
                 RefreshPaintedLayers(document, SelectedAsset());
@@ -240,7 +239,7 @@ namespace mir
                 if (actions.mRescanMaterials)
                     mSurfaceMaterials = ScanTerrainSurfaceMaterials(mWorkspace.AssetsDir());
                 if (actions.mRevertMaterials)
-                    ReloadMaterialDraft(context, SelectedAsset());
+                    SyncMaterialDraft(context, true);
                 if (actions.mApplyMaterials)
                     ApplyMaterialLayers(context);
                 if (actions.mStartBake)
@@ -436,39 +435,35 @@ namespace mir
             return count == 1 ? only : kNullEntity;
         }
 
-        std::string BoundMaterial(World &world, std::string_view recipePath) const
-        {
-            const Entity entity = TerrainEntityFor(world, recipePath);
-            if (entity.IsNull())
-                return {};
-            const TerrainInstance *instance = world.GetComponent<TerrainInstance>(entity);
-            return instance != nullptr ? FieldString(instance->materialPath) : std::string();
-        }
-
-        void SyncMaterialDraft(const EditorExtensionContext &context)
+        void SyncMaterialDraft(const EditorExtensionContext &context, bool force = false)
         {
             const AssetId asset = SelectedAsset();
-            if (!(asset == mMaterialDraftAsset) || mMaterialReload)
-                ReloadMaterialDraft(context, asset);
-        }
+            const std::span<const TerrainEditAsset> assets = mWorkspace.Assets();
+            const std::size_t index = mWorkspace.SelectedAsset();
+            const bool selected = !asset.IsNull() && index < assets.size();
+            const Entity entity = selected ? TerrainEntityFor(context.mWorld, assets[index].recipePath) : kNullEntity;
+            const TerrainInstance *instance = entity.IsNull() ? nullptr : context.mWorld.GetComponent<TerrainInstance>(entity);
+            const std::string binding = instance ? FieldString(instance->materialPath) : std::string();
+            const bool sameEntity = asset == mMaterialDraftAsset && entity == mMaterialDraftEntity;
+            const bool sameBinding = binding == mMaterialDraftBinding;
+            if (sameEntity && sameBinding && !mMaterialReload && !force)
+                return;
 
-        void ReloadMaterialDraft(const EditorExtensionContext &context, AssetId asset)
-        {
-            if (!(asset == mMaterialDraftAsset))
+            if (!sameEntity || (!sameBinding && !mMaterialReload))
             {
                 mMaterialStatus.clear();
                 mMaterialFailed = false;
                 mMaterialPublication = {};
             }
             mMaterialDraftAsset = asset;
+            mMaterialDraftEntity = entity;
+            mMaterialDraftBinding = binding;
             mMaterialReload = false;
             mMaterialDraft.Clear();
             mMaterialDraftError.clear();
             mMaterialRecipeHasMaterials = true;
 
-            const std::span<const TerrainEditAsset> assets = mWorkspace.Assets();
-            const std::size_t index = mWorkspace.SelectedAsset();
-            if (asset.IsNull() || index >= assets.size())
+            if (!selected)
             {
                 mMaterialDraftError = "No terrain asset is selected.";
                 return;
@@ -477,7 +472,7 @@ namespace mir
             TerrainMaterialLayersInput input;
             input.assetsRoot = mWorkspace.AssetsDir();
             input.recipePath = input.assetsRoot / std::filesystem::u8path(assets[index].recipePath);
-            input.boundMaterial = BoundMaterial(context.mWorld, assets[index].recipePath);
+            input.boundMaterial = binding;
 
             std::string error;
             if (!mMaterialDraft.Load(input, error))
@@ -531,6 +526,8 @@ namespace mir
                 view.mDisabledReason = "Material layers work in Edit.";
             else if (context.mDocument != kSceneDocument)
                 view.mDisabledReason = "Material layers write the scene's terrain, not a Prefab.";
+            else if (mMaterialDraftEntity.IsNull())
+                view.mDisabledReason = "Select the terrain entity to bind.";
             else if (document == nullptr)
                 view.mDisabledReason = "The selected terrain has no Edit Layers.";
             else if (!document->Editable())
@@ -540,21 +537,6 @@ namespace mir
             else
                 view.mCanApply = true;
             return view;
-        }
-
-        bool SubmitMaterialPath(const EditorExtensionContext &context, Entity entity, std::string_view path)
-        {
-            const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<TerrainInstance>().seq);
-            const FieldDesc *field = ops != nullptr ? ops->FindField("materialPath") : nullptr;
-            if (field == nullptr || field->mKind != FieldKind::String)
-                return false;
-
-            FieldValue value;
-            value.mField = static_cast<uint32_t>(field - ops->mFields.data());
-            std::memcpy(value.mBytes, path.data(),
-                std::min(path.size(), static_cast<std::size_t>(kFieldStringCapacity) - 1));
-            context.mHistory.Submit(MakeSetFieldsCommand(entity, *ops, { value }, "Bind Terrain Material"), true);
-            return true;
         }
 
         void FailMaterial(std::string message)
@@ -601,6 +583,23 @@ namespace mir
                 return;
             }
 
+            const TerrainInstance *instance = context.mWorld.GetComponent<TerrainInstance>(entity);
+            if (entity != mMaterialDraftEntity || !instance ||
+                FieldString(instance->materialPath) != mMaterialDraftBinding ||
+                SelectedAsset() != mMaterialDraftAsset)
+            {
+                FailMaterial("The terrain material binding changed. Review the draft before applying.");
+                return;
+            }
+            const std::string binding = mMaterialDraft.MaterialBindingPath();
+            const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<TerrainInstance>().seq);
+            const FieldDesc *field = ops ? ops->FindField("materialPath") : nullptr;
+            if (!field || field->mKind != FieldKind::String || binding.size() >= kFieldStringCapacity)
+            {
+                FailMaterial("The terrain entity cannot store this material binding.");
+                return;
+            }
+
             const TerrainMaterialLayersWriteResult written = WriteTerrainMaterialLayersFiles(mMaterialDraft);
             if (!written.error.empty())
             {
@@ -609,33 +608,23 @@ namespace mir
             }
             mMaterialRecipeHasMaterials = true;
             MigrateTerrainMaterialChannels(*document, mMaterialDraft.MakePlan());
-            const std::string binding = written.layeredMaterial.empty() ? mMaterialDraft.Layers().front().material
-                                                                        : written.layeredMaterial;
-            std::string note;
-            const TerrainInstance *instance = context.mWorld.GetComponent<TerrainInstance>(entity);
-            const std::string current = instance != nullptr ? FieldString(instance->materialPath) : std::string();
-            if (current != binding)
+            if (mMaterialDraftBinding != binding)
             {
-                // A layered file this draft did not load belongs to another setup.
-                if (IsTerrainMaterialPath(current) && current != mMaterialDraft.LayeredMaterialPath())
-                {
-                    note = std::format(" The terrain entity already uses '{}'; its material binding was left alone.",
-                        current);
-                }
-                else if (!SubmitMaterialPath(context, entity, binding))
-                    note = " The terrain entity's material could not be changed.";
+                FieldValue value;
+                value.mField = static_cast<uint32_t>(field - ops->mFields.data());
+                std::memcpy(value.mBytes, binding.data(), binding.size());
+                context.mHistory.Submit(MakeSetFieldsCommand(entity, *ops, { value }, "Bind Terrain Material"), true);
             }
 
             mMaterialReload = true;
             mMaterialPublication = {};
             if (written.layeredMaterial.empty())
-                SucceedMaterial("Applied." + note);
+                SucceedMaterial("Applied.");
             else
             {
-                mBindingNote = std::move(note);
                 mMaterialPublication = mEditor.ImportTerrainMaterial(
                     mWorkspace.AssetsDir() / std::filesystem::u8path(written.layeredMaterial));
-                SucceedMaterial("Material files saved. Publishing shader..." + mBindingNote);
+                SucceedMaterial("Material files saved. Publishing shader...");
             }
             StartBake();
         }
@@ -907,7 +896,6 @@ namespace mir
         TerrainOverlayApplier mApplyOverlay;
         EditorModule &mEditor;
         std::future<std::string> mMaterialPublication;
-        std::string mBindingNote;
         TerrainBaseCache mBase;
         TerrainBaseWeightsCache mWeights;
         std::map<uint64_t, TerrainEditOverlaySession> mOverlays;
@@ -917,6 +905,8 @@ namespace mir
         std::map<uint64_t, std::string> mMaterialLayers;
         TerrainMaterialLayersDraft mMaterialDraft;
         AssetId mMaterialDraftAsset;
+        Entity mMaterialDraftEntity = kNullEntity;
+        std::string mMaterialDraftBinding;
         std::string mMaterialDraftError;
         std::string mMaterialStatus;
         std::vector<std::string> mSurfaceMaterials;

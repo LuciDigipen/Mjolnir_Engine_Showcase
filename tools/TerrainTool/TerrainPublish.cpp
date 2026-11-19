@@ -9,6 +9,7 @@
 #include "TerrainPublish.h"
 
 #include "TerrainCandidate.h"
+#include "TerrainPrune.h"
 #include "TerrainValidate.h"
 
 #include <core/fs/FileIO.h>
@@ -250,11 +251,11 @@ namespace mir::terrainbake
                 SkipNotRun(report, kInstallChecks, "nothing to publish into");
                 return false;
             }
-            fs::remove_all(finalDir, ec);
-            if (ec)
+            const std::string reason = RemoveUnusedTerrainRelease(assetDir, release);
+            if (!reason.empty())
             {
                 Fail(report, check::kTarget, releaseHex,
-                     std::format("cannot remove the old copy {} ({})", PathUtf8(finalDir), ec.message()));
+                     std::format("cannot remove the old copy {} ({})", PathUtf8(finalDir), reason));
                 SkipNotRun(report, kInstallChecks, "nothing to copy into");
                 return false;
             }

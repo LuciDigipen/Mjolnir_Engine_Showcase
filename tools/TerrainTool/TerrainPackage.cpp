@@ -8,6 +8,7 @@
  */
 #include "TerrainPackage.h"
 
+#include "TerrainPrune.h"
 #include "TerrainSync.h"
 #include "TerrainValidate.h"
 
@@ -72,12 +73,21 @@ namespace mir::terrainbake
             std::vector<std::string> left;
             for (const fs::path &path : extra)
             {
-                std::error_code removeEc;
-                fs::remove_all(path, removeEc);
-                if (removeEc)
-                    left.push_back(std::format("{} ({})", PathUtf8(path.filename()), removeEc.message()));
+                const std::string name = PathUtf8(path.filename());
+                std::string reason;
+                if (const auto release = ParseTerrainIdHex(name))
+                    reason = RemoveUnusedTerrainRelease(assetDir, TerrainReleaseId(*release));
                 else
-                    removed.push_back(PathUtf8(path.filename()));
+                {
+                    std::error_code removeEc;
+                    fs::remove_all(path, removeEc);
+                    if (removeEc)
+                        reason = removeEc.message();
+                }
+                if (!reason.empty())
+                    left.push_back(std::format("{} ({})", name, reason));
+                else
+                    removed.push_back(name);
             }
             // Not a failure: only current is read, and the next package retries.
             std::string detail = std::format("kept current and {}; removed {}", keepHex,

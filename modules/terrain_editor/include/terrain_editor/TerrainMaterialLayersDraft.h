@@ -86,6 +86,7 @@ namespace mir
         float HeightContrast() const { return mHeightContrast; }
         // The file the entity already uses when it is layered, else the recipe's own file.
         std::string LayeredMaterialPath() const;
+        std::string MaterialBindingPath() const;
 
     private:
         TerrainMaterialLayersInput mInput;

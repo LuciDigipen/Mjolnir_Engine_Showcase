@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <optional>
 #include <set>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -185,7 +184,7 @@ namespace mir
         const bool erase = settings.lower;
 
         TerrainEditTileStates tentative;
-        std::set<std::tuple<uint64_t, int64_t, int64_t>> visited;
+        std::set<std::pair<int64_t, int64_t>> visited;
 
         for (int32_t z = minTile.z; z <= maxTile.z; ++z)
         {
@@ -196,22 +195,21 @@ namespace mir
                 if (!samples)
                     continue;
 
-                for (int64_t sampleZ = samples->min.z; sampleZ <= samples->max.z; ++sampleZ)
+                const SampleRange clipped = ClipBrushSamples(mReference, *samples, centerX, centerZ, radius);
+                for (int64_t sampleZ = clipped.min.z; sampleZ <= clipped.max.z; ++sampleZ)
                 {
-                    for (int64_t sampleX = samples->min.x; sampleX <= samples->max.x; ++sampleX)
+                    for (int64_t sampleX = clipped.min.x; sampleX <= clipped.max.x; ++sampleX)
                     {
                         const GlobalSampleIndex sample{ sampleX, sampleZ };
                         if (mReference.IsPaddingSample(sample))
                             continue;
-                        // Shared edges are visited once; every tile holding the sample is written in one call.
-                        const auto key = std::make_tuple(std::bit_cast<uint64_t>(spacing), sampleX, sampleZ);
-                        if (!visited.emplace(key).second)
-                            continue;
-
                         const double dx = mReference.SamplePosition(sampleX) - centerX;
                         const double dz = mReference.SamplePosition(sampleZ) - centerZ;
                         const double distanceSquared = dx * dx + dz * dz;
                         if (distanceSquared > radiusSquared)
+                            continue;
+                        // A shared edge sample is written to all its tiles in one call.
+                        if (!visited.emplace(sampleX, sampleZ).second)
                             continue;
 
                         const double weight =

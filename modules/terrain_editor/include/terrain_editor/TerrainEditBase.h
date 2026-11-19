@@ -56,12 +56,13 @@ namespace mir
         TerrainBaseTileProvider Provider();
 
     private:
-        bool Open(const std::filesystem::path &releasesRoot, AssetId asset);
+        bool Open(const std::filesystem::path &releasesRoot, AssetId asset,
+                  std::optional<TerrainReleaseId> pointer);
 
         std::optional<TerrainBaseHeights> mBase;
         AssetId mAsset;
         std::string mError;
-        std::optional<std::string> mPointerText;
+        std::optional<TerrainReleaseId> mPointer;
         bool mTried = false;
         std::map<TileCoord, TerrainBaseTile, TerrainTileOrder> mTiles;
     };
@@ -85,12 +86,13 @@ namespace mir
         TerrainBaseWeightTileProvider Provider();
 
     private:
-        bool Open(const std::filesystem::path &releasesRoot, AssetId asset);
+        bool Open(const std::filesystem::path &releasesRoot, AssetId asset,
+                  std::optional<TerrainReleaseId> pointer);
 
         std::optional<TerrainBaseWeights> mBase;
         AssetId mAsset;
         std::string mError;
-        std::optional<std::string> mPointerText;
+        std::optional<TerrainReleaseId> mPointer;
         bool mTried = false;
         std::map<TileCoord, TerrainBaseWeightTile, TerrainTileOrder> mTiles;
     };

@@ -66,6 +66,17 @@ namespace mir::terrainbake
         }
     }
 
+    std::string RemoveUnusedTerrainRelease(const fs::path &assetDir, TerrainReleaseId release)
+    {
+        std::unique_ptr<TerrainReleaseLock> lock;
+        const auto status = TerrainReleaseLock::TryAcquireExclusive(assetDir, release, lock);
+        if (status != TerrainReleaseLockStatus::Held)
+            return status == TerrainReleaseLockStatus::Busy ? "in use" : "no lock file";
+        std::error_code ec;
+        fs::remove_all(assetDir / TerrainIdHex(release.value), ec);
+        return ec ? ec.message() : std::string{};
+    }
+
     void PruneTerrainReleases(const std::filesystem::path &releasesRoot, AssetId asset, TerrainReport &report)
     {
         const fs::path assetDir = TerrainAssetReleasesDir(releasesRoot, asset);
@@ -88,18 +99,9 @@ namespace mir::terrainbake
                 kept.push_back(hex + " (current)");
                 continue;
             }
-            std::unique_ptr<TerrainReleaseLock> lock;
-            const TerrainReleaseLockStatus status =
-                TerrainReleaseLock::TryAcquireExclusive(assetDir, stored.release, lock);
-            if (status != TerrainReleaseLockStatus::Held)
-            {
-                kept.push_back(status == TerrainReleaseLockStatus::Busy ? hex + " (in use)" : hex + " (no lock file)");
-                continue;
-            }
-            std::error_code ec;
-            fs::remove_all(TerrainReleaseDir(releasesRoot, asset, stored.release), ec);
-            if (ec)
-                kept.push_back(std::format("{} ({})", hex, ec.message()));
+            const std::string reason = RemoveUnusedTerrainRelease(assetDir, stored.release);
+            if (!reason.empty())
+                kept.push_back(std::format("{} ({})", hex, reason));
             else
             {
                 deleted.push_back(hex);

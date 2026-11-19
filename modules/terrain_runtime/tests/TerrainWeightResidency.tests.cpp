@@ -497,6 +497,31 @@ TEST_CASE("Budget pressure retires the farthest texture before a nearer tile sta
     CHECK(rig.residency.Words(TileUnit(release.asset, {-2, -1}), slots) == kNoTerrainDrawWords);
 }
 
+TEST_CASE("A newly visible tile takes the budget from a retained tile with a stale near distance",
+          "[terrain_runtime][weights]")
+{
+    WeightedRelease release(0xEC, {0.5f, 0.5f});
+    const uint64_t side = uint64_t(release.layout.IntervalsPerTile() + 1);
+    Rig rig(side * side * 4);
+    const TerrainSlotTable slots;
+    const TerrainWeightUnit oldTile = TileUnit(release.asset, {-2, -1});
+    const TerrainWeightUnit visible = TileUnit(release.asset, {0, 0});
+
+    rig.DrawUnit(release.handle, oldTile, 1.0f);
+    rig.FinishReads();
+    rig.textures.Complete(TextureHandle{0, 1});
+    rig.Install();
+    REQUIRE(rig.residency.Words(oldTile, slots) != kNoTerrainDrawWords);
+
+    rig.DrawUnit(release.handle, visible, 2.0f);
+    CHECK(rig.residency.Words(oldTile, slots) == kNoTerrainDrawWords);
+    rig.FinishReads();
+    REQUIRE(rig.textures.mQueued == 2);
+    rig.textures.Complete(TextureHandle{1, 1});
+    rig.Install();
+    CHECK(rig.residency.Words(visible, slots) != kNoTerrainDrawWords);
+}
+
 TEST_CASE("The weight budget goes to the nearest tiles and the rest draw without weights",
           "[terrain_runtime][weights]")
 {

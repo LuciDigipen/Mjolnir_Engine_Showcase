@@ -57,6 +57,7 @@ namespace
 
         std::optional<int> Poll() override { return mExitCode; }
         void Terminate() override { mTerminated = true; }
+        fs::path ReportPath() const { return fs::u8path(mArguments.back()); }
 
         std::filesystem::path mProgram;
         std::vector<std::string> mArguments;
@@ -101,7 +102,7 @@ namespace
         request.mSourcePath = "terrain/hills.terrain.json";
         request.mGameDir = root / "games" / "Test";
         request.mCandidateDir = root / "releases" / "editor-bake" / "candidate";
-        request.mReportFile = root / "releases" / "editor-bake" / "sync.json";
+        request.mReportDirectory = root / "releases" / "editor-bake";
         request.mAsset = AssetId{ 0x1234 };
         return request;
     }
@@ -152,7 +153,8 @@ TEST_CASE("the layers are saved before TerrainTool starts")
     REQUIRE(group.mLast);
     CHECK(group.mLast->mStarted);
     CHECK(group.mLast->mProgram == request.mTool);
-    CHECK(group.mLast->mArguments == mir::TerrainBakeArguments(request));
+    CHECK(group.mLast->ReportPath().parent_path().parent_path() == request.mReportDirectory);
+    CHECK(group.mLast->mArguments == mir::TerrainBakeArguments(request, group.mLast->ReportPath()));
 }
 
 TEST_CASE("a failed save keeps TerrainTool from starting")
@@ -217,13 +219,12 @@ TEST_CASE("a published report ends the bake as published")
 {
     const fs::path root = MakeScratchDir("published");
     const TerrainBakeRequest request = MakeRequest(root);
-    WriteReport(request.mReportFile,
-        R"({"kind":"mir.terrain.report","command":"sync","ok":true,"recipe":{"path":"terrain/hills.terrain.json","fingerprint":"00000000000000b2"},"publish":{"releases":"C:/Releases","previous":null,"current":"00000000000000a1","published":true},"diagnostics":[]})");
-
     FakeGroup group;
     TerrainBakeJob job([&group] { return group.Make(); });
     REQUIRE(StartJob(job, request, 9));
     REQUIRE(group.mLast);
+    WriteReport(group.mLast->ReportPath(),
+        R"({"kind":"mir.terrain.report","command":"sync","ok":true,"recipe":{"path":"terrain/hills.terrain.json","fingerprint":"00000000000000b2"},"publish":{"releases":"C:/Releases","previous":null,"current":"00000000000000a1","published":true},"diagnostics":[]})");
 
     group.mLast->mExitCode = 0;
     job.Update();
@@ -241,14 +242,13 @@ TEST_CASE("an up to date report ends the bake as up to date")
 {
     const fs::path root = MakeScratchDir("up-to-date");
     const TerrainBakeRequest request = MakeRequest(root);
-    WriteReport(request.mReportFile,
-        R"({"kind":"mir.terrain.report","command":"sync","ok":true,"recipe":{"path":"terrain/hills.terrain.json","fingerprint":"00000000000000b2"},"publish":{"releases":"C:/Releases","previous":null,"current":"00000000000000a1","published":false},"diagnostics":[]})");
-
     FakeGroup group;
     TerrainBakeJob job([&group] { return group.Make(); });
     REQUIRE(StartJob(job, request));
     REQUIRE(group.mLast);
 
+    WriteReport(group.mLast->ReportPath(),
+        R"({"kind":"mir.terrain.report","command":"sync","ok":true,"recipe":{"path":"terrain/hills.terrain.json","fingerprint":"00000000000000b2"},"publish":{"releases":"C:/Releases","previous":null,"current":"00000000000000a1","published":false},"diagnostics":[]})");
     group.mLast->mExitCode = 0;
     job.Update();
 
@@ -262,14 +262,13 @@ TEST_CASE("a failed report ends the bake with its first diagnostic")
 {
     const fs::path root = MakeScratchDir("failed");
     const TerrainBakeRequest request = MakeRequest(root);
-    WriteReport(request.mReportFile,
-        R"({"kind":"mir.terrain.report","command":"sync","ok":false,"publish":null,"diagnostics":[{"check":"pixels","field":"","tiles":[],"sample":null,"message":"pack is damaged"}]})");
-
     FakeGroup group;
     TerrainBakeJob job([&group] { return group.Make(); });
     REQUIRE(StartJob(job, request));
     REQUIRE(group.mLast);
 
+    WriteReport(group.mLast->ReportPath(),
+        R"({"kind":"mir.terrain.report","command":"sync","ok":false,"publish":null,"diagnostics":[{"check":"pixels","field":"","tiles":[],"sample":null,"message":"pack is damaged"}]})");
     group.mLast->mExitCode = 1;
     job.Update();
 
@@ -292,6 +291,32 @@ TEST_CASE("a missing report ends the bake as failed")
     REQUIRE(job.Result());
     CHECK(job.Result()->mReport.mOutcome == TerrainBakeOutcome::Failed);
     CHECK(job.Result()->mReport.mMessage.find("no report") != std::string::npos);
+}
+
+TEST_CASE("a sync cannot use another run's success report for the same terrain")
+{
+    const auto request = MakeRequest(MakeScratchDir("report-isolation"));
+    FakeGroup first, second;
+    TerrainBakeJob writer([&first] { return first.Make(); });
+    TerrainBakeJob reader([&second] { return second.Make(); });
+    REQUIRE(StartJob(writer, request));
+    REQUIRE(StartJob(reader, request));
+    const auto previous = first.mLast->ReportPath();
+    const auto current = second.mLast->ReportPath();
+    REQUIRE(previous != current);
+    WriteReport(previous, R"({"ok":true,"publish":{"current":"00000000000000a1","published":true}})");
+    second.mLast->mExitCode = 0;
+    reader.Update();
+    REQUIRE(reader.Result());
+    CHECK(reader.Result()->mReport.mOutcome == TerrainBakeOutcome::Failed);
+    CHECK(fs::is_regular_file(previous));
+    first.mLast->mExitCode = 0;
+    writer.Update();
+    REQUIRE(writer.Result());
+    CHECK(writer.Result()->mReport.mOutcome == TerrainBakeOutcome::Published);
+    CHECK_FALSE(fs::exists(previous));
+    REQUIRE(StartJob(reader, request));
+    CHECK(second.mLast->ReportPath() != current);
 }
 
 TEST_CASE("a TerrainTool that cannot start ends the bake as failed")

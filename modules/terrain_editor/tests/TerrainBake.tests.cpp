@@ -120,6 +120,8 @@ TEST_CASE("sync arguments match the ones the build runs")
 
     const fs::path workDir =
         TerrainReleasesRoot(project.mGameDir).parent_path() / "editor-bake" / TerrainIdHex(runtime.asset.value);
+    REQUIRE(request->mReportDirectory == workDir);
+    const fs::path reportFile = workDir / "this-run.json";
     const std::vector<std::string> expected = {
         "sync",
         "--recipe",
@@ -133,9 +135,9 @@ TEST_CASE("sync arguments match the ones the build runs")
         "--candidate",
         Utf8(workDir / "candidate"),
         "--report",
-        Utf8(workDir / "sync.json"),
+        Utf8(reportFile),
     };
-    CHECK(mir::TerrainBakeArguments(*request) == expected);
+    CHECK(mir::TerrainBakeArguments(*request, reportFile) == expected);
 
     const fs::path releases = TerrainReleasesRoot(project.mGameDir);
     const fs::path relative = request->mCandidateDir.lexically_normal().lexically_relative(releases.lexically_normal());
@@ -180,7 +182,7 @@ TEST_CASE("a published report names the release and the recipe")
     CHECK(report.mFingerprint->value == 0xb2);
 }
 
-TEST_CASE("the report decides when there is one, even on a lost exit code")
+TEST_CASE("a success report cannot override an unsuccessful process exit")
 {
     const fs::path root = MakeScratchDir("report-up-to-date");
     const fs::path reportFile = root / "sync.json";
@@ -188,9 +190,8 @@ TEST_CASE("the report decides when there is one, even on a lost exit code")
         ReportText(R"({"releases":"C:/R","previous":null,"current":"00000000000000a1","published":false})"));
 
     const TerrainBakeReport report = ReadTerrainBakeReport(reportFile, 1);
-    CHECK(report.mOutcome == TerrainBakeOutcome::UpToDate);
-    REQUIRE(report.mRelease);
-    CHECK(report.mRelease->value == 0xa1);
+    CHECK(report.mOutcome == TerrainBakeOutcome::Failed);
+    CHECK_FALSE(report.mRelease);
 }
 
 TEST_CASE("a failed report shows its first diagnostic")
@@ -233,18 +234,18 @@ TEST_CASE("the overlay is dropped only once the asset loaded the published relea
     CHECK(EvaluateTerrainBakeDiscard(report, 3, 3, &published) == TerrainBakeOverlayAction::Discard);
 }
 
-TEST_CASE("an up to date bake keeps the overlay until the release carries the recipe")
+TEST_CASE("an up to date bake waits for the exact release even when height fingerprints match")
 {
     TerrainBakeReport report;
     report.mOutcome = TerrainBakeOutcome::UpToDate;
     report.mRelease = TerrainReleaseId{ 0xa1 };
     report.mFingerprint = TerrainSourceFingerprint{ 7 };
 
-    const TerrainReleaseInfo other = LoadedRelease(TerrainReleaseId{ 0xa1 }, TerrainSourceFingerprint{ 8 });
+    const TerrainReleaseInfo other = LoadedRelease(TerrainReleaseId{ 0xa0 }, TerrainSourceFingerprint{ 7 });
     const TerrainReleaseInfo same = LoadedRelease(TerrainReleaseId{ 0xa1 }, TerrainSourceFingerprint{ 7 });
 
     CHECK(EvaluateTerrainBakeDiscard(report, 2, 2, nullptr) == TerrainBakeOverlayAction::Wait);
-    CHECK(EvaluateTerrainBakeDiscard(report, 2, 2, &other) == TerrainBakeOverlayAction::Keep);
+    CHECK(EvaluateTerrainBakeDiscard(report, 2, 2, &other) == TerrainBakeOverlayAction::Wait);
     CHECK(EvaluateTerrainBakeDiscard(report, 2, 3, &same) == TerrainBakeOverlayAction::Keep);
     CHECK(EvaluateTerrainBakeDiscard(report, 2, 2, &same) == TerrainBakeOverlayAction::Discard);
 }
