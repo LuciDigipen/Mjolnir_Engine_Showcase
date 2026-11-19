@@ -237,13 +237,17 @@ TEST_CASE("A failed or interrupted package keeps the output's current release re
     CHECK(faulted.Status(check::kPrune) == CheckStatus::Skipped);
     CHECK(PeekTerrainCurrent(outRoot, asset) == a);
     CHECK(Snapshot(outA) == aFiles);
-    const TerrainResult<TerrainReleaseHandle> reopened = OpenCurrentTerrainRelease(outRoot, asset);
-    REQUIRE(reopened);
-    CHECK(reopened.value->VerifyAllPacks().code == TerrainPackErrorCode::None);
+    {
+        const TerrainResult<TerrainReleaseHandle> reopened = OpenCurrentTerrainRelease(outRoot, asset);
+        REQUIRE(reopened);
+        CHECK(reopened.value->VerifyAllPacks().code == TerrainPackErrorCode::None);
 
-    const TerrainReport next = Package(gameDir, outDir);
-    REQUIRE(next.Ok());
-    CHECK(next.publish->current == b);
+        const TerrainReport next = Package(gameDir, outDir);
+        REQUIRE(next.Ok());
+        CHECK(next.publish->current == b);
+        CHECK(Snapshot(outA) == aFiles);
+    }
+    REQUIRE(Package(gameDir, outDir).Ok());
     CHECK(AssetDirNames(TerrainAssetReleasesDir(outRoot, asset)) == CurrentAnd(b));
 }
 

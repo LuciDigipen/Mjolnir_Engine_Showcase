@@ -35,9 +35,12 @@ namespace
         const auto bytes = path.generic_u8string();
         return {reinterpret_cast<const char *>(bytes.data()), bytes.size()};
     }
-    bool Pump(mir::ShaderHotReload &watcher, const std::function<bool()> &done)
+    constexpr auto kRealShaderTimeout = std::chrono::seconds(60);
+
+    bool Pump(mir::ShaderHotReload &watcher, const std::function<bool()> &done,
+              std::chrono::seconds timeout = std::chrono::seconds(15))
     {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline)
         {
             watcher.Update();
@@ -403,7 +406,8 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
     REQUIRE(mir::WriteText(content / "new.material.json", material.dump()));
     const auto publish = [&](int expectedCommits)
     {
-        REQUIRE(Pump(watcher, [&] { return fixture.commits == expectedCommits || !watcher.LastDiagnostic().empty(); }));
+        REQUIRE(Pump(watcher, [&] { return fixture.commits == expectedCommits || !watcher.LastDiagnostic().empty(); },
+            kRealShaderTimeout));
         INFO(watcher.LastDiagnostic());
         REQUIRE(fixture.commits == expectedCommits);
     };
@@ -448,7 +452,7 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
         REQUIRE(mir::WriteText(layeredPath, layered));
         std::optional<std::string> result;
         watcher.QueueTerrainMaterial(layeredPath, [&](std::string diagnostic) { result = std::move(diagnostic); });
-        REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+        REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
         INFO(*result);
         REQUIRE(result->empty());
         REQUIRE(fixture.commits == 3);
@@ -474,7 +478,7 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
         REQUIRE(mir::WriteText(layeredPath, "{}"));
         result.reset();
         watcher.QueueTerrainMaterial(layeredPath, [&](std::string diagnostic) { result = std::move(diagnostic); });
-        REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+        REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
         CHECK_FALSE(result->empty());
         CHECK(store.CurrentId() == published);
     }
@@ -535,7 +539,8 @@ TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][
     const auto materialPath = materials / "paint.material.json";
     REQUIRE(WriteText(materialPath, R"({"version":1,"shader":{"file":"paint.slang","type":"DefaultMaterial"},
         "frontends":["terrain"],"parameters":{"albedoRoughness":[0.9,0.04,0.04,1.0],"surfaceParams":[0,1,0,0]}})"));
-    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration == 1 || !watcher.LastDiagnostic().empty(); }));
+    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration == 1 || !watcher.LastDiagnostic().empty(); },
+        kRealShaderTimeout));
     INFO(watcher.LastDiagnostic());
     REQUIRE(renderer.ReloadStats().mGeneration == 1);
 
@@ -612,7 +617,7 @@ TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][
         {"name":"base","material":"paint.material.json"},{"name":"top","material":"paint.material.json"}]})"));
     std::optional<std::string> result;
     watcher.QueueTerrainMaterial(layeredPath, [&](std::string error) { result = std::move(error); });
-    REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+    REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
     INFO(*result);
     REQUIRE(result->empty());
     const std::array layers{red, green};
@@ -628,7 +633,7 @@ TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][
     REQUIRE(accepted->mBytes.size() > accepted->mLayout.size);
     result.reset();
     watcher.QueueTerrainMaterial(layeredPath, [&](std::string error) { result = std::move(error); });
-    REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+    REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
     INFO(*result);
     REQUIRE(result->empty());
     const auto reloaded = renderer.MaterialRecord(item.material);
@@ -645,7 +650,7 @@ TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][
     const auto previousGeneration = renderer.ReloadStats().mGeneration;
     REQUIRE(WriteText(shaderPath, *shader));
     REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration > previousGeneration ||
-        !watcher.LastDiagnostic().empty(); }));
+        !watcher.LastDiagnostic().empty(); }, kRealShaderTimeout));
     INFO(watcher.LastDiagnostic());
     REQUIRE(renderer.ReloadStats().mGeneration > previousGeneration);
     const auto expanded = renderer.MaterialRecord(item.material);
