@@ -30,6 +30,7 @@ namespace mir
         std::string shader;
         std::string parametersJson = "{}";
         std::string reflectionFile;
+        std::vector<std::string> layerAssets;
     };
 
     struct SurfaceMaterialCatalog

@@ -623,6 +623,35 @@ TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][
     item.terrain = TerrainDrawData{texture.mIndex, renderer.MaterialSamplerRow({}),
         {1, kTerrainSlotUnused, kTerrainSlotUnused, kTerrainSlotUnused}, 1.0f}.Pack();
     const auto after = capture(fixture / "layered.png");
+    const auto accepted = renderer.MaterialRecord(item.material);
+    REQUIRE(accepted);
+    REQUIRE(accepted->mBytes.size() > accepted->mLayout.size);
+    result.reset();
+    watcher.QueueTerrainMaterial(layeredPath, [&](std::string error) { result = std::move(error); });
+    REQUIRE(Pump(watcher, [&] { return result.has_value(); }));
+    INFO(*result);
+    REQUIRE(result->empty());
+    const auto reloaded = renderer.MaterialRecord(item.material);
+    REQUIRE(reloaded);
+    CHECK(reloaded->mBytes == accepted->mBytes);
+    const auto unchanged = capture(fixture / "reloaded.png");
+
+    const auto shaderPath = materials / "paint.slang";
+    auto shader = ReadText(shaderPath);
+    REQUIRE(shader);
+    const auto start = shader->find("float4 albedoRoughness;");
+    REQUIRE(start != std::string::npos);
+    shader->insert(start, "float4 addedField;\n    ");
+    const auto previousGeneration = renderer.ReloadStats().mGeneration;
+    REQUIRE(WriteText(shaderPath, *shader));
+    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration > previousGeneration ||
+        !watcher.LastDiagnostic().empty(); }));
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(renderer.ReloadStats().mGeneration > previousGeneration);
+    const auto expanded = renderer.MaterialRecord(item.material);
+    REQUIRE(expanded);
+    CHECK(expanded->mBytes.size() > accepted->mBytes.size());
+    const auto resized = capture(fixture / "resized.png");
     item.material = green;
     item.terrain = {};
     const auto expected = capture(fixture / "green.png");
@@ -630,5 +659,9 @@ TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][
     CHECK(before[0] > before[1] + 30);
     CHECK(after[1] > after[0] + 30);
     for (size_t channel = 0; channel < after.size(); ++channel)
+    {
         CHECK(std::abs(after[channel] - expected[channel]) <= 2);
+        CHECK(std::abs(unchanged[channel] - expected[channel]) <= 2);
+        CHECK(std::abs(resized[channel] - expected[channel]) <= 2);
+    }
 }

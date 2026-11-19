@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <optional>
 #include <span>
 #include <string>
@@ -52,17 +53,101 @@ namespace mir::vk
             return PackMaterialRecord(candidateLayout, *defaults, error);
         }
 
-        std::optional<MaterialLayout> LoadLayout(const SurfaceMaterialRegistration &registration, std::string *error)
+        std::optional<MaterialLayout> LoadLayout(const SurfaceMaterialRegistration &registration, std::string *error,
+            const std::filesystem::path &root = ShaderPath(""))
         {
-            const std::filesystem::path path = ShaderPath(registration.reflectionFile);
+            const std::filesystem::path path = root / std::filesystem::u8path(registration.reflectionFile);
             const std::optional<std::string> text = ReadText(path);
             if (!text)
             {
                 if (error != nullptr)
-                    *error = "material reflection is missing: " + path.string();
+                    *error = "material reflection is missing: " + GenericPathUtf8(path);
                 return std::nullopt;
             }
             return ParseMaterialLayout(*text, error);
+        }
+
+        const MaterialFieldLayout *LayerOffsetField(const MaterialLayout &header, size_t index)
+        {
+            const auto field = std::ranges::find(header.fields, "layerOffset" + std::to_string(index),
+                &MaterialFieldLayout::name);
+            return field != header.fields.end() && field->kind == MaterialFieldKind::Uint &&
+                field->size == sizeof(uint32_t) && field->offset <= header.size &&
+                sizeof(uint32_t) <= header.size - field->offset ? &*field : nullptr;
+        }
+
+        bool MigrateLayerRecords(const GpuMaterial &material, const SurfaceMaterialCatalog &accepted,
+            const std::filesystem::path &acceptedRoot, const SurfaceMaterialCatalog &candidate,
+            const SurfaceMaterialRegistration &registration, const MaterialLayout &header,
+            std::vector<std::byte> &record, const MaterialRecordValidator &validate, std::string &error)
+        {
+            const auto *previous = accepted.Find(material.mDesc.shaderName, material.mDesc.surfaceAsset);
+            if (!previous)
+            {
+                error = "the accepted layered material registration is missing";
+                return false;
+            }
+            const auto &old = material.mCurrentRecordBytes;
+            for (size_t index = 0; index < registration.layerAssets.size(); ++index)
+            {
+                const auto &asset = registration.layerAssets[index];
+                const auto *child = candidate.FindByAsset(asset, "terrain");
+                const auto *offsetField = LayerOffsetField(header, index);
+                if (!child || !offsetField)
+                {
+                    error = "the layered shader has no child registration or reflected offset for " + asset;
+                    return false;
+                }
+                const auto layout = LoadLayout(*child, &error);
+                if (!layout) return false;
+                auto bytes = BuildMigrationDefaults(*layout, child->parametersJson, &error);
+                if (!bytes) return false;
+
+                auto match = std::ranges::find(previous->layerAssets, asset);
+                if (index < previous->layerAssets.size() && previous->layerAssets[index] == asset)
+                    match = previous->layerAssets.begin() + index;
+                if (match != previous->layerAssets.end())
+                {
+                    const auto *oldChild = accepted.FindByAsset(asset, "terrain");
+                    const auto *oldField = LayerOffsetField(material.mAcceptedLayout,
+                        static_cast<size_t>(match - previous->layerAssets.begin()));
+                    if (!oldChild || !oldField || old.size() < material.mAcceptedLayout.size)
+                    {
+                        error = "the accepted layered record has no child layout or offset for " + asset;
+                        return false;
+                    }
+                    const auto oldLayout = LoadLayout(*oldChild, &error, acceptedRoot);
+                    if (!oldLayout) return false;
+                    uint32_t offset;
+                    std::memcpy(&offset, old.data() + oldField->offset, sizeof(offset));
+                    if (offset < material.mAcceptedLayout.size || offset > old.size() ||
+                        oldLayout->size > old.size() - offset)
+                    {
+                        error = "the accepted child record is outside the layered material: " + asset;
+                        return false;
+                    }
+                    const auto slice = std::span(old).subspan(offset, oldLayout->size);
+                    if (MaterialLayoutRevision(*oldLayout) == MaterialLayoutRevision(*layout))
+                        bytes->assign(slice.begin(), slice.end());
+                    else
+                    {
+                        auto migrated = MigrateMaterialRecord(*oldLayout, *layout, slice, *bytes);
+                        if (!migrated.ok)
+                        {
+                            error = asset + ": " + migrated.error;
+                            return false;
+                        }
+                        *bytes = std::move(migrated.bytes);
+                    }
+                }
+                if (validate && !validate(child->frontend, *layout, *bytes, error))
+                    return false;
+                // Each reflected layout is rounded to the shared record alignment.
+                const auto offset = static_cast<uint32_t>(record.size());
+                std::memcpy(record.data() + offsetField->offset, &offset, sizeof(offset));
+                record.insert(record.end(), bytes->begin(), bytes->end());
+            }
+            return true;
         }
     }
 
@@ -947,7 +1032,8 @@ namespace mir::vk
         }
     }
 
-    bool MaterialStore::PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry, std::string *error)
+    bool MaterialStore::PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry,
+        const std::filesystem::path &acceptedRoot, std::string *error)
     {
         if (material.mPipeline == VK_NULL_HANDLE)
             return true;
@@ -1030,6 +1116,13 @@ namespace mir::vk
             return false;
         }
 
+        if (!registration->layerAssets.empty() && !MigrateLayerRecords(material, mSurfaceMaterials, acceptedRoot,
+                catalog, *registration, *candidateLayout, migrated.bytes, mRecordValidator, candidateError))
+        {
+            if (error != nullptr) *error = material.mDesc.shaderName + ": " + candidateError;
+            return false;
+        }
+
         if (mRecordValidator &&
             !mRecordValidator(registration->frontend, *candidateLayout, migrated.bytes, candidateError))
         {
@@ -1038,6 +1131,9 @@ namespace mir::vk
             return false;
         }
 
+        if (!registration->layerAssets.empty() && migrated.bytes == material.mCurrentRecordBytes &&
+            MaterialLayoutRevision(*candidateLayout) == MaterialLayoutRevision(material.mAcceptedLayout))
+            return true;
         entry.mRecordId = mTable->CreateRecord(migrated.bytes, material.mDesc.recordAlignment);
         if (entry.mRecordId.IsNull())
         {
@@ -1066,7 +1162,8 @@ namespace mir::vk
         return true;
     }
 
-    bool MaterialStore::PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog, std::string *error)
+    bool MaterialStore::PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog,
+        const std::filesystem::path &acceptedRoot, std::string *error)
     {
         DiscardShaderReload();
         mReloadCatalog = candidateCatalog;
@@ -1075,7 +1172,7 @@ namespace mir::vk
         for (GpuMaterial &material : mMaterials)
         {
             ReloadEntry &entry = mReloadEntries.emplace_back();
-            if (!PrepareMaterialReloadEntry(material, entry, error))
+            if (!PrepareMaterialReloadEntry(material, entry, acceptedRoot, error))
             {
                 DiscardShaderReload();
                 return false;

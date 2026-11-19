@@ -59,6 +59,11 @@ namespace mir
             return std::string(logicalPath) + "|" + std::string(frontend);
         }
 
+        uint64_t MixLayerIdentity(uint64_t parent, uint64_t child)
+        {
+            return (parent ^ child) * 1099511628211ull;
+        }
+
         AssetId AssetForRole(const SurfaceMaterialAsset &asset, SurfaceTextureRole role)
         {
             switch (role)
@@ -817,9 +822,14 @@ namespace mir
     {
         if (!entry.layered)
             return CurrentIdentity(entry.asset, SurfaceMaterialIdentityTags());
-        uint64_t hash = CurrentIdentity(entry.asset, std::span<const uint32_t>{});
-        for (const TerrainMaterialLayerAsset &layer : entry.layeredDefinition.layers)
-            hash = (hash ^ CurrentIdentity(layer.asset, SurfaceMaterialIdentityTags())) * 1099511628211ull;
+        return LayeredIdentity(entry.asset, entry.layeredDefinition);
+    }
+
+    uint64_t SurfaceMaterialLibrary::LayeredIdentity(AssetId parent, const TerrainMaterialAsset &definition) const
+    {
+        uint64_t hash = CurrentIdentity(parent, {});
+        for (const TerrainMaterialLayerAsset &layer : definition.layers)
+            hash = MixLayerIdentity(hash, CurrentIdentity(layer.asset, SurfaceMaterialIdentityTags()));
         return hash;
     }
 
@@ -849,7 +859,7 @@ namespace mir
             return false;
         }
         const std::string key = MaterialKey(entry.logicalPath, entry.frontend);
-        mLoads.erase(key);
+        DiscardLoad(key);
         entry.failed = false;
         entry.error.clear();
         entry.attemptFailed = false;
@@ -857,7 +867,7 @@ namespace mir
         entry.attemptContent = 0;
 
         Load load;
-        load.identity = EntryIdentity(entry);
+        load.identity = entry.layered ? CurrentIdentity(entry.asset, {}) : EntryIdentity(entry);
         load.revision = mAssets->Revision();
         if (entry.layered)
             load.sourceLease = mAssets->RequestLease(entry.asset, TerrainMaterialDecoder());
@@ -904,6 +914,7 @@ namespace mir
                 child.frontend = "terrain";
                 Load childLoad;
                 childLoad.identity = CurrentIdentity(layer.asset, SurfaceMaterialIdentityTags());
+                load.identity = MixLayerIdentity(load.identity, childLoad.identity);
                 childLoad.revision = mAssets->Revision();
                 childLoad.assetLease = mAssets->RequestLease(layer.asset, SurfaceMaterialDecoder());
                 load.layerEntries.push_back(std::move(child));
@@ -1170,6 +1181,15 @@ namespace mir
         return true;
     }
 
+    void SurfaceMaterialLibrary::DiscardLoad(const std::string &key)
+    {
+        if (const auto load = mLoads.find(key); load != mLoads.end())
+        {
+            DiscardLayerCandidates(load->second);
+            mLoads.erase(load);
+        }
+    }
+
     void SurfaceMaterialLibrary::DiscardLayerCandidates(Load &load)
     {
         for (std::unique_ptr<Load> &layer : load.layerLoads)
@@ -1366,7 +1386,6 @@ namespace mir
 
     void SurfaceMaterialLibrary::FailLoad(Entry &entry, Load &load, std::string error)
     {
-        DiscardLayerCandidates(load);
         const bool hadBinding = entry.binding.has_value();
         if (hadBinding)
             MIR_LOG_WARN("Surface material '{}' frontend '{}': replacement rejected, keeping the previous material: {}",
@@ -1381,7 +1400,9 @@ namespace mir
         entry.attemptFailed = true;
         entry.attemptError = error;
         entry.attemptContent = load.identity;
-        mLoads.erase(MaterialKey(entry.logicalPath, entry.frontend));
+        if (entry.layered)
+            entry.layeredDefinition = std::move(load.layered);
+        DiscardLoad(MaterialKey(entry.logicalPath, entry.frontend));
         ++mGeneration;
     }
 
@@ -1412,7 +1433,7 @@ namespace mir
         entry.parametersJson = load.candidateParametersJson;
         entry.schemaRevision = load.candidateRevision;
         entry.mSchemaEpoch = mSchemaEpoch;
-        entry.layeredDefinition = entry.layered ? load.layered : TerrainMaterialAsset{};
+        entry.layeredDefinition = std::move(load.layered);
         entry.failed = false;
         entry.error.clear();
         entry.attemptFailed = false;
@@ -1469,9 +1490,7 @@ namespace mir
             }
             if (!retired.materials.empty() || !retired.textures.empty())
                 mRetired.push_back(std::move(retired));
-            if (const auto load = mLoads.find(it->first); load != mLoads.end())
-                DiscardLayerCandidates(load->second);
-            mLoads.erase(it->first);
+            DiscardLoad(it->first);
             it = mEntries.erase(it);
         }
     }
@@ -1739,10 +1758,11 @@ namespace mir
             if (found == mEntries.end())
                 continue;
             Entry &entry = found->second;
-                    const uint64_t identity = EntryIdentity(entry);
-            if (entry.binding && identity == entry.acceptedContent)
+            const uint64_t identity = EntryIdentity(entry);
+            if (entry.binding && identity == entry.acceptedContent &&
+                (!entry.layered || entry.mSchemaEpoch == mSchemaEpoch))
             {
-                mLoads.erase(key);
+                DiscardLoad(key);
                 entry.acceptedRevision = mAssets->Revision();
                 entry.failed = false;
                 entry.error.clear();
@@ -1752,8 +1772,12 @@ namespace mir
                 continue;
             }
             const auto load = mLoads.find(key);
-            if (load != mLoads.end() && !load->second.failed && load->second.identity == identity)
-                continue;
+            if (load != mLoads.end() && !load->second.failed)
+            {
+                const uint64_t wanted = entry.layered ? LayeredIdentity(entry.asset, load->second.layered) : identity;
+                if (load->second.identity == wanted)
+                    continue;
+            }
             StartLoad(entry);
         }
         ++mGeneration;
@@ -1833,8 +1857,6 @@ namespace mir
         const auto load = mLoads.find(key);
         if (load == mLoads.end() || load->second.failed)
         {
-            if (load != mLoads.end())
-                mLoads.erase(load);
             if (!StartLoad(entry))
             {
                 resolution.status = SurfaceMaterialStatus::Failed;

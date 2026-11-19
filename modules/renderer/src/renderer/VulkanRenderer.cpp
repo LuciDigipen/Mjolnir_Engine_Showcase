@@ -388,6 +388,7 @@ namespace mir
         } rootScope{ShaderRootOverride()};
         try
         {
+        const auto acceptedRoot = ShaderPath("");
         SetShaderRootOverride(generationDirectory);
 
         const auto fail = [&](std::string message)
@@ -474,7 +475,7 @@ namespace mir
         mPendingShaderReload.Clear();
         mPendingShaderReload.AddStage("materials",
             [&](std::string &stageError)
-            { return mMaterialStore->PrepareShaderReload(mPendingCatalog, &stageError); },
+            { return mMaterialStore->PrepareShaderReload(mPendingCatalog, acceptedRoot, &stageError); },
             [&] { mMaterialStore->CommitShaderReload(); },
             [&] { mMaterialStore->DiscardShaderReload(); });
         mPendingShaderReload.AddStage("shadows",

@@ -272,6 +272,8 @@ namespace mir
         void PublishLoad(Entry &entry, Load &load, uint64_t generation);
         uint64_t CurrentIdentity(AssetId asset, std::span<const uint32_t> tags) const;
         uint64_t EntryIdentity(const Entry &entry) const;
+        uint64_t LayeredIdentity(AssetId parent, const TerrainMaterialAsset &definition) const;
+        void DiscardLoad(const std::string &key);
         bool AdvanceLayers(Entry &entry, Load &load, bool &pending, std::string &error);
         bool BuildLayeredCandidateData(Entry &entry, Load &load, std::string &error);
         void DiscardLayerCandidates(Load &load);

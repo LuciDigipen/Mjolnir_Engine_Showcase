@@ -137,6 +137,16 @@ namespace mir
                 material.shader = entry.at("shader").get<std::string>();
                 material.parametersJson = entry.at("parameters").dump();
                 material.reflectionFile = entry.at("reflection").get<std::string>();
+                if (const auto layers = entry.find("layers"); layers != entry.end())
+                {
+                    if (!layers->is_array() || layers->size() < 2 || layers->size() > 4)
+                    {
+                        SetError(error, "surface material catalog entry has an invalid layer count");
+                        return std::nullopt;
+                    }
+                    for (const auto &layer : *layers)
+                        material.layerAssets.push_back(layer.at("asset").get<std::string>());
+                }
                 if (material.stem.empty() || material.type.empty() ||
                     (material.frontend != "mesh" && material.frontend != "terrain") ||
                     material.asset.empty() || material.shader.empty() || material.reflectionFile.empty())

@@ -22,6 +22,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -118,7 +119,8 @@ namespace mir::vk
         // All-or-none shader reload. Prepare builds every replacement pipeline
         // and migrated record off to the side; only Commit swaps them. The
         // caller idles the device before Prepare and again before Commit.
-        bool PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog, std::string *error = nullptr);
+        bool PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog,
+            const std::filesystem::path &acceptedRoot, std::string *error = nullptr);
         void CommitShaderReload();
         void DiscardShaderReload();
         bool ShaderReloadPrepared() const { return mReloadPrepared; }
@@ -187,7 +189,8 @@ namespace mir::vk
             uint32_t mRayTracingSbtOffset = UINT32_MAX;
         };
 
-        bool PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry, std::string *error);
+        bool PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry,
+            const std::filesystem::path &acceptedRoot, std::string *error);
         void DiscardReloadEntries();
 
         Device *mDevice = nullptr;

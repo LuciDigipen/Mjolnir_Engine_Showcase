@@ -1237,6 +1237,7 @@ TEST_CASE("A layered material publishes one composite record over its child reco
     REQUIRE(resolution.binding);
     CHECK_FALSE(resolution.binding->material.IsNull());
     CHECK(resolution.binding->layers == std::vector<std::string>{ "sand", "dirt" });
+    CHECK(f.mLibrary.Publication(kLayered).status == SurfaceMaterialPublicationStatus::Published);
 
     const auto sand = f.RecordFor("test_sand");
     const auto dirt = f.RecordFor("test_dirt");
@@ -1267,6 +1268,34 @@ TEST_CASE("A failed layered child fails the whole layered material and names the
     CHECK(resolution.error.find("dirt") != std::string::npos);
     CHECK(f.mHost.createdMaterials.size() == 1);
     CHECK(f.mHost.releasedMaterials == std::vector<MaterialHandle>{ MaterialHandle{ 0, 1 } });
+}
+
+TEST_CASE("Restarting a layered load releases its partially created children", "[renderer][material][async][layered]")
+{
+    LayeredFixture f;
+    f.mHost.stemLayouts["test_dirt"] = TextureLayout();
+    f.Cook();
+    f.Use();
+    REQUIRE(f.Resolve().status == SurfaceMaterialStatus::Pending);
+    for (int frame = 0; frame < 32 && f.mHost.createdMaterials.empty(); ++frame)
+        f.Frame();
+    REQUIRE(f.mHost.createdMaterials.size() == 1);
+    REQUIRE(f.mHost.createdMaterials.front().shaderName == "test_sand");
+    f.CookSand(0.9f);
+    f.mLibrary.CommitReload();
+    f.Frame();
+    CHECK(f.mHost.releasedMaterials == std::vector<MaterialHandle>{MaterialHandle{0, 1}});
+    for (int frame = 0; frame < 32 && !f.Resolve().binding; ++frame)
+    {
+        f.Frame();
+        for (const auto &[slot, upload] : f.mUploader.mEntries)
+            f.mUploader.Complete({slot, 1});
+    }
+    REQUIRE(f.Resolve().binding);
+    CHECK(f.mLibrary.Publication(kLayered).status == SurfaceMaterialPublicationStatus::Published);
+    const auto composite = f.RecordFor("test_layered");
+    REQUIRE(composite);
+    CHECK(FloatAt(composite->mBytes, UintAt(composite->mBytes, 8)) == Catch::Approx(0.9f));
 }
 
 TEST_CASE("A layer failing the terrain parameter rules fails the layered material and names the layer",
