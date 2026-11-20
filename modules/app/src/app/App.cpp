@@ -30,6 +30,7 @@
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
 #include <serial/JsonFile.h>
+#include <terrain/TerrainScene.h>
 #include <terrain_runtime/TerrainRuntime.h>
 
 #include <imgui.h>
@@ -279,6 +280,9 @@ namespace mir
     #if MIR_WITH_EDITOR
         mEditor(Context(), mImGui, mWindow, mRenderer, mWorldState.scene, mWorldState.prefab, mAssets, mAssetService.get(), mResolver,
             mProject, mJobs, mDesc.mEnableEditorLayout, mAnimation.Library()),
+        mTerrainEditor(Context(), mEditor, mProject,
+            [this](AssetId asset, std::shared_ptr<const TerrainOverlay> overlay)
+            { return mTerrain.Runtime().SetTerrainOverlay(asset, std::move(overlay)); }),
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO
@@ -601,6 +605,9 @@ namespace mir
         try
         {
             mRuntime = std::make_unique<RuntimeSession>(*this);
+            // Edit's snapshots go to the Play runtime before PlayBegin resolves and pins its releases.
+            if (const TerrainWorld *edit = mWorldState.world.TryResource<TerrainWorld>())
+                mRuntime->terrain.Runtime().OfferPlayOverlays(*edit);
             mRuntime->Begin(0.0, 0);
             if (mWorldState.scheduler.Started())
             {

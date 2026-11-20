@@ -11,8 +11,11 @@
 #include "TerrainResidencyTestSupport.h"
 #include "TerrainStreamingTestSupport.h"
 
+#include <terrain/TerrainCollision.h>
 #include <terrain/TerrainCollisionResidency.h>
 #include <terrain/TerrainExecutor.h>
+#include <terrain/TerrainHeightQuery.h>
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainScene.h>
 #include <terrain/TerrainStreamer.h>
 
@@ -22,10 +25,12 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace mir;
@@ -43,9 +48,13 @@ namespace
     }
 
     // The first tiles are clipped to start on an odd sample.
-    TerrainEncodedRelease CollisionRelease(const TerrainReleaseInfo &info)
+    TerrainLayout CollisionLayout()
     {
-        const TerrainLayout layout = *TerrainLayout::CreateFromTileSize(64.0, 4.0, {-188.0, -188.0, 192.0, 192.0});
+        return *TerrainLayout::CreateFromTileSize(64.0, 4.0, {-188.0, -188.0, 192.0, 192.0});
+    }
+
+    std::vector<TileHeights> CollisionTiles(const TerrainLayout &layout)
+    {
         std::vector<TileHeights> tiles;
         const TileRange range = layout.Tiles();
         const int32_t n = layout.IntervalsPerTile();
@@ -60,7 +69,48 @@ namespace
                                         layout.SamplePosition(layout.TileFirstSample(z) + k)));
                 tiles.push_back(std::move(tile));
             }
-        return Encode(info, layout, tiles);
+        return tiles;
+    }
+
+    TerrainEncodedRelease CollisionRelease(const TerrainReleaseInfo &info)
+    {
+        const TerrainLayout layout = CollisionLayout();
+        return Encode(info, layout, CollisionTiles(layout));
+    }
+
+    const TileHeights &TileIn(const std::vector<TileHeights> &tiles, TileCoord coord)
+    {
+        const auto found = std::find_if(tiles.begin(), tiles.end(),
+                                        [coord](const TileHeights &tile) { return tile.Tile() == coord; });
+        REQUIRE(found != tiles.end());
+        return *found;
+    }
+
+    TileHeights &TileIn(std::vector<TileHeights> &tiles, TileCoord coord)
+    {
+        return const_cast<TileHeights &>(TileIn(static_cast<const std::vector<TileHeights> &>(tiles), coord));
+    }
+
+    // Copies the release tiles with one tile's interior raised; its edges stay shared with the neighbours.
+    std::vector<TileHeights> EditedTile(const std::vector<TileHeights> &tiles, TileCoord coord, float delta)
+    {
+        std::vector<TileHeights> edited = tiles;
+        TileHeights &tile = TileIn(edited, coord);
+        const int32_t n = tile.IntervalsPerTile();
+        for (int32_t k = 1; k < n; ++k)
+            for (int32_t i = 1; i < n; ++i)
+                tile.Set(i, k, tile.At(i, k) + delta);
+        tile.Set(8, 8, tile.At(8, 8) + delta);
+        return edited;
+    }
+
+    std::shared_ptr<const TerrainOverlay> OverlayFrom(const std::vector<TileHeights> &tiles, AssetId asset,
+                                                      uint64_t revision, std::initializer_list<TileCoord> coords)
+    {
+        std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>> held;
+        for (const TileCoord coord : coords)
+            held.emplace(coord, std::make_shared<const TileHeights>(TileIn(tiles, coord)));
+        return std::make_shared<const TerrainOverlay>(asset, revision, std::move(held));
     }
 
     WorldPosition At(const glm::dvec3 &meters)
@@ -142,6 +192,70 @@ namespace
             return pieces;
         }
     };
+
+    const FakeShape *FineShapeAt(const Fixture &fixture, double x, double z)
+    {
+        for (const auto &[id, placed] : fixture.physics->placed)
+            if (placed.shape->spacing < 8.0 && std::abs(placed.origin.Meters().x - x) < 0.5 &&
+                std::abs(placed.origin.Meters().z - z) < 0.5)
+                return placed.shape;
+        return nullptr;
+    }
+
+    TerrainColliderId FineIdAt(const Fixture &fixture, double x, double z)
+    {
+        for (const auto &[id, placed] : fixture.physics->placed)
+            if (placed.shape->spacing < 8.0 && std::abs(placed.origin.Meters().x - x) < 0.5 &&
+                std::abs(placed.origin.Meters().z - z) < 0.5)
+                return id;
+        return 0;
+    }
+
+    bool AnyColliderAt(const Fixture &fixture, double x, double z)
+    {
+        return std::any_of(fixture.physics->placed.begin(), fixture.physics->placed.end(),
+                           [&](const auto &placed) {
+                               return std::abs(placed.second.origin.Meters().x - x) < 0.5 &&
+                                      std::abs(placed.second.origin.Meters().z - z) < 0.5;
+                           });
+    }
+
+    // The uniform samples a whole-map build gives the edited release's node, bit for bit.
+    void CheckHeightsMatch(const Fixture &fixture, const std::vector<TileHeights> &tiles, const FakeShape &shape)
+    {
+        const TerrainLayout layout = CollisionLayout();
+        const OpenedRelease edited = OpenInMemory(Encode(fixture.info, layout, tiles));
+        TerrainHeightQuery query = TerrainHeightQuery::Create(edited.handle);
+        const TerrainPreloadReport preload = PreloadAllTerrainTiles(query, edited.handle);
+        INFO(preload.firstError.message);
+        REQUIRE(preload.Ok());
+        const TerrainSourceTileLookup lookup = [&query](uint32_t layer, TileCoord tile) {
+            return query.ResidentTile(layer, tile);
+        };
+        const TerrainResult<TerrainUniformSamples> expected =
+            BuildTerrainUniformSamples(edited.handle.Index(), lookup, shape.spacing, layout.Bounds());
+        INFO(expected.error.message);
+        REQUIRE(expected);
+        const TerrainAreaSamples &area = expected.value->area;
+        size_t compared = 0;
+        for (uint32_t k = 0; k < shape.countZ; ++k)
+            for (uint32_t i = 0; i < shape.countX; ++i)
+            {
+                const float height = shape.heights[size_t(k) * shape.countX + i];
+                if (height == kTerrainColliderHole)
+                    continue;
+                const int64_t gx = shape.first.x + i, gz = shape.first.z + k;
+                REQUIRE(gx >= area.samples.min.x);
+                REQUIRE(gx <= area.samples.max.x);
+                REQUIRE(gz >= area.samples.min.z);
+                REQUIRE(gz <= area.samples.max.z);
+                const size_t at = size_t(gz - area.samples.min.z) * area.countX + size_t(gx - area.samples.min.x);
+                INFO("sample " << gx << ", " << gz);
+                CHECK(height == area.heights[at]);
+                ++compared;
+            }
+        CHECK(compared > 0);
+    }
 } // namespace
 
 TEST_CASE("An Eager release collides as one piece, ready only once its colliders are placed", "[terrain][collision]")
@@ -461,4 +575,150 @@ TEST_CASE("A piece whose heights make no shape fails once and the source never r
     CHECK(std::count_if(events.begin(), events.end(), [](const TerrainCollisionEvent &e) {
               return e.kind == TerrainCollisionEvent::Kind::Failed;
           }) >= 1);
+}
+
+TEST_CASE("An overlay rebuilds only the pieces covering its tiles, from the edited heights",
+          "[terrain][collision][overlay]")
+{
+    Fixture f(TerrainResidencyMode::Interest);
+    f.Place({{0.0, 0.0, 0.0}});
+    const std::vector<TerrainCollisionSource> sources{Falling({100.0, 13.0, 100.0}),
+                                                      Falling({170.0, 13.0, 170.0})};
+    f.Run(10, sources);
+    REQUIRE(f.residency->Answer(0).status.state == State::Ready);
+    REQUIRE(f.residency->Answer(1).status.state == State::Ready);
+    const TerrainColliderId affectedId = FineIdAt(f, 0.0, 0.0);
+    const TerrainColliderId untouchedId = FineIdAt(f, 128.0, 128.0);
+    REQUIRE(affectedId != 0);
+    REQUIRE(untouchedId != 0);
+    const std::vector<float> baseHeights = FineShapeAt(f, 0.0, 0.0)->heights;
+    const int builds = f.physics->builds;
+
+    const std::vector<TileHeights> tiles = CollisionTiles(CollisionLayout());
+    const std::vector<TileHeights> edited = EditedTile(tiles, {0, 0}, 1.5f);
+    f.residency->SetOverlay(f.info.asset, OverlayFrom(edited, f.info.asset, 1, {{0, 0}}));
+    CHECK(f.physics->placed.contains(affectedId));
+
+    for (int i = 0; i < 20 && FineIdAt(f, 0.0, 0.0) == affectedId; ++i)
+    {
+        CHECK(AnyColliderAt(f, 0.0, 0.0));
+        f.Step(sources);
+    }
+    CHECK(AnyColliderAt(f, 0.0, 0.0));
+    INFO(f.residency->Answer(0).status.reason);
+    CHECK(FineIdAt(f, 0.0, 0.0) != affectedId);
+    CHECK(FineIdAt(f, 128.0, 128.0) == untouchedId);
+    CHECK(f.physics->builds <= builds + 2);
+
+    const FakeShape *rebuilt = FineShapeAt(f, 0.0, 0.0);
+    REQUIRE(rebuilt);
+    CHECK(rebuilt->heights != baseHeights);
+    CheckHeightsMatch(f, edited, *rebuilt);
+    f.Run(2, sources);
+    CHECK(f.residency->Answer(0).status.state == State::Ready);
+}
+
+TEST_CASE("A snapshot swap keeps the old collider placed and touchable until the new one is installed",
+          "[terrain][collision][overlay]")
+{
+    Fixture f(TerrainResidencyMode::Interest);
+    f.Place({{0.0, 0.0, 0.0}});
+    const std::vector<TerrainCollisionSource> sources{Falling({100.0, 13.0, 100.0})};
+    f.Run(8, sources);
+    f.Run(int(f.settings.collision.retainSeconds / kStep) + 2, sources);
+    REQUIRE(f.residency->Answer(0).status.state == State::Ready);
+    REQUIRE(f.physics->placed.size() == 1);
+    const int removedBefore = f.physics->removed;
+    const TerrainColliderId oldId = FineIdAt(f, 0.0, 0.0);
+    REQUIRE(oldId != 0);
+
+    const std::vector<TileHeights> tiles = CollisionTiles(CollisionLayout());
+    f.physics->ops.clear();
+    f.residency->SetOverlay(f.info.asset,
+                            OverlayFrom(EditedTile(tiles, {0, 0}, 1.5f), f.info.asset, 1, {{0, 0}}));
+    CHECK(FineIdAt(f, 0.0, 0.0) == oldId);
+
+    f.streamer->Update();
+    f.residency->Update(sources, *f.streamer, f.Now(), kStep);
+    CHECK(f.residency->Answer(0).status.state == State::Ready);
+    CHECK(FineIdAt(f, 0.0, 0.0) == oldId);
+    const TerrainCollisionAnswer &waiting = f.residency->Answer(0);
+    CHECK(std::find(waiting.contacts.begin(), waiting.contacts.end(), oldId) != waiting.contacts.end());
+
+    f.executor->RunAll();
+    CHECK(FineIdAt(f, 0.0, 0.0) == oldId);
+    CHECK(f.physics->removed == removedBefore);
+
+    f.residency->Install(f.Now());
+    const TerrainColliderId newId = FineIdAt(f, 0.0, 0.0);
+    REQUIRE(newId != 0);
+    CHECK(newId != oldId);
+    CHECK_FALSE(f.physics->placed.contains(oldId));
+    CHECK(f.physics->removed == removedBefore + 1);
+    const auto place = std::find(f.physics->ops.begin(), f.physics->ops.end(), std::pair{true, newId});
+    const auto remove = std::find(f.physics->ops.begin(), f.physics->ops.end(), std::pair{false, oldId});
+    REQUIRE(place != f.physics->ops.end());
+    REQUIRE(remove != f.physics->ops.end());
+    CHECK(place < remove);
+
+    f.streamer->Update();
+    f.residency->Update(sources, *f.streamer, f.Now(), kStep);
+    CHECK(f.residency->Answer(0).status.state == State::Ready);
+    const TerrainCollisionAnswer &swapped = f.residency->Answer(0);
+    CHECK(std::find(swapped.contacts.begin(), swapped.contacts.end(), newId) != swapped.contacts.end());
+}
+
+TEST_CASE("Replacing or clearing a snapshot rebuilds only the pieces around both snapshots",
+          "[terrain][collision][overlay]")
+{
+    Fixture f(TerrainResidencyMode::Interest);
+    f.Place({{0.0, 0.0, 0.0}});
+    const std::vector<TerrainCollisionSource> sources{Falling({100.0, 13.0, 100.0}),
+                                                      Falling({170.0, 13.0, 170.0}),
+                                                      Falling({-150.0, 13.0, -150.0})};
+    f.Run(10, sources);
+    for (size_t s = 0; s < sources.size(); ++s)
+        REQUIRE(f.residency->Answer(s).status.state == State::Ready);
+    const TerrainColliderId originPiece = FineIdAt(f, 0.0, 0.0);
+    const TerrainColliderId farPiece = FineIdAt(f, 128.0, 128.0);
+    const TerrainColliderId untouchedPiece = FineIdAt(f, -192.0, -192.0);
+    REQUIRE(originPiece != 0);
+    REQUIRE(farPiece != 0);
+    REQUIRE(untouchedPiece != 0);
+
+    const std::vector<TileHeights> tiles = CollisionTiles(CollisionLayout());
+    const std::vector<TileHeights> first = EditedTile(tiles, {0, 0}, 1.0f);
+    f.residency->SetOverlay(f.info.asset, OverlayFrom(first, f.info.asset, 1, {{0, 0}}));
+    for (int i = 0; i < 20 && FineIdAt(f, 0.0, 0.0) == originPiece; ++i)
+        f.Step(sources);
+    INFO(f.residency->Answer(0).status.reason);
+    CHECK(FineIdAt(f, 0.0, 0.0) != originPiece);
+    CHECK(FineIdAt(f, 128.0, 128.0) == farPiece);
+    CHECK(FineIdAt(f, -192.0, -192.0) == untouchedPiece);
+    CheckHeightsMatch(f, first, *FineShapeAt(f, 0.0, 0.0));
+
+    const std::vector<TileHeights> second = EditedTile(tiles, {-3, -3}, 1.0f);
+    f.residency->SetOverlay(f.info.asset, OverlayFrom(second, f.info.asset, 2, {{-3, -3}}));
+    const TerrainColliderId editedId = FineIdAt(f, 0.0, 0.0);
+    for (int i = 0; i < 20 && FineIdAt(f, 0.0, 0.0) == editedId; ++i)
+        f.Step(sources);
+    for (int i = 0; i < 20 && FineIdAt(f, -192.0, -192.0) == untouchedPiece; ++i)
+        f.Step(sources);
+    INFO(f.residency->Answer(0).status.reason);
+    INFO(f.residency->Answer(2).status.reason);
+    CHECK(FineIdAt(f, 0.0, 0.0) != editedId);
+    CHECK(FineIdAt(f, -192.0, -192.0) != untouchedPiece);
+    CHECK(FineIdAt(f, 128.0, 128.0) == farPiece);
+    CheckHeightsMatch(f, tiles, *FineShapeAt(f, 0.0, 0.0));
+    CheckHeightsMatch(f, second, *FineShapeAt(f, -192.0, -192.0));
+
+    const TerrainColliderId restoredId = FineIdAt(f, 0.0, 0.0);
+    const TerrainColliderId secondId = FineIdAt(f, -192.0, -192.0);
+    f.residency->SetOverlay(f.info.asset, nullptr);
+    for (int i = 0; i < 20 && FineIdAt(f, -192.0, -192.0) == secondId; ++i)
+        f.Step(sources);
+    CHECK(FineIdAt(f, 0.0, 0.0) == restoredId);
+    CHECK(FineIdAt(f, -192.0, -192.0) != secondId);
+    CHECK(FineIdAt(f, 128.0, 128.0) == farPiece);
+    CheckHeightsMatch(f, tiles, *FineShapeAt(f, -192.0, -192.0));
 }

@@ -83,6 +83,8 @@ namespace mir
         std::optional<std::string> mSelection;
         std::string mActiveIdentity;
         std::string mLoadError;
+        // The source exists but has never been cooked, so Import is offered.
+        bool mNotImported = false;
         MaterialRecipe mRecipe;
         MaterialLayout mLayout;
         std::vector<std::string> mFrontends;

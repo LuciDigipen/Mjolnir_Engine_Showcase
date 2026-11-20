@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include "TerrainBaseCache.h"
 #include "TerrainCandidate.h"
 #include "TerrainRecipe.h"
 #include "TerrainRegions.h"
@@ -18,11 +19,13 @@
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainPackWriter.h>
+#include <terrain/TerrainRelease.h>
 #include <terrain/TileHeights.h>
 
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -45,9 +48,25 @@ namespace mir::terrainbake
         std::vector<TileHeights> tiles;
         TerrainEncodedRelease encoded;
         std::optional<TerrainSeamSummary> seams;
+        // True when unchanged payloads came from a compatible base release.
+        bool incremental = false;
     };
 
+    // Loads a heightmap recipe's source file; adds a generate diagnostic and returns false on failure.
+    bool LoadRecipeHeightSource(TerrainRecipe &recipe, TerrainReport &report);
+
+    // Source heights only, before edit layers and seams; fills the "generate" check.
+    std::optional<std::vector<TileHeights>> GenerateSourceHeights(const TerrainRecipe &recipe, TerrainReport &report);
+
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report);
+
+    // Edit layers and seams in place; adds generate diagnostics and returns false on failure.
+    bool ApplyTerrainEditsAndSeams(const TerrainRecipe &recipe, std::vector<TileHeights> &tiles, TerrainReport &report);
+
+    // Rule weights of every tile on the final surface, before the Edit Layer weight channels.
+    std::optional<std::vector<TerrainWeightTile>> BakeRuleWeights(const TerrainRecipe &recipe,
+                                                                  std::span<const TileHeights> finalHeights,
+                                                                  TerrainReport &report);
 
     // Fills the "encode" check.
     std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
@@ -56,10 +75,22 @@ namespace mir::terrainbake
 
     std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
                                                           const TerrainRecipe &recipe, std::vector<TileHeights> tiles,
-                                                          const TerrainBakeOptions &options, TerrainReport &report);
+                                                          const TerrainBakeOptions &options, TerrainReport &report,
+                                                          const TerrainReleaseHandle *baseRelease = nullptr,
+                                                          std::string baseUnavailable = {},
+                                                          TerrainBaseWeightsEncoding *baseWeights = nullptr);
 
     TerrainCandidateManifest MakeCandidateManifest(const TerrainBakedRelease &baked, std::string assetPath,
                                                    std::string recipePath);
+
+    struct TerrainBaseRelease
+    {
+        // Takes precedence over the path form.
+        std::optional<TerrainReleaseHandle> handle;
+        // Opens <releasesRoot>/<asset>/current when handle is absent.
+        std::filesystem::path releasesRoot;
+        std::optional<AssetId> asset;
+    };
 
     struct TerrainBakeRequest
     {
@@ -69,6 +100,12 @@ namespace mir::terrainbake
         std::string sourcePath;
         std::filesystem::path candidateDir;
         TerrainBakeOptions options;
+        // Reuses unchanged payloads; absent or unusable runs a full bake.
+        std::optional<TerrainBaseRelease> base;
+        // When set, receives the source heights as a base cache entry, encoded before the edit layers.
+        TerrainBaseHeightsEncoding *baseHeights = nullptr;
+        // When set, receives the rule weights as a base cache entry, encoded before the weight channels.
+        TerrainBaseWeightsEncoding *baseWeights = nullptr;
     };
 
     // Builds a .partial sibling, then renames it, so candidateDir is absent or complete.

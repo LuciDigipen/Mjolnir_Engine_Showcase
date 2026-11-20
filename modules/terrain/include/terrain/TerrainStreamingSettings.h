@@ -105,6 +105,8 @@ namespace mir
             uint64_t stagingBytes = 0;
             // A mesh outlives its last want or draw by this much.
             double meshRetainSeconds = std::numeric_limits<double>::quiet_NaN();
+            // Resident RGBA8 weight textures; a zero budget draws tiles without weights.
+            uint64_t weightBudgetBytes = 64ull * 1024ull * 1024ull;
 
             bool operator==(const Gpu &) const = default;
         } gpu;

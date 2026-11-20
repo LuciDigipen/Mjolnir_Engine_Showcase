@@ -101,6 +101,8 @@ namespace mir::terrainbake
         files.push_back({std::string(kTerrainIndexFileName), encoded.index.size(), Fnv1a64(encoded.index)});
         for (const TerrainEncodedPack &pack : encoded.packs)
             files.push_back({pack.fileName, pack.bytes.size(), Fnv1a64(pack.bytes)});
+        for (const TerrainEncodedPack &pack : encoded.weightPacks)
+            files.push_back({pack.fileName, pack.bytes.size(), Fnv1a64(pack.bytes)});
         return files;
     }
 
@@ -288,6 +290,9 @@ namespace mir::terrainbake
         if (!write(std::string(kTerrainIndexFileName), encoded.index))
             return false;
         for (const TerrainEncodedPack &pack : encoded.packs)
+            if (!write(pack.fileName, pack.bytes))
+                return false;
+        for (const TerrainEncodedPack &pack : encoded.weightPacks)
             if (!write(pack.fileName, pack.bytes))
                 return false;
         if (!WriteText(dir / kCandidateManifestFileName, EncodeCandidateManifest(manifest)))

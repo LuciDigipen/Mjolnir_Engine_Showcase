@@ -53,7 +53,7 @@ target_compile_definitions(engine_app PUBLIC MIR_WITH_EDITOR=$<BOOL:${MJOLNIR_WI
 
 # the editor, and the asset import queue that only its panel drives
 if(MJOLNIR_WITH_EDITOR)
-    target_link_libraries(engine_app PUBLIC mir::editor)
+    target_link_libraries(engine_app PUBLIC mir::editor mir::terrain_editor)
 endif()
 
 # App.h exposes audio members only when audio is built.

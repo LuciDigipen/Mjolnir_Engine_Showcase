@@ -111,41 +111,58 @@ TEST_CASE("Sync publishes once, then does nothing while the recipe is unchanged"
     CHECK(Snapshot(tree.releases) == before);
 }
 
-TEST_CASE("Sync publishes a changed recipe as a new release and keeps the old one", "[terraintool][sync]")
+TEST_CASE("Sync publishes a changed recipe as a new release and prunes the old one", "[terraintool][sync]")
 {
     SyncTree tree("sync_changed");
     const TerrainReport first = Sync(tree.Request());
     REQUIRE(first.Ok());
     const TerrainReleaseId r1 = *first.publish->current;
-    const auto r1Files = Snapshot(TerrainReleaseDir(tree.releases, tree.asset, r1));
-    const TerrainResult<TerrainReleaseHandle> open1 = OpenCurrentTerrainRelease(tree.releases, tree.asset);
-    REQUIRE(open1);
-    const std::vector<TileHeights> tiles1 = ReadAllTiles(*open1.value);
+    const fs::path r1Dir = TerrainReleaseDir(tree.releases, tree.asset, r1);
+    const auto r1Files = Snapshot(r1Dir);
 
     tree.SetSeed(7);
-    const TerrainReport changed = Sync(tree.Request());
-    REQUIRE(changed.Ok());
-    CHECK(changed.publish->published);
-    CHECK(changed.publish->previous == r1);
-    REQUIRE(changed.publish->current);
-    const TerrainReleaseId r2 = *changed.publish->current;
-    CHECK(r2 != r1);
-    for (const TerrainCheck &c : changed.checks)
-        if (c.name == check::kCurrent)
-            CHECK(c.detail.find("fingerprint") != std::string::npos);
+    SECTION("no reader holds the old release")
+    {
+        const TerrainReport changed = Sync(tree.Request());
+        REQUIRE(changed.Ok());
+        CHECK(changed.publish->published);
+        CHECK(changed.publish->previous == r1);
+        REQUIRE(changed.publish->current);
+        const TerrainReleaseId r2 = *changed.publish->current;
+        CHECK(r2 != r1);
+        for (const TerrainCheck &c : changed.checks)
+            if (c.name == check::kCurrent)
+                CHECK(c.detail.find("fingerprint") != std::string::npos);
+        CHECK(changed.Status(check::kPrune) == CheckStatus::Passed);
 
-    CHECK(ReleaseDirNames(tree.assetDir).size() == 2);
-    CHECK(Snapshot(TerrainReleaseDir(tree.releases, tree.asset, r1)) == r1Files);
-    CHECK(ReadAllTiles(*open1.value) == tiles1);
-    const TerrainResult<TerrainReleaseHandle> open2 = OpenCurrentTerrainRelease(tree.releases, tree.asset);
-    REQUIRE(open2);
-    CHECK(open2.value->Info().release == r2);
-    CHECK(ReadAllTiles(*open2.value) != tiles1);
+        CHECK(ReleaseDirNames(tree.assetDir) == std::vector<std::string>{TerrainIdHex(r2.value)});
+        CHECK_FALSE(fs::exists(r1Dir));
+        const TerrainResult<TerrainReleaseHandle> open2 = OpenCurrentTerrainRelease(tree.releases, tree.asset);
+        REQUIRE(open2);
+        CHECK(open2.value->Info().release == r2);
 
-    const TerrainReport settled = Sync(tree.Request());
-    REQUIRE(settled.Ok());
-    CHECK_FALSE(settled.publish->published);
-    CHECK(settled.publish->current == r2);
+        const TerrainReport settled = Sync(tree.Request());
+        REQUIRE(settled.Ok());
+        CHECK_FALSE(settled.publish->published);
+        CHECK(settled.publish->current == r2);
+        CHECK(settled.Status(check::kPrune) == CheckStatus::Passed);
+    }
+    SECTION("an open handle keeps the old release readable")
+    {
+        const TerrainResult<TerrainReleaseHandle> open1 = OpenCurrentTerrainRelease(tree.releases, tree.asset);
+        REQUIRE(open1);
+        const std::vector<TileHeights> tiles1 = ReadAllTiles(*open1.value);
+
+        const TerrainReport changed = Sync(tree.Request());
+        REQUIRE(changed.Ok());
+        CHECK(changed.publish->published);
+        CHECK(changed.publish->previous == r1);
+        REQUIRE(changed.publish->current);
+        CHECK(*changed.publish->current != r1);
+        CHECK(ReleaseDirNames(tree.assetDir).size() == 2);
+        CHECK(Snapshot(r1Dir) == r1Files);
+        CHECK(ReadAllTiles(*open1.value) == tiles1);
+    }
 }
 
 TEST_CASE("A missing or damaged current release makes the next sync publish again", "[terraintool][sync]")
@@ -170,7 +187,7 @@ TEST_CASE("A missing or damaged current release makes the next sync publish agai
         REQUIRE(report.Ok());
         CHECK(report.publish->published);
         CHECK(report.publish->previous == r1);
-        CHECK(fs::exists(r1Dir / kTerrainIndexFileName));
+        CHECK_FALSE(fs::exists(r1Dir));
     }
     SECTION("pointer garbage")
     {
@@ -282,4 +299,89 @@ TEST_CASE("Two builds syncing one asset at once publish it once", "[terraintool]
     TerrainSyncRequest impatient = tree.Request();
     impatient.lockWait = 0ms;
     CHECK(Sync(impatient).Status(check::kLock) == CheckStatus::Failed);
+}
+
+TEST_CASE("Sync preserves the edited release while its saved layers await recovery", "[terraintool][sync][edits]")
+{
+    SyncTree tree("sync_interrupted_save");
+    TerrainEditLayer layer = AdditiveEditLayer("Saved ridge");
+    const auto layout = LoadExample().layout;
+    SetTerrainEditSample(layer, layout, {layout.TileFirstSample(-1) + 8, layout.TileFirstSample(-1) + 8}, 4.0f);
+    WriteEditLayers(tree.recipe, std::span(&layer, 1));
+    const auto first = Sync(tree.Request());
+    REQUIRE(first.Ok());
+    REQUIRE(first.publish->current);
+    const auto before = Snapshot(tree.releases);
+
+    const auto live = TerrainEditLayersDir(tree.recipe);
+    auto backup = live;
+    backup += ".old";
+    auto saving = live;
+    saving += ".saving";
+    fs::rename(live, backup);
+    fs::create_directory(saving);
+    REQUIRE(WriteText(saving / kTerrainEditManifestFileName, "unfinished"));
+    const auto source = Snapshot(tree.recipe.parent_path());
+    const auto stopped = Sync(tree.Request());
+    CHECK(stopped.Status(check::kRecipe) == CheckStatus::Failed);
+    REQUIRE_FALSE(stopped.diagnostics.empty());
+    CHECK(stopped.diagnostics.front().field == "edits");
+    CHECK(stopped.diagnostics.front().message.find(".old") != std::string::npos);
+    CHECK(Snapshot(tree.releases) == before);
+    CHECK(Snapshot(tree.recipe.parent_path()) == source);
+
+    fs::rename(backup, live);
+    const auto recovered = Sync(tree.Request());
+    REQUIRE(recovered.Ok());
+    CHECK_FALSE(recovered.publish->published);
+    CHECK(recovered.publish->current == first.publish->current);
+    CHECK(recovered.recipeFingerprint == first.recipeFingerprint);
+}
+
+TEST_CASE("Sync republishes an edited recipe only when a layer tile changes", "[terraintool][sync][edits]")
+{
+    SyncTree tree("sync_edits");
+    const TerrainRecipe plain = LoadExample();
+    const GlobalSampleIndex sample{plain.layout.TileFirstSample(-1) + 8, plain.layout.TileFirstSample(-1) + 8};
+    TerrainEditLayer layer = AdditiveEditLayer("touch-up");
+    SetTerrainEditSample(layer, plain.layout, sample, 4.0f);
+    WriteEditLayers(tree.recipe, std::span(&layer, 1));
+
+    const TerrainReport first = Sync(tree.Request());
+    REQUIRE(first.Ok());
+    REQUIRE(first.publish->published);
+    const TerrainReleaseId r1 = *first.publish->current;
+    REQUIRE(first.recipeFingerprint);
+    const TerrainSourceFingerprint edited = *first.recipeFingerprint;
+    CHECK(edited != FingerprintRecipe(plain));
+    const auto before = Snapshot(tree.releases);
+
+    const TerrainReport again = Sync(tree.Request());
+    REQUIRE(again.Ok());
+    CHECK_FALSE(again.publish->published);
+    CHECK(again.publish->current == r1);
+    CHECK(Snapshot(tree.releases) == before);
+
+    SetTerrainEditSample(layer, plain.layout, sample, 9.0f);
+    const TerrainEditTile &changedTile = layer.tiles.at(TileCoord{-1, -1});
+    const TerrainResult<std::vector<std::byte>> bytes =
+        EncodeTerrainEditTile(changedTile, layer.info.heightBlend);
+    REQUIRE(bytes);
+    WriteFile(TerrainEditLayersDir(tree.recipe) / TerrainEditLayerDirName(layer.info.sequence) /
+                  TerrainEditTileFileName(changedTile.tile),
+              *bytes.value);
+
+    const TerrainReport changed = Sync(tree.Request());
+    REQUIRE(changed.Ok());
+    CHECK(changed.publish->published);
+    CHECK(changed.publish->previous == r1);
+    REQUIRE(changed.release);
+    CHECK(changed.release->release != r1);
+    REQUIRE(changed.recipeFingerprint);
+    CHECK(*changed.recipeFingerprint != edited);
+    CHECK(changed.release->source == *changed.recipeFingerprint);
+    const TerrainResult<TerrainReleaseHandle> current = OpenCurrentTerrainRelease(tree.releases, tree.asset);
+    REQUIRE(current);
+    CHECK(current.value->Info().source == *changed.recipeFingerprint);
+    CHECK(ReleaseDirNames(tree.assetDir) == std::vector<std::string>{TerrainIdHex(changed.release->release.value)});
 }

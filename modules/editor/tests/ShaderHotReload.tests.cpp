@@ -5,17 +5,27 @@
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  */
+#include <editor/ImageDecode.h>
 #include <editor/ShaderHotReload.h>
 #include <core/fs/FileIO.h>
+#include <core/fs/Paths.h>
 #include <jobs/BackgroundJobQueue.h>
 #include <jobs/JobExecutor.h>
+#include <renderer/CameraMath.h>
 #include <renderer/MaterialReflection.h>
+#include <renderer/Shapes.h>
+#include <renderer/TerrainDrawData.h>
+#include <renderer/VulkanRenderer.h>
+#include <window/Window.h>
 #include <renderer/ShaderReload.h>
+#include <renderer/TerrainMaterialAsset.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <thread>
 #include <future>
 
@@ -26,9 +36,12 @@ namespace
         const auto bytes = path.generic_u8string();
         return {reinterpret_cast<const char *>(bytes.data()), bytes.size()};
     }
-    bool Pump(mir::ShaderHotReload &watcher, const std::function<bool()> &done)
+    constexpr auto kRealShaderTimeout = std::chrono::seconds(60);
+
+    bool Pump(mir::ShaderHotReload &watcher, const std::function<bool()> &done,
+              std::chrono::seconds timeout = std::chrono::seconds(15))
     {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline)
         {
             watcher.Update();
@@ -394,7 +407,8 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
     REQUIRE(mir::WriteText(content / "new.material.json", material.dump()));
     const auto publish = [&](int expectedCommits)
     {
-        REQUIRE(Pump(watcher, [&] { return fixture.commits == expectedCommits || !watcher.LastDiagnostic().empty(); }));
+        REQUIRE(Pump(watcher, [&] { return fixture.commits == expectedCommits || !watcher.LastDiagnostic().empty(); },
+            kRealShaderTimeout));
         INFO(watcher.LastDiagnostic());
         REQUIRE(fixture.commits == expectedCommits);
     };
@@ -430,4 +444,293 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
     const auto after = layout();
     CHECK(after.size > before.size);
     CHECK(after.fields.size() == before.fields.size() + 1);
+
+    if (frontend == "terrain")
+    {
+        const auto layeredPath = content / "relief.terrainmaterial.json";
+        const std::string layered = R"({"version":1,"blend":"height","layers":[
+            {"name":"base","material":"new.material.json"},{"name":"grass","material":"new.material.json"}]})";
+        REQUIRE(mir::WriteText(layeredPath, layered));
+        std::optional<std::string> result;
+        watcher.QueueTerrainMaterial(layeredPath, [&](std::string diagnostic) { result = std::move(diagnostic); });
+        REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
+        INFO(*result);
+        REQUIRE(result->empty());
+        REQUIRE(fixture.commits == 3);
+        const auto published = store.CurrentId();
+        REQUIRE(published);
+        struct RestoreShaderRoot
+        {
+            std::filesystem::path previous = mir::ShaderRootOverride();
+            ~RestoreShaderRoot() { mir::SetShaderRootOverride(std::move(previous)); }
+        } restore;
+        mir::SetShaderRootOverride(store.GenerationPath(*published));
+        const auto catalog = mir::LoadSurfaceMaterialCatalog(&error);
+        INFO(error);
+        REQUIRE(catalog);
+        const auto *registration = catalog->FindByAsset("content/relief.terrainmaterial.json", "terrain");
+        REQUIRE(registration);
+        CHECK(registration->type == "Layered2<DefaultMaterial, DefaultMaterial>");
+        CHECK(mir::ReadTerrainMaterial(layered, registration->asset, &*catalog, &error));
+        CHECK(mir::PackSurfaceMaterialRecord(*registration, &error));
+        CHECK(std::filesystem::is_regular_file(mir::ShaderPath(registration->stem + ".fragmentMain.spv")));
+        CHECK(std::filesystem::is_regular_file(mir::ShaderPath(registration->stem + ".closestHitSurface.spv")));
+
+        auto newShader = *definition;
+        newShader.replace(newShader.find("DefaultMaterial"), std::string("DefaultMaterial").size(), "OtherMaterial");
+        REQUIRE(mir::WriteText(content / "other.slang", newShader));
+        auto changedMaterial = material;
+        changedMaterial["shader"] = {{"file", "other.slang"}, {"type", "OtherMaterial"}};
+        REQUIRE(mir::WriteText(content / "new.material.json", changedMaterial.dump()));
+        publish(4);
+        const auto together = store.CurrentId();
+        REQUIRE(together);
+        mir::SetShaderRootOverride(store.GenerationPath(*together));
+        const auto updatedCatalog = mir::LoadSurfaceMaterialCatalog(&error);
+        REQUIRE(updatedCatalog);
+        const auto *child = updatedCatalog->FindByAsset("content/new.material.json", "terrain");
+        const auto *parent = updatedCatalog->FindByAsset(registration->asset, "terrain");
+        REQUIRE(child);
+        REQUIRE(parent);
+        CHECK(child->type == "OtherMaterial");
+        CHECK(parent->type == "Layered2<OtherMaterial, OtherMaterial>");
+        const auto updatedManifest = mir::LoadShaderManifest(mir::ShaderPath("shader_manifest.json"));
+        REQUIRE(updatedManifest);
+        for (const auto *stage : {".fragmentMain.spv", ".closestHitSurface.spv", ".layout.spv"})
+        {
+            const auto *output = updatedManifest->Find(parent->stem + stage);
+            REQUIRE(output);
+            CHECK(output->specialize == parent->type);
+            CHECK(std::ranges::find(output->arguments, Utf8(content / "other.slang")) != output->arguments.end());
+        }
+
+        changedMaterial["frontends"] = {"mesh"};
+        REQUIRE(mir::WriteText(content / "new.material.json", changedMaterial.dump()));
+        REQUIRE(Pump(watcher, [&] { return watcher.LastDiagnostic().find("no terrain shader registration") !=
+            std::string::npos; }, kRealShaderTimeout));
+        CHECK(fixture.commits == 4);
+        CHECK(store.CurrentId() == together);
+
+        REQUIRE(mir::WriteText(layeredPath, "{}"));
+        result.reset();
+        watcher.QueueTerrainMaterial(layeredPath, [&](std::string diagnostic) { result = std::move(diagnostic); });
+        REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
+        CHECK_FALSE(result->empty());
+        CHECK(store.CurrentId() == together);
+    }
+}
+
+TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][editor][shader]")
+{
+    namespace fs = std::filesystem;
+    using namespace mir;
+    const fs::path build = fs::u8path(MIR_EDITOR_SHADER_MANIFEST).parent_path().parent_path();
+    ShaderGenerationStore original(build / "shaders");
+    const auto base = original.CurrentId();
+    REQUIRE(base);
+    const auto seed = original.GenerationPath(*base);
+    auto manifest = LoadShaderManifest(seed / "shader_manifest.json");
+    REQUIRE(manifest);
+    const auto repo = manifest->workingDirectory;
+    const auto fixture = UniqueShaderJobDirectory(repo / "builds" / "gpu465");
+    struct Cleanup
+    {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove_all(path, ec); }
+    } cleanup{fixture};
+    const auto shaders = fixture / "shaders";
+    const auto materials = fixture / "materials";
+    fs::create_directories(materials);
+    fs::copy(seed, shaders, fs::copy_options::recursive);
+    manifest->assetRoots.push_back({materials, "terraincheck"});
+    REQUIRE(WriteText(shaders / "shader_manifest.json", SerializeShaderManifest(*manifest)));
+    fs::copy_file(repo / "assets/materials/default.slang", materials / "paint.slang");
+
+    SetShaderRootOverride(shaders);
+    auto window = Window::Create({.mWidth = 320, .mHeight = 180, .mTitle = "Terrain layer regression",
+        .mStartHidden = true});
+    REQUIRE(window);
+    VulkanRenderer renderer;
+    struct Shutdown
+    {
+        VulkanRenderer &renderer;
+        ~Shutdown() { renderer.Shutdown(); ClearShaderRootOverride(); }
+    } shutdown{renderer};
+    REQUIRE(renderer.Initialize({window.get(), "Terrain layer regression", true, false}));
+    renderer.SetSkyVisible(false);
+    renderer.SetAmbientColor({1.0f, 1.0f, 1.0f});
+    PostProcessingState post;
+    post.antiAliasing.mode = AntiAliasingMode::Off;
+    renderer.SetPostProcessing(post);
+
+    JobExecutor jobs(1);
+    ShaderHotReload watcher;
+    watcher.Initialize(repo, shaders, {
+        [&] { return renderer.ShaderReloadAvailable(); },
+        [&](const auto &dir, auto *error) { return renderer.PrepareShaderReload(dir, error); },
+        [&] { renderer.CommitPreparedShaderReload(); }, [&] { renderer.DiscardPreparedShaderReload(); }}, jobs);
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(watcher.Enabled());
+
+    const auto materialPath = materials / "paint.material.json";
+    REQUIRE(WriteText(materialPath, R"({"version":1,"shader":{"file":"paint.slang","type":"DefaultMaterial"},
+        "frontends":["terrain"],"parameters":{"albedoRoughness":[0.9,0.04,0.04,1.0],"surfaceParams":[0,1,0,0]}})"));
+    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration == 1 || !watcher.LastDiagnostic().empty(); },
+        kRealShaderTimeout));
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(renderer.ReloadStats().mGeneration == 1);
+
+    const auto createMaterial = [&](const fs::path &path, const nlohmann::json &parameters,
+        std::span<const MaterialHandle> layers = {})
+    {
+        const auto logical = GenericPathUtf8(path.lexically_relative(repo));
+        const auto *registration = renderer.SurfaceMaterials().FindByAsset(logical, "terrain");
+        REQUIRE(registration);
+        auto authored = *registration;
+        auto merged = nlohmann::json::parse(authored.parametersJson);
+        merged.update(parameters);
+        std::string error;
+        const auto schema = LoadSurfaceMaterialSchema(authored, &error);
+        INFO(error);
+        REQUIRE(schema);
+        std::vector<std::byte> record(schema->layout.size);
+        for (size_t layer = 0; layer < layers.size(); ++layer)
+        {
+            const auto child = renderer.MaterialRecord(layers[layer]);
+            REQUIRE(child);
+            const size_t offset = (record.size() + 15u) & ~size_t{15};
+            merged["layerOffset" + std::to_string(layer)] = offset;
+            record.resize(offset);
+            record.insert(record.end(), child->mBytes.begin(), child->mBytes.end());
+        }
+        authored.parametersJson = merged.dump();
+        const auto header = PackSurfaceMaterialRecord(authored, &error);
+        INFO(error);
+        REQUIRE(header);
+        std::ranges::copy(*header, record.begin());
+        auto handle = renderer.CreateMaterial({.shaderName = registration->stem, .cullMode = VK_CULL_MODE_NONE,
+            .record = record, .surfaceMaterial = true, .surfaceAsset = logical});
+        REQUIRE_FALSE(handle.IsNull());
+        REQUIRE(handle != renderer.ErrorMaterial());
+        return handle;
+    };
+    const auto red = createMaterial(materialPath, nlohmann::json::object());
+    const auto cube = MakeCube();
+    DrawItem item;
+    item.mesh = renderer.CreateMesh(cube.vertices, cube.indices);
+    REQUIRE_FALSE(item.mesh.IsNull());
+    item.model[3].z = -3.0f;
+    item.previousModel = item.model;
+    item.material = red;
+    RenderView view;
+    view.items = std::span(&item, 1);
+    view.viewProj = MakeViewProjection(glm::mat4(1.0f), Camera{}, 320.0f / 180.0f);
+    view.nearZ = 0.1f;
+    view.farZ = 100.0f;
+    const auto capture = [&](const fs::path &image)
+    {
+        for (int frame = 0; frame < 3; ++frame)
+        {
+            if (frame == 2)
+                renderer.CaptureNextFrame(image);
+            window->PollEvents();
+            renderer.DrawFrame(std::span(&view, 1));
+        }
+        DecodedImage pixels;
+        std::string diagnostic;
+        const bool decoded = ReadImage(image, 1024, pixels, diagnostic);
+        INFO(diagnostic);
+        REQUIRE(decoded);
+        const auto center = (static_cast<size_t>(pixels.mHeight / 2) * pixels.mWidth + pixels.mWidth / 2) * 4;
+        const auto *rgb = pixels.mPixels.get() + center;
+        return std::array<int, 3>{rgb[0], rgb[1], rgb[2]};
+    };
+    const auto before = capture(fixture / "single.png");
+    const auto green = createMaterial(materialPath, {{"albedoRoughness", {0.04, 0.9, 0.04, 1.0}}});
+
+    const auto layeredPath = materials / "paint.terrainmaterial.json";
+    REQUIRE(WriteText(layeredPath, R"({"version":1,"blend":"weight","layers":[
+        {"name":"base","material":"paint.material.json"},{"name":"top","material":"paint.material.json"}]})"));
+    std::optional<std::string> result;
+    watcher.QueueTerrainMaterial(layeredPath, [&](std::string error) { result = std::move(error); });
+    REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
+    INFO(*result);
+    REQUIRE(result->empty());
+    const std::array layers{red, green};
+    item.material = createMaterial(layeredPath, nlohmann::json::object(), layers);
+    const std::array weight{std::byte{255}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const auto texture = renderer.CreateTexture({.width = 1, .height = 1, .pixels = weight, .srgb = false});
+    REQUIRE_FALSE(texture.IsNull());
+    item.terrain = TerrainDrawData{texture.mIndex, renderer.MaterialSamplerRow({}),
+        {1, kTerrainSlotUnused, kTerrainSlotUnused, kTerrainSlotUnused}, 1.0f}.Pack();
+    const auto after = capture(fixture / "layered.png");
+    const auto accepted = renderer.MaterialRecord(item.material);
+    REQUIRE(accepted);
+    REQUIRE(accepted->mBytes.size() > accepted->mLayout.size);
+    result.reset();
+    watcher.QueueTerrainMaterial(layeredPath, [&](std::string error) { result = std::move(error); });
+    REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
+    INFO(*result);
+    REQUIRE(result->empty());
+    const auto reloaded = renderer.MaterialRecord(item.material);
+    REQUIRE(reloaded);
+    CHECK(reloaded->mBytes == accepted->mBytes);
+    const auto unchanged = capture(fixture / "reloaded.png");
+
+    const auto shaderPath = materials / "paint.slang";
+    auto shader = ReadText(shaderPath);
+    REQUIRE(shader);
+    const auto start = shader->find("float4 albedoRoughness;");
+    REQUIRE(start != std::string::npos);
+    shader->insert(start, "float4 addedField;\n    ");
+    const auto previousGeneration = renderer.ReloadStats().mGeneration;
+    REQUIRE(WriteText(shaderPath, *shader));
+    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration > previousGeneration ||
+        !watcher.LastDiagnostic().empty(); }, kRealShaderTimeout));
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(renderer.ReloadStats().mGeneration > previousGeneration);
+    const auto expanded = renderer.MaterialRecord(item.material);
+    REQUIRE(expanded);
+    CHECK(expanded->mBytes.size() > accepted->mBytes.size());
+    const auto resized = capture(fixture / "resized.png");
+    item.material = green;
+    item.terrain = {};
+    const auto expected = capture(fixture / "green.png");
+    CAPTURE(before, after, expected);
+    CHECK(before[0] > before[1] + 30);
+    CHECK(after[1] > after[0] + 30);
+    for (size_t channel = 0; channel < after.size(); ++channel)
+    {
+        CHECK(std::abs(after[channel] - expected[channel]) <= 2);
+        CHECK(std::abs(unchanged[channel] - expected[channel]) <= 2);
+        CHECK(std::abs(resized[channel] - expected[channel]) <= 2);
+    }
+
+    auto otherShader = *shader;
+    otherShader.replace(otherShader.find("DefaultMaterial"), std::string("DefaultMaterial").size(), "OtherMaterial");
+    otherShader.insert(otherShader.find("float4 albedoRoughness;"), "float4 otherField;\n    ");
+    const std::string albedo = "output.albedo = albedoRoughness.rgb";
+    otherShader.replace(otherShader.find(albedo), albedo.size(), "output.albedo = albedoRoughness.gbr");
+    REQUIRE(WriteText(shaderPath, otherShader));
+    const auto childText = ReadText(materialPath);
+    REQUIRE(childText);
+    auto childSource = nlohmann::json::parse(*childText);
+    childSource["shader"]["type"] = "OtherMaterial";
+    const auto lastGeneration = renderer.ReloadStats().mGeneration;
+    REQUIRE(WriteText(materialPath, childSource.dump()));
+    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration > lastGeneration ||
+        !watcher.LastDiagnostic().empty(); }, kRealShaderTimeout));
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(renderer.ReloadStats().mGeneration == lastGeneration + 1);
+    const auto reboundChild = capture(fixture / "changed-child.png");
+    item.material = accepted->mMaterial;
+    const auto reboundRecord = renderer.MaterialRecord(item.material);
+    REQUIRE(reboundRecord);
+    CHECK(reboundRecord->mBytes.size() > expanded->mBytes.size());
+    item.terrain = TerrainDrawData{texture.mIndex, renderer.MaterialSamplerRow({}),
+        {1, kTerrainSlotUnused, kTerrainSlotUnused, kTerrainSlotUnused}, 1.0f}.Pack();
+    const auto reboundParent = capture(fixture / "changed-parent.png");
+    CHECK(reboundChild[0] > reboundChild[1] + 30);
+    for (size_t channel = 0; channel < reboundChild.size(); ++channel)
+        CHECK(std::abs(reboundParent[channel] - reboundChild[channel]) <= 2);
 }

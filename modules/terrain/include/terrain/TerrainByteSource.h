@@ -23,6 +23,8 @@
 
 namespace mir
 {
+    class TerrainReleaseLock;
+
     struct TerrainByteStats
     {
         uint64_t reads = 0;
@@ -43,6 +45,9 @@ namespace mir
 
         TerrainByteStats Stats() const;
         void ResetStats();
+
+        // The release's reader lock when this source keeps one; a handle holds it until its last copy dies.
+        virtual std::shared_ptr<const TerrainReleaseLock> Lock() const;
 
         virtual std::string Describe() const = 0;
 
@@ -68,6 +73,10 @@ namespace mir
         const std::filesystem::path &Directory() const { return mDirectory; }
         std::string Describe() const override;
 
+        // Taken by OpenTerrainRelease before it reads the index.
+        void HoldLock(std::shared_ptr<const TerrainReleaseLock> lock);
+        std::shared_ptr<const TerrainReleaseLock> Lock() const override;
+
     protected:
         std::optional<std::vector<std::byte>> DoReadAll(std::string_view file) const override;
         std::optional<std::vector<std::byte>> DoReadRange(std::string_view file, uint64_t offset,
@@ -76,6 +85,7 @@ namespace mir
 
     private:
         std::filesystem::path mDirectory;
+        std::shared_ptr<const TerrainReleaseLock> mLock;
     };
 
     // Logs every request so a test can check the exact range read.

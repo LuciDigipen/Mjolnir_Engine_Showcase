@@ -13,6 +13,7 @@
 #include <core/log/Assert.h>
 #include <terrain/RunGuarded.h>
 #include <terrain/TerrainHeightQuery.h>
+#include <terrain/TerrainLayerWeightQuery.h>
 #include <terrain/TerrainRelease.h>
 #include <terrain/TerrainScene.h>
 
@@ -36,12 +37,14 @@ namespace mir
     namespace
     {
         using Code = TerrainPackErrorCode;
+        using detail::Describe;
         using detail::Error;
         using detail::Hex;
         using SteadyClock = std::chrono::steady_clock;
         using Payload =
             std::variant<std::monostate, std::shared_ptr<const TileHeights>, std::shared_ptr<const TerrainLodSurface>,
-                         std::shared_ptr<const TerrainLodNormals>, std::shared_ptr<const TerrainRegionMesh>>;
+                         std::shared_ptr<const TerrainLodNormals>, std::shared_ptr<const TerrainRegionMesh>,
+                         std::shared_ptr<const TerrainDecodedWeights>>;
 
         double Seconds(SteadyClock::duration duration)
         {
@@ -71,6 +74,7 @@ namespace mir
             uint64_t ticket = 0;
             std::shared_ptr<const TerrainReleaseHandle> handle;
             const TerrainTileRecord *record = nullptr;
+            std::optional<TileCoord> weight;
         };
 
         struct Finished
@@ -100,6 +104,14 @@ namespace mir
             out.ticket = job.ticket;
             out.release = job.handle->Info();
             const auto start = SteadyClock::now();
+            if (job.weight)
+            {
+                if (const TerrainWeightRecord *record = job.handle->Index().FindWeight(*job.weight))
+                    out.bytesRead = record->length;
+                Keep(job.handle->ReadWeights(*job.weight), out);
+                out.readSeconds = Seconds(SteadyClock::now() - start);
+                return out;
+            }
             TerrainResult<std::vector<std::byte>> bytes = job.handle->ReadPayload(*job.record);
             const auto read = SteadyClock::now();
             out.readSeconds = Seconds(read - start);
@@ -249,6 +261,28 @@ namespace mir
             const auto *held = std::get_if<std::shared_ptr<const T>>(&payload);
             return held ? *held : nullptr;
         }
+
+        struct WeightKey
+        {
+            AssetId asset;
+            TerrainReleaseId release;
+            TileCoord tile;
+
+            bool operator==(const WeightKey &) const = default;
+        };
+
+        struct WeightKeyHash
+        {
+            size_t operator()(const WeightKey &key) const noexcept
+            {
+                size_t h = std::hash<uint64_t>{}(key.asset.value);
+                const auto mix = [&h](uint64_t v)
+                { h ^= std::hash<uint64_t>{}(v) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+                mix(key.release.value);
+                mix(std::hash<TileCoord>{}(key.tile));
+                return h;
+            }
+        };
     } // namespace
 
     TerrainPayloadKey TerrainPayloadKeyOf(const TerrainReleaseInfo &release, const TerrainTileRecord &record)
@@ -308,6 +342,8 @@ namespace mir
             bool staged = false;
             // Height-query tiles and when they were last asked for or answered from.
             std::unordered_map<TerrainPayloadKey, double> queryUses;
+            // Weight-query tiles and when they were last asked for or answered from.
+            std::unordered_map<WeightKey, double, WeightKeyHash> weightUses;
 
             bool Alive()
             {
@@ -321,6 +357,13 @@ namespace mir
                 for (const std::weak_ptr<TerrainResidentRelease> &weak : owners)
                     if (const std::shared_ptr<TerrainResidentRelease> owner = weak.lock())
                         f(owner->Query());
+            }
+
+            template <typename F> void ForEachWeightQuery(F &&f)
+            {
+                for (const std::weak_ptr<TerrainResidentRelease> &weak : owners)
+                    if (const std::shared_ptr<TerrainResidentRelease> owner = weak.lock())
+                        f(owner->WeightQuery());
             }
         };
 
@@ -350,13 +393,29 @@ namespace mir
             bool eager = false;
         };
 
+        struct WeightEntry
+        {
+            WeightKey key;
+            std::shared_ptr<ReleaseState> release;
+            TerrainPayloadState state = TerrainPayloadState::Waiting;
+            uint64_t sequence = 0;
+            // Meaningful while Loading.
+            Order queued;
+            uint32_t attempts = 0;
+            double notBefore = 0.0;
+            std::shared_ptr<const TerrainDecodedWeights> weights;
+            TerrainPackError error;
+        };
+
         TerrainStreamingSettings settings;
         std::shared_ptr<TerrainExecutor> executor;
         Clock clock;
         std::shared_ptr<WorkQueue> queue = std::make_shared<WorkQueue>();
         std::vector<std::shared_ptr<ReleaseState>> releases;
         std::unordered_map<TerrainPayloadKey, Entry> entries;
+        std::unordered_map<WeightKey, WeightEntry, WeightKeyHash> weightEntries;
         std::unordered_map<uint64_t, TerrainPayloadKey> loadingTickets;
+        std::unordered_map<uint64_t, WeightKey> weightLoadingTickets;
         std::unordered_map<TerrainInterestId, std::vector<TerrainPayloadWant>> interests;
         TerrainInterestId nextInterest = 1;
         uint64_t nextTicket = 0;
@@ -411,6 +470,113 @@ namespace mir
                 resident -= e.bytes;
         }
 
+        void PublishWeight(WeightEntry &e)
+        {
+            if (e.state == TerrainPayloadState::Ready)
+                e.release->ForEachWeightQuery(
+                    [&](TerrainLayerWeightQuery &query) { (void)query.Insert(e.release->info, e.weights); });
+            else if (e.state == TerrainPayloadState::Failed)
+                e.release->ForEachWeightQuery([&](TerrainLayerWeightQuery &query)
+                                              { (void)query.MarkFailed(e.release->info, e.key.tile, e.error); });
+        }
+
+        void DropWeight(WeightEntry &e)
+        {
+            if (e.state == TerrainPayloadState::Loading)
+            {
+                (void)queue->Remove(e.queued.ticket);
+                weightLoadingTickets.erase(e.queued.ticket);
+            }
+            else if (e.state == TerrainPayloadState::Ready)
+                ++stats.evicted;
+            e.release->ForEachWeightQuery([&](TerrainLayerWeightQuery &query) { query.Evict(e.key.tile); });
+        }
+
+        void DispatchWeight(WeightEntry &e)
+        {
+            const uint64_t ticket = ++nextTicket;
+            e.state = TerrainPayloadState::Loading;
+            e.queued = Order{TerrainDemand::Query, 0.0f, e.sequence, ticket};
+            weightLoadingTickets[ticket] = e.key;
+            queue->Push(e.queued, Job{ticket, e.release->handle, nullptr, e.key.tile});
+            executor->Post([work = queue] { work->RunOne(); });
+            ++stats.readsStarted;
+        }
+
+        void UseWeight(const std::shared_ptr<ReleaseState> &release, TerrainLayerWeightQuery &query,
+                       const TerrainLayerWeightPayloadRequest &request, double now, bool asked)
+        {
+            if (request.release != release->info.release || request.tile.asset != release->info.asset)
+                return;
+            const WeightKey key{release->info.asset, release->info.release, request.tile.coord};
+            release->weightUses[key] = now;
+            if (!asked)
+                return;
+            const auto existing = weightEntries.find(key);
+            if (existing == weightEntries.end())
+            {
+                WeightEntry entry;
+                entry.key = key;
+                entry.release = release;
+                entry.sequence = nextSequence++;
+                DispatchWeight(weightEntries.emplace(key, std::move(entry)).first->second);
+                return;
+            }
+            WeightEntry &entry = existing->second;
+            if (entry.state == TerrainPayloadState::Ready)
+                (void)query.Insert(release->info, entry.weights);
+            else if (entry.state == TerrainPayloadState::Failed)
+                (void)query.MarkFailed(release->info, key.tile, entry.error);
+        }
+
+        void AdmitWeights(double now)
+        {
+            for (auto &[key, entry] : weightEntries)
+                if (entry.state == TerrainPayloadState::Waiting && now >= entry.notBefore)
+                    DispatchWeight(entry);
+        }
+
+        void InstallWeight(Finished &finished, const WeightKey &key, double now)
+        {
+            const auto found = weightEntries.find(key);
+            if (found == weightEntries.end())
+            {
+                ++stats.discarded;
+                return;
+            }
+            WeightEntry &entry = found->second;
+            if (finished.release != entry.release->info)
+            {
+                ++stats.discarded;
+                entry.state = TerrainPayloadState::Waiting;
+                return;
+            }
+            if (finished.error.code == Code::None)
+            {
+                ++stats.readsSucceeded;
+                entry.state = TerrainPayloadState::Ready;
+                entry.weights = As<TerrainDecodedWeights>(finished.payload);
+                entry.attempts = 0;
+                entry.error = {};
+                PublishWeight(entry);
+                return;
+            }
+            ++stats.readsFailed;
+            ++entry.attempts;
+            entry.error = std::move(finished.error);
+            entry.error.message = std::format("{}: {}", Describe(entry.key.tile), entry.error.message);
+            if (entry.error.code == Code::Io && entry.attempts < settings.retry.maxAttempts)
+            {
+                ++stats.retries;
+                entry.state = TerrainPayloadState::Waiting;
+                entry.notBefore = now + RetryDelay(entry.attempts);
+                return;
+            }
+            entry.state = TerrainPayloadState::Failed;
+            entry.notBefore = now + settings.retry.failedHoldSeconds;
+            PublishWeight(entry);
+        }
+
         void Prune()
         {
             for (size_t i = 0; i < releases.size();)
@@ -430,6 +596,16 @@ namespace mir
                     }
                     Drop(it->second);
                     it = entries.erase(it);
+                }
+                for (auto it = weightEntries.begin(); it != weightEntries.end();)
+                {
+                    if (it->second.release.get() != &release)
+                    {
+                        ++it;
+                        continue;
+                    }
+                    DropWeight(it->second);
+                    it = weightEntries.erase(it);
                 }
                 releases.erase(releases.begin() + static_cast<std::ptrdiff_t>(i));
             }
@@ -467,6 +643,12 @@ namespace mir
                             Use(*release, query, request, now, true);
                         for (const TerrainPayloadRequest &used : query.TakeUsedTiles())
                             Use(*release, query, used, now, false);
+
+                        TerrainLayerWeightQuery &weights = owner->WeightQuery();
+                        for (const TerrainLayerWeightPayloadRequest &request : weights.TakePayloadRequests())
+                            UseWeight(release, weights, request, now, true);
+                        for (const TerrainLayerWeightPayloadRequest &used : weights.TakeUsedTiles())
+                            UseWeight(release, weights, used, now, false);
                     }
         }
 
@@ -549,6 +731,33 @@ namespace mir
                 for (const TerrainPayloadWant &want : wants)
                     Want(want.key, want.demand, want.rank);
 
+            for (const std::shared_ptr<ReleaseState> &release : releases)
+                for (auto it = release->weightUses.begin(); it != release->weightUses.end();)
+                {
+                    if (now - it->second < settings.residency.queryLeaseSeconds)
+                    {
+                        ++it;
+                        continue;
+                    }
+                    const WeightKey key = it->first;
+                    it = release->weightUses.erase(it);
+                    const auto entry = weightEntries.find(key);
+                    if (entry == weightEntries.end() || entry->second.state == TerrainPayloadState::Loading)
+                        continue;
+                    DropWeight(entry->second);
+                    weightEntries.erase(entry);
+                }
+            for (auto it = weightEntries.begin(); it != weightEntries.end();)
+            {
+                if (it->second.state == TerrainPayloadState::Loading || it->second.release->weightUses.contains(it->first))
+                {
+                    ++it;
+                    continue;
+                }
+                DropWeight(it->second);
+                it = weightEntries.erase(it);
+            }
+
             for (auto it = entries.begin(); it != entries.end();)
             {
                 Entry &e = it->second;
@@ -592,56 +801,63 @@ namespace mir
                 stats.readSeconds += finished.readSeconds;
                 stats.decodeSeconds += finished.decodeSeconds;
                 stats.bytesRead += finished.bytesRead;
-                const auto ticket = loadingTickets.find(finished.ticket);
-                if (ticket == loadingTickets.end())
+                if (const auto ticket = loadingTickets.find(finished.ticket); ticket != loadingTickets.end())
                 {
-                    ++stats.discarded;
-                    continue;
-                }
-                Entry &e = entries.at(ticket->second);
-                loadingTickets.erase(ticket);
-                loading -= e.bytes;
-                // Another release's bytes never become this key's payload; the key reads again.
-                if (finished.release != e.release->info)
-                {
-                    ++stats.discarded;
-                    e.state = TerrainPayloadState::Waiting;
-                    continue;
-                }
+                    Entry &e = entries.at(ticket->second);
+                    loadingTickets.erase(ticket);
+                    loading -= e.bytes;
+                    // Another release's bytes never become this key's payload; the key reads again.
+                    if (finished.release != e.release->info)
+                    {
+                        ++stats.discarded;
+                        e.state = TerrainPayloadState::Waiting;
+                        continue;
+                    }
 
-                if (finished.error.code == Code::None)
-                {
-                    ++stats.readsSucceeded;
-                    e.state = TerrainPayloadState::Ready;
-                    e.payload = std::move(finished.payload);
-                    e.attempts = 0;
-                    e.error = {};
-                    resident += e.bytes;
-                    if (const std::shared_ptr<const TileHeights> heights = As<TileHeights>(e.payload))
+                    if (finished.error.code == Code::None)
+                    {
+                        ++stats.readsSucceeded;
+                        e.state = TerrainPayloadState::Ready;
+                        e.payload = std::move(finished.payload);
+                        e.attempts = 0;
+                        e.error = {};
+                        resident += e.bytes;
+                        if (const std::shared_ptr<const TileHeights> heights = As<TileHeights>(e.payload))
+                            e.release->ForEachQuery([&](TerrainHeightQuery &query) {
+                                (void)query.Insert(e.release->info, e.key.layer, heights);
+                            });
+                        continue;
+                    }
+
+                    ++stats.readsFailed;
+                    ++e.attempts;
+                    e.error = std::move(finished.error);
+                    e.error.message = std::format("{}: {}", DescribeTerrainPayloadKey(e.key), e.error.message);
+                    // The release is immutable, so only an IO failure can go away by itself.
+                    if (e.error.code == Code::Io && e.attempts < settings.retry.maxAttempts)
+                    {
+                        ++stats.retries;
+                        e.state = TerrainPayloadState::Waiting;
+                        e.notBefore = now + RetryDelay(e.attempts);
+                        continue;
+                    }
+                    e.state = TerrainPayloadState::Failed;
+                    e.notBefore = now + settings.retry.failedHoldSeconds;
+                    if (e.key.kind == TerrainPayloadKind::Height)
                         e.release->ForEachQuery([&](TerrainHeightQuery &query) {
-                            (void)query.Insert(e.release->info, e.key.layer, heights);
+                            (void)query.MarkFailed(e.release->info, e.key.layer, e.key.coord, e.error);
                         });
                     continue;
                 }
 
-                ++stats.readsFailed;
-                ++e.attempts;
-                e.error = std::move(finished.error);
-                e.error.message = std::format("{}: {}", DescribeTerrainPayloadKey(e.key), e.error.message);
-                // The release is immutable, so only an IO failure can go away by itself.
-                if (e.error.code == Code::Io && e.attempts < settings.retry.maxAttempts)
+                if (const auto weight = weightLoadingTickets.find(finished.ticket); weight != weightLoadingTickets.end())
                 {
-                    ++stats.retries;
-                    e.state = TerrainPayloadState::Waiting;
-                    e.notBefore = now + RetryDelay(e.attempts);
+                    const WeightKey key = weight->second;
+                    weightLoadingTickets.erase(weight);
+                    InstallWeight(finished, key, now);
                     continue;
                 }
-                e.state = TerrainPayloadState::Failed;
-                e.notBefore = now + settings.retry.failedHoldSeconds;
-                if (e.key.kind == TerrainPayloadKind::Height)
-                    e.release->ForEachQuery([&](TerrainHeightQuery &query) {
-                        (void)query.MarkFailed(e.release->info, e.key.layer, e.key.coord, e.error);
-                    });
+                ++stats.discarded;
             }
         }
 
@@ -773,6 +989,7 @@ namespace mir
             Install(now);
             Restart(now);
             Admit(now);
+            AdmitWeights(now);
             stats.peakBytes = std::max(stats.peakBytes, Used());
             stats.lastUpdateSeconds = Seconds(SteadyClock::now() - started);
             stats.maxUpdateSeconds = std::max(stats.maxUpdateSeconds, stats.lastUpdateSeconds);
@@ -944,7 +1161,7 @@ namespace mir
             std::optional<std::chrono::duration<double>> timeout;
             if (retryAt)
                 timeout = std::chrono::duration<double>(std::max(0.0, *retryAt - impl.clock()));
-            if (impl.loadingTickets.empty() && !timeout)
+            if (impl.loadingTickets.empty() && impl.weightLoadingTickets.empty() && !timeout)
                 return Error(Code::Io, "release {}: Eager payloads stopped loading", Hex(release.release.value));
             impl.queue->Wait(timeout);
         }
@@ -1003,6 +1220,24 @@ namespace mir
         stats.loadingBytes = impl.loading;
         stats.overBudgetBytes = impl.Used() > stats.budgetBytes ? impl.Used() - stats.budgetBytes : 0;
         for (const auto &[key, e] : impl.entries)
+            switch (e.state)
+            {
+            case TerrainPayloadState::Waiting:
+                ++stats.waiting;
+                break;
+            case TerrainPayloadState::Loading:
+                ++stats.loading;
+                break;
+            case TerrainPayloadState::Ready:
+                ++stats.ready;
+                break;
+            case TerrainPayloadState::Failed:
+                ++stats.failed;
+                break;
+            case TerrainPayloadState::Absent:
+                break;
+            }
+        for (const auto &[key, e] : impl.weightEntries)
             switch (e.state)
             {
             case TerrainPayloadState::Waiting:

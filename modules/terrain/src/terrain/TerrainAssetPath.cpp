@@ -8,6 +8,8 @@
  */
 #include "terrain/TerrainAssetPath.h"
 
+#include <terrain/TerrainEditStore.h>
+
 #include <format>
 #include <vector>
 
@@ -91,7 +93,7 @@ namespace mir
     bool IsTerrainFileExcludedFromCook(std::string_view path)
     {
         if (EndsWithIgnoringCase(path, kTerrainRecipeSuffix) || EndsWithIgnoringCase(path, ".tindex") ||
-            EndsWithIgnoringCase(path, ".tpack"))
+            EndsWithIgnoringCase(path, ".tpack") || EndsWithIgnoringCase(path, kTerrainEditTileSuffix))
             return true;
 
         std::vector<std::string_view> segments;
@@ -106,6 +108,9 @@ namespace mir
         }
         for (size_t i = 0; i + 2 < segments.size(); ++i)
             if (EqualsIgnoringCase(segments[i], "terrain") && EqualsIgnoringCase(segments[i + 1], "releases"))
+                return true;
+        for (const std::string_view segment : segments)
+            if (EndsWithIgnoringCase(segment, kTerrainEditLayersSuffix))
                 return true;
         return false;
     }

@@ -27,7 +27,9 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace mir;
@@ -583,4 +585,113 @@ TEST_CASE("A refined Region stays drawn until every child's GPU mesh is ready", 
     CHECK(selector.Stats().missing == 0);
     CHECK(std::any_of(selector.Draws().begin(), selector.Draws().end(),
                       [](const TerrainDrawUnit &unit) { return unit.kind == TerrainUnitKind::Tile; }));
+}
+
+namespace
+{
+    std::shared_ptr<const TerrainOverlay> ResidencyOverlay(const AssetId asset, const TerrainLayout &layout,
+                                                          std::span<const TileCoord> tiles, float delta,
+                                                          uint64_t revision)
+    {
+        const int32_t n = layout.IntervalsPerTile();
+        std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>> held;
+        for (const TileCoord tile : tiles)
+        {
+            std::optional<TileHeights> heights = TileHeights::Create(tile, n);
+            REQUIRE(heights);
+            for (int32_t k = 0; k <= n; ++k)
+                for (int32_t i = 0; i <= n; ++i)
+                    heights->Set(i, k, AnalyticHeight(layout.TileFirstSample(tile.x) + i,
+                                                      layout.TileFirstSample(tile.z) + k, delta));
+            held.emplace(tile, std::make_shared<const TileHeights>(std::move(*heights)));
+        }
+        return std::make_shared<const TerrainOverlay>(asset, revision, std::move(held));
+    }
+
+    const FakeUploader::Mesh &UploadedOf(const FakeUploader &uploader, const TerrainPayloadKey &geometry,
+                                         const std::shared_ptr<const TerrainOverlay> &overlay)
+    {
+        for (const auto &[id, mesh] : uploader.meshes)
+            if (mesh.geometry == geometry && mesh.overlay == overlay)
+                return mesh;
+        FAIL("no uploaded mesh for " << DescribeTerrainPayloadKey(geometry));
+        return uploader.meshes.begin()->second;
+    }
+} // namespace
+
+TEST_CASE("An overlay builds its tile's mesh, hands over to a new snapshot and returns the release's",
+          "[terrain][gpu][overlay]")
+{
+    const Release a(0x127, {0.0, 0.0, 0.0});
+    const Payloads payloads{&a};
+    Harness h(GpuSettings(uint64_t(1) << 30, uint64_t(1) << 30, 100.0));
+    const TerrainLayout &layout = a.Index().layout;
+    const int32_t n = layout.IntervalsPerTile();
+    const TileCoord overlaid{1, 1}, plain{2, 2};
+    const TerrainPayloadKey overlaidKey = a.Tile(overlaid), plainKey = a.Tile(plain);
+    const std::vector<TerrainPayloadWant> wants{{overlaidKey, Demand::Visible, 1.0f},
+                                                {plainKey, Demand::Visible, 2.0f}};
+    const auto vertex = [n](int32_t i, int32_t k) { return size_t(k) * size_t(n + 1) + size_t(i); };
+
+    const auto first = ResidencyOverlay(a.info.asset, layout, std::span(&overlaid, 1), 5.0f, 1);
+    const TerrainSelectionInstance s1{a.resident->SharedHandle(), a.instance.placement, first};
+    h.Request({&s1, 1}, wants, payloads.streamer);
+    CHECK(h.residency.State(overlaidKey) == TerrainMeshState::Building);
+    h.BuildAll();
+    h.Request({&s1, 1}, wants, payloads.streamer);
+    h.uploader.Frame();
+    h.uploader.Frame();
+    h.residency.Install();
+    REQUIRE(h.residency.Ready(overlaidKey));
+    REQUIRE(h.residency.Ready(plainKey));
+    REQUIRE(h.uploader.uploadOrder.size() == 2);
+    const FakeUploader::Mesh &overlayMesh = UploadedOf(h.uploader, overlaidKey, first);
+    CHECK(overlayMesh.meshVertices[vertex(4, 4)].position.y ==
+          AnalyticHeight(layout.TileFirstSample(overlaid.x) + 4, layout.TileFirstSample(overlaid.z) + 4, 5.0f));
+    const FakeUploader::Mesh &releaseMesh = UploadedOf(h.uploader, plainKey, nullptr);
+    CHECK(releaseMesh.meshVertices[vertex(4, 4)].position.y ==
+          AnalyticHeight(layout.TileFirstSample(plain.x) + 4, layout.TileFirstSample(plain.z) + 4, 0.0f));
+
+    const TerrainGpuMeshId firstId = h.residency.Acquire(overlaidKey, h.now)->id;
+    const auto second = ResidencyOverlay(a.info.asset, layout, std::span(&overlaid, 1), 9.0f, 2);
+    const TerrainSelectionInstance s2{a.resident->SharedHandle(), a.instance.placement, second};
+    h.Request({&s2, 1}, wants, payloads.streamer);
+    CHECK(h.residency.State(overlaidKey) == TerrainMeshState::Building);
+    REQUIRE(h.residency.Ready(overlaidKey));
+    REQUIRE(h.residency.Acquire(overlaidKey, h.now) != nullptr);
+    CHECK(h.residency.Acquire(overlaidKey, h.now)->id == firstId);
+    h.BuildAll();
+    h.Request({&s2, 1}, wants, payloads.streamer);
+    h.uploader.Frame();
+    h.uploader.Frame();
+    h.residency.Install();
+    REQUIRE(h.residency.Ready(overlaidKey));
+    const TerrainGpuMeshId secondId = h.residency.Acquire(overlaidKey, h.now)->id;
+    CHECK(secondId != firstId);
+    CHECK(UploadedOf(h.uploader, overlaidKey, second).meshVertices[vertex(4, 4)].position.y ==
+          AnalyticHeight(layout.TileFirstSample(overlaid.x) + 4, layout.TileFirstSample(overlaid.z) + 4, 9.0f));
+    h.Request({&s2, 1}, wants, payloads.streamer);
+    CHECK(std::count(h.uploader.retired.begin(), h.uploader.retired.end(), overlaidKey) == 1);
+
+    const TerrainSelectionInstance cleared{a.resident->SharedHandle(), a.instance.placement, nullptr};
+    h.Request({&cleared, 1}, wants, payloads.streamer);
+    REQUIRE(h.residency.Ready(overlaidKey));
+    CHECK(h.residency.Acquire(overlaidKey, h.now)->id == secondId);
+    h.BuildAll();
+    h.Request({&cleared, 1}, wants, payloads.streamer);
+    h.uploader.Frame();
+    h.uploader.Frame();
+    h.residency.Install();
+    REQUIRE(h.residency.Ready(overlaidKey));
+    const TerrainGpuMeshId released = h.residency.Acquire(overlaidKey, h.now)->id;
+    CHECK(released != secondId);
+    CHECK(UploadedOf(h.uploader, overlaidKey, nullptr).meshVertices[vertex(4, 4)].position.y ==
+          AnalyticHeight(layout.TileFirstSample(overlaid.x) + 4, layout.TileFirstSample(overlaid.z) + 4, 0.0f));
+    h.Request({&cleared, 1}, wants, payloads.streamer);
+    CHECK(std::count(h.uploader.retired.begin(), h.uploader.retired.end(), overlaidKey) == 2);
+
+    h.residency.RetireReleases({});
+    CHECK(h.residency.State(overlaidKey) == TerrainMeshState::Absent);
+    CHECK_FALSE(h.residency.Ready(overlaidKey));
+    CHECK(h.uploader.retired.size() == 4);
 }

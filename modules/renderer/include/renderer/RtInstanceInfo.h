@@ -13,6 +13,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -43,13 +44,22 @@ namespace mir
         glm::vec4 modelCol0;
         glm::vec4 modelCol1;
         glm::vec4 modelCol2;
+        // The terrain words of renderer/DrawRecord.h, all zero for anything without weights.
+        uint32_t terrain[4];
     };
 
+    inline void FillRtTerrainWords(RtInstanceInfo &info, const std::array<uint32_t, 4> &terrain)
+    {
+        for (size_t i = 0; i < terrain.size(); ++i)
+            info.terrain[i] = terrain[i];
+    }
+
     static_assert(std::is_standard_layout_v<RtInstanceInfo>);
-    static_assert(sizeof(RtInstanceInfo) == 224);
+    static_assert(sizeof(RtInstanceInfo) == 240);
     static_assert(offsetof(RtInstanceInfo, alphaCutoff) == 96);
     static_assert(offsetof(RtInstanceInfo, materialRecord) == 92);
     static_assert(offsetof(RtInstanceInfo, prevModel) == 112);
     static_assert(offsetof(RtInstanceInfo, previousVertexAddress) == 104);
+    static_assert(offsetof(RtInstanceInfo, terrain) == 224);
 
 }

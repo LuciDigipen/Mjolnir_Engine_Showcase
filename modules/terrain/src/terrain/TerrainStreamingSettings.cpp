@@ -428,11 +428,21 @@ namespace mir
                 v.prefetchBudgetBytes = static_cast<uint64_t>(std::llround(bytes));
         }
 
-        const json *gpu = reader.Section("gpu", {"budgetMiB", "stagingMiB", "meshRetainSeconds"});
+        const json *gpu = reader.Section("gpu", {"budgetMiB", "stagingMiB", "meshRetainSeconds", "weightBudgetMiB"});
         TerrainStreamingSettings::Gpu &g = s.gpu;
         g.budgetBytes = bytesOf(gpu, "gpu", "budgetMiB");
         g.stagingBytes = bytesOf(gpu, "gpu", "stagingMiB");
         g.meshRetainSeconds = reader.Number(gpu, "gpu", "meshRetainSeconds").value_or(g.meshRetainSeconds);
+        // Optional, so an older settings file keeps the code's default weight budget.
+        if (gpu != nullptr && gpu->contains("weightBudgetMiB"))
+        {
+            if (const std::optional<double> mib = reader.Number(gpu, "gpu", "weightBudgetMiB"))
+            {
+                const double bytes = *mib * kBytesPerMiB;
+                if (bytes >= 0.0 && bytes < static_cast<double>(std::numeric_limits<int64_t>::max()))
+                    g.weightBudgetBytes = static_cast<uint64_t>(std::llround(bytes));
+            }
+        }
 
         const json *collision =
             reader.Section("collision", {"spacingsMeters", "maxErrorMeters", "pieceTiles", "seamOverlapMeters",

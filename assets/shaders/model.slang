@@ -2,7 +2,8 @@
 #include "SurfaceCommon.slang"
 #include "PbrCommon.slang"
 #include "ModelMaterial.slang"
-[[vk::binding(2, 0)]] ConstantBuffer<MaterialRecordRef> gModelRecordRef;
+[[vk::binding(MIR_DRAW_RECORDS_BINDING, MIR_DRAW_RECORDS_SET)]]
+StructuredBuffer<DrawRecord> gDrawRecords;
 #ifdef MIR_SSGI_SURFACE
 #include "RasterSurfaceCommon.slang"
 #endif
@@ -25,6 +26,7 @@ struct VSOutput
     float3 normal : NORMAL;
     float4 tangent : TANGENT;
     float pointSize : PSIZE;
+    nointerpolation uint baseInstance : TEXCOORD3;
 };
 struct RasterPushConstants
 {
@@ -45,7 +47,8 @@ struct RasterPushConstants
 
 #include "ModelDeformation.slang"
 
-[shader("vertex")] VSOutput vertexMain(VSInput input, uint vertex : SV_VertexID) {
+[shader("vertex")] VSOutput vertexMain(VSInput input, uint vertex : SV_VertexID,
+                                       uint baseInstance : SV_StartInstanceLocation) {
     float3 p = input.pos, n = input.normal, t = input.tangent.xyz;
     float sign = input.tangent.w;
     DeformModelVertex(vertex, p, n, t, sign);
@@ -60,6 +63,7 @@ struct RasterPushConstants
         TransformTangentFrame(mul(pushData.model, float4(1, 0, 0, 0)).xyz, mul(pushData.model, float4(0, 1, 0, 0)).xyz,
                               mul(pushData.model, float4(0, 0, 1, 0)).xyz, float4(t, sign), output.normal);
     output.pointSize = 1;
+    output.baseInstance = baseInstance;
     return output;
 }[shader("fragment")]
 #ifdef MIR_SSGI_SURFACE
@@ -82,7 +86,7 @@ struct RasterPushConstants
     context.footprintMeters = 0;
     context.incidence = 1;
     context.uvDensity = 0;
-    const SurfaceOutput surface = EvaluateModelMaterial(gModelRecordRef.offset, color, input.normal, input.tangent,
+    const SurfaceOutput surface = EvaluateModelMaterial(gDrawRecords[input.baseInstance].materialOffset, color, input.normal, input.tangent,
                                                         input.uv, material.z > 0 && !front, context);
     ShadowMapVisibility visibility;
     visibility.worldPos = input.worldPos;

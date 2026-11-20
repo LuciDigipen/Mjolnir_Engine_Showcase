@@ -47,6 +47,7 @@ struct RtInstanceInfo
     float4 modelCol0;
     float4 modelCol1;
     float4 modelCol2;
+    uint4 terrain;
 };
 
 struct ShadowPayload
@@ -220,10 +221,12 @@ typedef RayPayload SurfacePayload;
 #endif
     context.incidence = cosIncidence;
     context.uvDensity = uvDensity;
+    context.recordOffset = info.materialRecord;
 
     const M material = gSurfaceRecords.Load<M>(info.materialRecord);
     SurfaceInput surfaceInput =
         TerrainFrontend::Build(hitWorldPos, macroNormal, uv, objectPos, vertexColor, frontFace, uvDensity);
+    surfaceInput.layerWeights = TerrainLayerWeights(info.terrain, objectPos);
 #ifdef MIR_DDGI_PROBE
     surfaceInput.viewDirWS = -WorldRayDirection();
     surfaceInput.viewDistance = RayTCurrent();

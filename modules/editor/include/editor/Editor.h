@@ -18,6 +18,7 @@
 #include <core/ecs/Requests.h>
 #include <project/GameProject.h>
 #include <editor/EditorCamera.h>
+#include <editor/EditorExtension.h>
 #include <editor/EditorPreferences.h>
 #include <editor/SnapToTerrain.h>
 #include <editor/ViewPie.h>
@@ -44,6 +45,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -166,6 +168,8 @@ namespace mir
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
+        // The registration lives until it dies; extensions run in registration order.
+        Registration AddExtension(IEditorExtension &extension) { return mExtensions.Add(extension); }
         size_t ContentThumbnailCapacity() const { return mPreferences.contentThumbnailCapacity; }
 
         const std::string &ContentBrowserSelection() const { return mContentBrowserPanel.SelectedPath(); }
@@ -250,7 +254,9 @@ namespace mir
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
         void DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
-            bool prefabDocument);
+            DocumentId document);
+        EditorExtensionContext MakeExtensionContext(const EngineModeState &mode, World &world, DocumentId document,
+            ImDrawList *overlay);
         void BeginGizmoDrag(World &world, std::span<const Entity> selected);
         // Applies the pivot's change since the drag began to every target, as one merging command.
         void ApplyGizmoDrag(World &world);
@@ -333,6 +339,7 @@ namespace mir
         InputSettingsPanel mInputSettingsPanel;
         PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
+        EditorExtensions mExtensions;
         EditorCamera mCamera;
         std::map<DocumentId, EditorCamera> mDocumentCameras;
         DocumentId mCameraDocument = kSceneDocument;

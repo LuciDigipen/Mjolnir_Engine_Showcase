@@ -7,6 +7,8 @@ engine_add_module_tests(renderer
     CameraMath.tests.cpp
     DepthOfFieldEffect.tests.cpp
     DescriptorLayoutLimits.tests.cpp
+    DrawRecordAllocator.tests.cpp
+    DrawRecordLayout.tests.cpp
     FilmEffect.tests.cpp
     GpuRecords.tests.cpp
     Material.tests.cpp
@@ -27,6 +29,8 @@ engine_add_module_tests(renderer
     HdrEffect.tests.cpp
     MotionBlurEffect.tests.cpp
     RendererCapabilities.tests.cpp
+    TerrainDrawData.tests.cpp
+    TerrainMaterial.tests.cpp
     TextureTable.tests.cpp
     PostEffectRegistry.tests.cpp
     PostProcessingSettings.tests.cpp

@@ -13,9 +13,11 @@
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainRegionGrid.h>
+#include <terrain/TerrainWeights.h>
 #include <terrain/TileHeights.h>
 #include <terrain/TileKey.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -42,6 +44,9 @@ namespace mir
     // "chunk_<x>_<z>.tpack"
     std::string TerrainPackFileName(TerrainChunkCoord chunk);
 
+    // "chunk_<x>_<z>.wpack"
+    std::string TerrainWeightPackFileName(TerrainChunkCoord chunk);
+
     struct TerrainPackRecord
     {
         TerrainChunkCoord chunk;
@@ -60,6 +65,29 @@ namespace mir
     };
 
     bool TerrainLayersNest(const TerrainLayout &fine, const TerrainLayout &coarse);
+
+    // One tile's RGBA8 weight image on the reference grid; slots index weightLayers, 0xFF is unused.
+    struct TerrainWeightRecord
+    {
+        TileCoord tile;
+        uint32_t pack = 0;
+        uint64_t offset = 0;
+        uint64_t length = 0;
+        uint64_t checksum = 0;
+        std::array<uint8_t, kTerrainWeightSlots> slots{};
+    };
+
+    // One Region's RGBA8 weight image over its whole rect; side texels a side.
+    struct TerrainRegionWeightRecord
+    {
+        TerrainRegionCoord region;
+        uint32_t pack = 0;
+        uint64_t offset = 0;
+        uint64_t length = 0;
+        uint64_t checksum = 0;
+        std::array<uint8_t, kTerrainWeightSlots> slots{};
+        uint32_t side = 0;
+    };
 
     struct TerrainTileRecord
     {
@@ -138,12 +166,22 @@ namespace mir
         std::optional<TerrainRegionGrid> regionGrid;
         // Every Region of regionGrid, in its ordinal order.
         std::vector<TerrainTileRecord> regions;
+        // Layer names the weight records' slots index, in table order.
+        std::vector<std::string> weightLayers;
+        uint64_t weightsFingerprint = 0;
+        std::vector<TerrainPackRecord> weightPacks;
+        // One per weighted tile, in (z, x) order.
+        std::vector<TerrainWeightRecord> weights;
+        // One per Region of regionGrid, in ordinal order; empty without a Region grid or weights.
+        std::vector<TerrainRegionWeightRecord> regionWeights;
 
         const TerrainTileRecord *Find(TileCoord tile) const;
         // Kind Region names a Region by its x, z in tile and its level, with layer 0.
         const TerrainTileRecord *Find(TileCoord tile, uint32_t layer,
                                       TerrainPayloadKind kind = TerrainPayloadKind::Height, uint32_t level = 0) const;
         const TerrainTileRecord *FindRegion(TerrainRegionCoord region) const;
+        const TerrainWeightRecord *FindWeight(TileCoord tile) const;
+        const TerrainRegionWeightRecord *FindRegionWeight(TerrainRegionCoord region) const;
     };
 
     uint64_t TerrainRecordsHeightsHash(std::span<const TerrainTileRecord> records);
@@ -156,4 +194,28 @@ namespace mir
     // Checks length, checksum, finite samples and min/max against the record.
     TerrainResult<TileHeights> DecodeTerrainTile(const TerrainIndex &index, const TerrainTileRecord &record,
                                                  std::span<const std::byte> payload);
+
+    struct TerrainDecodedWeights
+    {
+        TileCoord tile;
+        int32_t intervals = 0;
+        std::array<uint8_t, kTerrainWeightSlots> slots{};
+        // The name of each used slot; empty for an unused one.
+        std::array<std::string, kTerrainWeightSlots> layers;
+        // (intervals + 1)^2 RGBA texels, row-major x fastest.
+        std::vector<std::byte> bytes;
+    };
+
+    // Checks the record's layer slots, the payload length, the checksum and every texel's byte rules.
+    TerrainResult<TerrainDecodedWeights> DecodeTerrainWeightPayload(const TerrainIndex &index,
+                                                                    const TerrainWeightRecord &record,
+                                                                    std::span<const std::byte> payload);
+
+    // The Region image's slot and texel rules, reported with the same shape as a tile's.
+    TerrainResult<TerrainDecodedWeights> DecodeTerrainRegionWeightPayload(const TerrainIndex &index,
+                                                                          const TerrainRegionWeightRecord &record,
+                                                                          std::span<const std::byte> payload);
+
+    // Converts the channels of each used slot to [0, 1] weights.
+    TerrainWeightTile ExpandTerrainWeights(const TerrainDecodedWeights &decoded);
 }

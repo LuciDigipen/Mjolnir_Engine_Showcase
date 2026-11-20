@@ -282,10 +282,18 @@ namespace mir
                          MiB(gpu.stagingBytes));
         mUploader = std::make_unique<TerrainGpuUploader>(renderer);
         mMeshes = std::make_unique<TerrainMeshResidency>(gpu, mPool, *mUploader);
+        const SamplerDesc weightSampler{.magFilter = VK_FILTER_LINEAR,
+                                        .minFilter = VK_FILTER_LINEAR,
+                                        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE};
+        mWeights = std::make_unique<TerrainWeightResidency>(gpu, mPool, renderer,
+                                                            renderer.MaterialSamplerRow(weightSampler));
         MIR_LOG_INFO("Terrain GPU meshes: {:.0f} MiB budget, {:.1f} MiB uploaded a frame through a {:.1f} MiB staging "
-                     "ring, kept {} s after their last want or draw",
+                     "ring, kept {} s after their last want or draw; {:.0f} MiB of weight textures",
                      MiB(gpu.budgetBytes), MiB(renderer.UploadFrameBudget()),
-                     MiB(renderer.MeshStreaming().desc.stagingBytes), gpu.meshRetainSeconds);
+                     MiB(renderer.MeshStreaming().desc.stagingBytes), gpu.meshRetainSeconds,
+                     MiB(gpu.weightBudgetBytes));
     }
 
     TerrainStreamer *TerrainRuntime::Streamer() const
@@ -335,6 +343,8 @@ namespace mir
         }
         if (mMeshes)
             mMeshes->ApplySettings(next.gpu);
+        if (mWeights)
+            mWeights->ApplySettings(next.gpu);
         if (mCollision)
             mCollision->ApplySettings(next.collision);
         mSeenSettings = next;
@@ -356,12 +366,18 @@ namespace mir
         // A completed material load moves the library generation outside Edit too.
         if (mSurfaceMaterials != nullptr)
         {
-            for (InstanceResources &resources : mResources)
-                ResolveBinding(resources);
+            const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
+            for (size_t i = 0; i < mResources.size() && i < instances.size(); ++i)
+            {
+                ResolveBinding(mResources[i]);
+                SyncMaterialSlots(mResources[i], instances[i]);
+            }
             mSurfaceMaterials->AcknowledgeGeneration(0, mSurfaceMaterials->Generation());
         }
         if (mMeshes)
             mMeshes->Install();
+        if (mWeights)
+            mWeights->Install(Now());
         if (mCollision && streamer)
         {
             // No step runs between frames, so colliders may change here.
@@ -416,6 +432,16 @@ namespace mir
     {
         if (!Bound() || !mSwitch)
             return;
+        TerrainWorld &world = mWorld->Resource<TerrainWorld>();
+        std::vector<TerrainIssue> overlayIssues;
+        if (const size_t applied = mPlayOverlays.Apply(world, overlayIssues); applied != 0)
+        {
+            SyncCollisionOverlays(world);
+            if (mGround)
+                mGround->Invalidate();
+        }
+        for (const TerrainIssue &issue : overlayIssues)
+            MIR_LOG_WARN("{}", issue.message);
         for (const TerrainWorld::AssetState &asset : mWorld->Resource<TerrainWorld>().Assets())
             if (asset.release)
                 MIR_LOG_INFO("Terrain '{}' (asset {:016x}): Play pins release {:016x}", asset.logicalPath,
@@ -430,6 +456,42 @@ namespace mir
         ApplyResidencies();
     }
 
+    TerrainOverlayApplyResult TerrainRuntime::SetTerrainOverlay(AssetId asset,
+                                                               std::shared_ptr<const TerrainOverlay> overlay)
+    {
+        if (!Bound())
+            return {false, "Terrain is not bound to a World."};
+        if (IsPlaying(*mWorld))
+            return {false, "Play keeps one base and overlay revision; stop Play to change the overlay."};
+        TerrainOverlayApplyResult applied = mWorld->Resource<TerrainWorld>().SetOverlay(asset, overlay);
+        if (applied.applied)
+        {
+            if (mCollision)
+                mCollision->SetOverlay(asset, std::move(overlay));
+            if (mGround)
+                mGround->Invalidate();
+        }
+        return applied;
+    }
+
+    void TerrainRuntime::OfferPlayOverlays(const TerrainWorld &source)
+    {
+        for (const TerrainWorld::AssetState &asset : source.Assets())
+            if (asset.overlay)
+                mPlayOverlays.Offer(asset.asset, asset.logicalPath, asset.overlay);
+    }
+
+    bool TerrainRuntime::SetInstanceMaterialLayers(Entity entity, std::span<const uint8_t> layers)
+    {
+        for (InstanceResources &resources : mResources)
+            if (resources.entity == entity)
+            {
+                resources.slotTable.Set(layers);
+                return true;
+            }
+        return false;
+    }
+
     void TerrainRuntime::ForgetMeshes()
     {
         if (!Bound())
@@ -441,6 +503,8 @@ namespace mir
             mMeshes->RetireAll();
             mMeshes->Forget();
         }
+        if (mWeights)
+            mWeights->RetireAll();
         for (ViewState &view : mViews)
             view.draws.clear();
     }
@@ -503,6 +567,7 @@ namespace mir
         if (next.SameDerivedState(current))
         {
             current = std::move(next);
+            SyncCollisionOverlays(current);
             if (mGround)
                 mGround->Invalidate();
             return;
@@ -528,6 +593,7 @@ namespace mir
 
         mResources = Build(next);
         current = std::move(next);
+        SyncCollisionOverlays(current);
         if (mGround)
             mGround->Invalidate();
         ApplyResidencies();
@@ -654,6 +720,9 @@ namespace mir
         }
         for (InstanceResources &resources : mResources)
             ResolveBinding(resources);
+        const std::span<const TerrainInstanceState> instances = world.Instances();
+        for (size_t i = 0; i < mResources.size() && i < instances.size(); ++i)
+            SyncMaterialSlots(mResources[i], instances[i]);
 
         std::vector<SurfaceMaterialUse> uses;
         for (const InstanceResources &resources : mResources)
@@ -667,6 +736,7 @@ namespace mir
         if (!mSurfaceMaterials || instance.materialPath.empty())
         {
             instance.material = kNullMaterial;
+            instance.materialLayerNames.clear();
             instance.materialGeneration = mSurfaceMaterials ? mSurfaceMaterials->Generation() : 0;
             return;
         }
@@ -675,6 +745,7 @@ namespace mir
 
         instance.materialGeneration = mSurfaceMaterials->Generation();
         instance.material = kNullMaterial;
+        instance.materialLayerNames.clear();
         const auto baseLayer = std::find_if(instance.materialLayers.begin(), instance.materialLayers.end(),
             [](const TerrainMaterialLayer &layer) { return layer.name == "base"; });
         if (instance.materialLayers.size() != 1 || baseLayer == instance.materialLayers.end() ||
@@ -711,6 +782,17 @@ namespace mir
             return;
         }
         instance.material = resolution.binding->material;
+        instance.materialLayerNames = resolution.binding->layers;
+    }
+
+    void TerrainRuntime::SyncMaterialSlots(InstanceResources &instance, const TerrainInstanceState &state)
+    {
+        const std::vector<std::string> &releaseLayers = state.release->Handle().Index().weightLayers;
+        if (!instance.materialSlots.Update(releaseLayers, instance.materialLayerNames))
+            return;
+        instance.slotTable.Set(instance.materialSlots.Layers());
+        if (const std::string message = instance.materialSlots.ReportOnce(instance.materialPath); !message.empty())
+            Report(message);
     }
 
     bool TerrainRuntime::HasMeshPayloads(const TerrainInstanceState &instance)
@@ -720,6 +802,14 @@ namespace mir
             return true;
         Report(std::format("Terrain '{}': {}; the instance is not loaded", instance.recipePath, missing));
         return false;
+    }
+
+    void TerrainRuntime::SyncCollisionOverlays(const TerrainWorld &world)
+    {
+        if (!mCollision)
+            return;
+        for (const TerrainWorld::AssetState &asset : world.Assets())
+            mCollision->SetOverlay(asset.asset, asset.overlay);
     }
 
     void TerrainRuntime::ApplyResidencies()
@@ -1056,10 +1146,22 @@ namespace mir
             mUploader->SetRayTracing(rayTracing);
         }
 
-        for (const TerrainInstanceState &instance : mWorld->Resource<TerrainWorld>().Instances())
-            mSelection.push_back({instance.release->SharedHandle(), instance.placement});
+        const TerrainWorld &world = mWorld->Resource<TerrainWorld>();
+        for (const TerrainInstanceState &instance : world.Instances())
+        {
+            std::shared_ptr<const TerrainOverlay> overlay;
+            for (const TerrainWorld::AssetState &asset : world.Assets())
+                if (asset.asset == instance.placement.asset)
+                {
+                    overlay = asset.overlay;
+                    break;
+                }
+            mSelection.push_back({instance.release->SharedHandle(), instance.placement, std::move(overlay)});
+        }
         const TerrainUnitReady ready = Ready();
         mFrameWants.clear();
+        if (mWeights)
+            mWeights->BeginRequest();
 
         // A staged release in place of each loaded one of its asset, selected but never drawn.
         std::map<uint64_t, std::vector<TerrainSelectionInstance>> staged;
@@ -1195,7 +1297,8 @@ namespace mir
 
     void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain)
     {
-        const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
+        const TerrainWorld &world = mWorld->Resource<TerrainWorld>();
+        const std::span<const TerrainInstanceState> instances = world.Instances();
         for (const TerrainDrawUnit &unit : units)
         {
             if (unit.instance >= instances.size())
@@ -1204,10 +1307,30 @@ namespace mir
                 : mMeshes->FindReady(unit.geometry);
             if (!mesh)
                 continue;
+            const TerrainInstanceState &instance = instances[unit.instance];
+            const TerrainSlotTable *slots =
+                unit.instance < mResources.size() ? &mResources[unit.instance].slotTable : nullptr;
+            const TerrainWeightUnit key{instance.release->Info().asset, unit.kind,
+                                         unit.kind == TerrainUnitKind::Region ? unit.geometry.level : 0u,
+                                         unit.geometry.coord};
+            std::shared_ptr<const TerrainOverlay> overlay;
+            for (const TerrainWorld::AssetState &asset : world.Assets())
+                if (asset.asset == instance.placement.asset)
+                {
+                    overlay = asset.overlay;
+                    break;
+                }
+            std::array<uint32_t, 4> terrain{};
+            if (mWeights && slots)
+            {
+                mWeights->Request({instance.release->SharedHandle(), key,
+                                   static_cast<float>(unit.distance), std::move(overlay)});
+                terrain = mWeights->Words(key, *slots);
+            }
             const MaterialHandle material =
                 unit.instance < mResources.size() ? mResources[unit.instance].material : kNullMaterial;
             if (std::optional<WorldDrawItem> draw =
-                    MakeTerrainDraw(*mesh, instances[unit.instance].placement, material))
+                    MakeTerrainDraw(*mesh, instance.placement, material, kTerrainDiagnosticTint, terrain))
                 out.push_back(*draw);
         }
     }
@@ -1249,6 +1372,8 @@ namespace mir
             "uploading, {} building or built",
             s.drawnTiles, s.drawnRegions, levels, s.coarserFallbacks, s.otherFallbacks, s.missing, s.visibleWants,
             s.prefetchWants, MiB(s.prefetchBytes), s.prefetchDropped, m.ready, m.uploading, m.building + m.built);
+        if (mWeights)
+            summary += std::format("; {} Region weight images resident", mWeights->Stats().residentRegions);
         if (summary == view.logged)
             return;
         view.logged = std::move(summary);

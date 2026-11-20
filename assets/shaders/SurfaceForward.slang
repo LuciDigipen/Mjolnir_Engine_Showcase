@@ -28,6 +28,7 @@ struct SurfaceVSOutput
     float2 uv : TEXCOORD1;
     float4 color : COLOR;
     float3 localPos : TEXCOORD2;
+    nointerpolation uint baseInstance : TEXCOORD3;
 };
 
 struct RasterPushConstants
@@ -41,9 +42,12 @@ struct RasterPushConstants
 
 [[vk::push_constant]] RasterPushConstants pushData;
 
-[[vk::binding(2, 0)]] ConstantBuffer<MaterialRecordRef> gMaterialRecordRef;
+[[vk::binding(MIR_DRAW_RECORDS_BINDING, MIR_DRAW_RECORDS_SET)]]
+StructuredBuffer<DrawRecord> gDrawRecords;
 
-[shader("vertex")] SurfaceVSOutput vertexMain(SurfaceVSInput input) {
+[shader("vertex")]
+SurfaceVSOutput vertexMain(SurfaceVSInput input, uint baseInstance : SV_StartInstanceLocation)
+{
     SurfaceVSOutput output;
     const float4 worldPos = mul(pushData.model, float4(input.pos, 1.0));
     output.position = mul(viewProj, worldPos);
@@ -57,6 +61,7 @@ struct RasterPushConstants
     output.uv = input.uv;
     output.color = float4(input.color, input.alpha);
     output.localPos = input.pos;
+    output.baseInstance = baseInstance;
     return output;
 }
 
@@ -68,7 +73,8 @@ struct RasterPushConstants
     : SV_Target
 #endif
 {
-    const M material = gSurfaceRecords.Load<M>(gMaterialRecordRef.offset);
+    const DrawRecord record = gDrawRecords[input.baseInstance];
+    const M material = gSurfaceRecords.Load<M>(record.materialOffset);
 
     MaterialContext context;
     context.rayTraced = false;
@@ -77,6 +83,7 @@ struct RasterPushConstants
     context.footprintMeters = 0.0;
     context.incidence = 1.0;
     context.uvDensity = 0.0;
+    context.recordOffset = record.materialOffset;
 
     const SurfaceInput surfaceInput = MeshFrontend::Build(input.worldPos, normalize(input.normal), input.tangent,
                                                           input.uv, input.localPos, input.color, frontFace);

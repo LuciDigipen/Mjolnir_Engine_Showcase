@@ -11,6 +11,7 @@
 #include <TerrainBake.h>
 #include <TerrainCandidate.h>
 #include <TerrainGenerator.h>
+#include <TerrainValidate.h>
 
 #include <terrain/TerrainPackWriter.h>
 #include <terrain/TerrainRelease.h>
@@ -295,6 +296,170 @@ TEST_CASE("An invalid recipe or asset path fails before anything is written", "[
         REQUIRE(args.size() == 1);
         CHECK(args[0].field == "--id-root");
     }
+    CHECK_FALSE(fs::exists(out));
+    for (const std::string &name : FileNames(scratch.path))
+        CHECK(name.find(".partial") == std::string::npos);
+}
+
+TEST_CASE("Edit layers are composited into the final heights before anything is derived",
+          "[terraintool][bake][edits]")
+{
+    ScratchDir scratch("bake_edits");
+    const fs::path recipePath = CopyExampleRecipe(scratch.path);
+    const TerrainRecipe plain = LoadExample();
+    const TerrainLayout &layout = plain.layout;
+
+    const std::vector<std::pair<GlobalSampleIndex, float>> edits{
+        {{layout.TileFirstSample(-1) + 5, layout.TileFirstSample(-1) + 7}, 3.5f},
+        {{layout.TileFirstSample(0), layout.TileFirstSample(-1) + 3}, -2.25f},
+        {{layout.TileFirstSample(0), layout.TileFirstSample(0)}, 1.75f}};
+    TerrainEditLayer layer = AdditiveEditLayer("touch-up");
+    for (const auto &[sample, value] : edits)
+        SetTerrainEditSample(layer, layout, sample, value);
+    REQUIRE(layer.tiles.size() == 4);
+    WriteEditLayers(recipePath, std::span(&layer, 1));
+
+    const RecipeParseResult loaded = LoadTerrainRecipe(recipePath);
+    for (const RecipeIssue &issue : loaded.issues)
+        UNSCOPED_INFO(issue.field << ": " << issue.message);
+    REQUIRE(loaded.recipe);
+    CHECK(loaded.recipe->editStackHash != 0);
+
+    const fs::path out = scratch.path / "candidate";
+    TerrainBakeRequest request = ExampleRequest(out);
+    request.recipePath = recipePath;
+    const TerrainReport report = RunTerrainBake(request);
+    CheckAllPassed(report);
+    CHECK(report.Status(check::kEdges) == CheckStatus::Passed);
+    CHECK(report.Status(check::kCorners) == CheckStatus::Passed);
+    REQUIRE(report.recipeFingerprint);
+    CHECK(*report.recipeFingerprint != FingerprintRecipe(plain));
+    for (const TerrainCheck &c : report.checks)
+        if (c.name == check::kRecipe)
+            CHECK(c.detail.find("edits:") != std::string::npos);
+
+    const TerrainResult<TerrainReleaseHandle> opened =
+        TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(out));
+    REQUIRE(opened);
+    std::vector<TileHeights> baked;
+    for (const TerrainTileRecord &record : opened.value->Index().tiles)
+        if (record.source)
+        {
+            TerrainResult<TileHeights> tile = opened.value->ReadTileRecord(record);
+            REQUIRE(tile);
+            baked.push_back(std::move(*tile.value));
+        }
+    REQUIRE(baked.size() == 4);
+
+    TerrainReport plainReport("plain", {check::kGenerate});
+    std::optional<std::vector<TileHeights>> plainTiles = BakeFinalHeights(plain, plainReport);
+    REQUIRE(plainTiles);
+    for (const TileHeights &tile : baked)
+    {
+        const TileHeights &base = TileAt(*plainTiles, tile.Tile());
+        const int64_t firstX = layout.TileFirstSample(tile.Tile().x);
+        const int64_t firstZ = layout.TileFirstSample(tile.Tile().z);
+        const int32_t n = tile.IntervalsPerTile();
+        for (int32_t k = 0; k <= n; ++k)
+            for (int32_t i = 0; i <= n; ++i)
+            {
+                float expected = base.At(i, k);
+                for (const auto &[sample, value] : edits)
+                    if (sample == GlobalSampleIndex{firstX + i, firstZ + k})
+                        expected += value;
+                CHECK(std::bit_cast<uint32_t>(tile.At(i, k)) == std::bit_cast<uint32_t>(expected));
+            }
+    }
+
+    TerrainValidateRequest validate;
+    validate.candidateDir = out;
+    validate.recipePath = recipePath;
+    const TerrainReport validated = RunTerrainValidate(validate);
+    for (const TerrainDiagnostic &d : validated.diagnostics)
+        UNSCOPED_INFO(FormatDiagnostic(d));
+    CHECK(validated.Status(check::kEdges) == CheckStatus::Passed);
+    CHECK(validated.Status(check::kCorners) == CheckStatus::Passed);
+    CHECK(validated.Ok());
+}
+
+TEST_CASE("A layers directory with no enabled tile bakes exactly as the unedited recipe",
+          "[terraintool][bake][edits]")
+{
+    ScratchDir scratch("bake_edits_disabled");
+    const fs::path recipePath = CopyExampleRecipe(scratch.path);
+    const TerrainRecipe plain = LoadExample();
+    TerrainEditLayer layer = AdditiveEditLayer("off", 0, false);
+    SetTerrainEditSample(layer, plain.layout,
+                         {plain.layout.TileFirstSample(-1) + 6, plain.layout.TileFirstSample(-1) + 6}, 5.0f);
+    REQUIRE_FALSE(layer.tiles.empty());
+    WriteEditLayers(recipePath, std::span(&layer, 1));
+
+    TerrainBakeRequest request = ExampleRequest(scratch.path / "candidate");
+    request.recipePath = recipePath;
+    const TerrainReport report = RunTerrainBake(request);
+    CheckAllPassed(report);
+    const TerrainReport plainReport = RunTerrainBake(ExampleRequest(scratch.path / "plain"));
+    CheckAllPassed(plainReport);
+    CHECK(report.recipeFingerprint == plainReport.recipeFingerprint);
+    CHECK(report.heightsHash == plainReport.heightsHash);
+    REQUIRE(report.release);
+    REQUIRE(plainReport.release);
+    CHECK(report.release->release == plainReport.release->release);
+}
+
+TEST_CASE("A bad edit layer store fails the recipe check and writes nothing", "[terraintool][bake][edits]")
+{
+    ScratchDir scratch("bake_edits_refuse");
+    const fs::path out = scratch.path / "candidate";
+
+    SECTION("a corrupt tile file")
+    {
+        const fs::path recipePath = CopyExampleRecipe(scratch.path);
+        const TerrainRecipe plain = LoadExample();
+        TerrainEditLayer layer = AdditiveEditLayer("touch-up");
+        SetTerrainEditSample(layer, plain.layout,
+                             {plain.layout.TileFirstSample(-1) + 3, plain.layout.TileFirstSample(-1) + 3}, 1.0f);
+        WriteEditLayers(recipePath, std::span(&layer, 1));
+        const fs::path tileFile = TerrainEditLayersDir(recipePath) /
+                                  TerrainEditLayerDirName(layer.info.sequence) / TerrainEditTileFileName({-1, -1});
+        const std::vector<std::byte> junk{std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
+        WriteFile(tileFile, junk);
+
+        TerrainBakeRequest request = ExampleRequest(out);
+        request.recipePath = recipePath;
+        const TerrainReport report = RunTerrainBake(request);
+        const std::vector<TerrainDiagnostic> issues = DiagnosticsOf(report, check::kRecipe);
+        REQUIRE(issues.size() == 1);
+        CHECK(issues[0].field == "edits");
+        CHECK(issues[0].message.find("tile_-1_-1.tedit") != std::string::npos);
+        CHECK(report.Status(check::kGenerate) == CheckStatus::Skipped);
+        CHECK(report.Status(check::kWrite) == CheckStatus::Skipped);
+    }
+    SECTION("a layer tile on a coarser source tile")
+    {
+        const fs::path recipePath = CopyRecipeFixture("mixed-2x2.terrain.json", scratch.path / "mixed");
+        const RecipeParseResult mixed = LoadTerrainRecipe(recipePath);
+        for (const RecipeIssue &issue : mixed.issues)
+            UNSCOPED_INFO(issue.field << ": " << issue.message);
+        REQUIRE(mixed.recipe);
+        TerrainEditLayer layer = AdditiveEditLayer("coarse");
+        SetTerrainEditSample(layer, mixed.recipe->layout,
+                             {mixed.recipe->layout.TileFirstSample(0) + 2,
+                              mixed.recipe->layout.TileFirstSample(-1) + 2},
+                             1.0f);
+        WriteEditLayers(recipePath, std::span(&layer, 1));
+
+        TerrainBakeRequest request = ExampleRequest(out);
+        request.recipePath = recipePath;
+        const TerrainReport report = RunTerrainBake(request);
+        const std::vector<TerrainDiagnostic> issues = DiagnosticsOf(report, check::kRecipe);
+        REQUIRE(issues.size() == 1);
+        CHECK(issues[0].field == "edits");
+        CHECK(issues[0].message.find("(0, -1)") != std::string::npos);
+        CHECK(report.Status(check::kGenerate) == CheckStatus::Skipped);
+        CHECK(report.Status(check::kWrite) == CheckStatus::Skipped);
+    }
+
     CHECK_FALSE(fs::exists(out));
     for (const std::string &name : FileNames(scratch.path))
         CHECK(name.find(".partial") == std::string::npos);

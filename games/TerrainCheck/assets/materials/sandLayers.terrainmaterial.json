@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "blend": "height",
+  "heightContrast": 0.1,
+  "layers": [
+    { "name": "sand", "material": "materials/icelandicSand.material.json" },
+    { "name": "dark_sand", "material": "materials/icelandicSandDark.material.json" }
+  ]
+}

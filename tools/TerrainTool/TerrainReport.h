@@ -24,8 +24,11 @@
 
 namespace mir::terrainbake
 {
-    // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package.
-    inline constexpr uint32_t kTerrainToolVersion = 9;
+    // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package. 10: prune.
+    // 11: sync keeps the base heights cache. 12: material weight payloads. 13: Region weight images.
+    // 14: sync keeps the base weights cache. 15: package honors release reader locks.
+    // 16: recipe loading detects interrupted Edit Layer saves.
+    inline constexpr uint32_t kTerrainToolVersion = 16;
     inline constexpr uint32_t kTerrainReportVersion = 6;
 
     // In report order.
@@ -54,6 +57,8 @@ namespace mir::terrainbake
         inline constexpr std::string_view kVerify = "verify";
         inline constexpr std::string_view kRename = "rename";
         inline constexpr std::string_view kPointer = "pointer";
+        inline constexpr std::string_view kBase = "base";
+        inline constexpr std::string_view kBaseWeights = "baseWeights";
         inline constexpr std::string_view kPrune = "prune";
     }
 

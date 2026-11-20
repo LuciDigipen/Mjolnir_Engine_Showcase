@@ -160,7 +160,7 @@ namespace mir
             out.push_back(DrawItem{ item.mesh, *model, item.normalMatrix, item.tint, item.material,
                 item.deformation, item.transparent, previousModel.value_or(*model),
                 cut || item.previousDeformation.empty() ? item.deformation : item.previousDeformation,
-                item.settledDeformation });
+                item.settledDeformation, item.terrain });
         }
 
         std::stable_sort(out.begin(), out.end(),

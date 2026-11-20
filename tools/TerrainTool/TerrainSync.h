@@ -37,10 +37,12 @@ namespace mir::terrainbake
         std::optional<TerrainPublishFault> fault;
     };
 
-    // Empty when current matches and has runtime source-layer LOD/normal records and this tool's Regions.
-    // Reads the index and stats the packs only.
+    // Empty when current matches both fingerprints and has runtime source-layer LOD/normal records and this
+    // tool's Regions. Reads the index and stats the packs only. A null weight fingerprint expects no weight
+    // section.
     std::optional<std::string> TerrainCurrentMismatch(const std::filesystem::path &releasesRoot, AssetId asset,
                                                       TerrainSourceFingerprint fingerprint,
+                                                      TerrainSourceFingerprint weightsFingerprint,
                                                       std::optional<TerrainReleaseId> &current,
                                                       std::optional<TerrainReleaseHandle> *opened = nullptr);
 

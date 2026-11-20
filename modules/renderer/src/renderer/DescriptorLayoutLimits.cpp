@@ -16,30 +16,29 @@ namespace mir
 {
     namespace
     {
-        // Raster: the legacy sets plus the shared table; fragment also writes color.
+        // Raster: the legacy sets, the shared table and the draw records; fragment also writes color.
         DescriptorUsage RasterUsage()
         {
             constexpr uint32_t combinedImages =
                 vk::kMaterialSetCombinedImages + vk::kShadowSetCombinedImages;
             constexpr uint32_t fragmentStorageBuffers =
                 vk::kCameraSetStorageBuffers + vk::kModelSetStorageBuffers +
-                vk::kShadowSetStorageBuffers + 1;
+                vk::kShadowSetStorageBuffers + vk::kMaterialTableSetStorageBuffers +
+                vk::kDrawRecordSetStorageBuffers;
 
             return DescriptorUsage{
                 .mBoundSets = vk::kRasterPipelineSetCount,
                 .mPerStageSamplers = combinedImages + vk::kMaxSharedSamplers,
                 .mPerStageSampledImages = combinedImages + vk::kMaxSharedImages,
-                .mPerStageUniformBuffers = vk::kMaterialSetRecordUniformBuffers + vk::kCameraSetUniformBuffers,
+                .mPerStageUniformBuffers = vk::kCameraSetUniformBuffers,
                 .mPerStageStorageBuffers = std::max(vk::kModelSetStorageBuffers + 1, fragmentStorageBuffers),
                 .mPerStageStorageImages = 0,
                 .mPerStageResources = combinedImages + vk::kMaxSharedImages +
-                    vk::kMaterialSetRecordUniformBuffers + vk::kCameraSetUniformBuffers +
-                    fragmentStorageBuffers + 1,
+                    vk::kCameraSetUniformBuffers + fragmentStorageBuffers + 1,
                 .mLayoutSamplers = combinedImages + vk::kMaxSharedSamplers,
                 .mLayoutSampledImages = combinedImages + vk::kMaxSharedImages,
-                .mLayoutUniformBuffers = vk::kMaterialSetRecordUniformBuffers + vk::kCameraSetUniformBuffers,
-                .mLayoutDynamicUniformBuffers =
-                    vk::kMaterialSetRecordUniformBuffers + vk::kCameraSetUniformBuffers,
+                .mLayoutUniformBuffers = vk::kCameraSetUniformBuffers,
+                .mLayoutDynamicUniformBuffers = vk::kCameraSetUniformBuffers,
                 .mLayoutStorageBuffers = fragmentStorageBuffers,
                 .mLayoutDynamicStorageBuffers = 0,
                 .mLayoutStorageImages = 0 };

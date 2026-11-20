@@ -12,6 +12,7 @@ engine_add_module_tests(editor
     ContentThumbnails.tests.cpp
     DocumentNodeCommands.tests.cpp
     EditorCamera.tests.cpp
+    EditorExtension.tests.cpp
     EntityCommands.tests.cpp
     EntityDragPayload.tests.cpp
     History.tests.cpp

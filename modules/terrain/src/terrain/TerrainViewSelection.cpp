@@ -8,6 +8,7 @@
  */
 #include "terrain/TerrainViewSelection.h"
 
+#include <terrain/TerrainOverlayMesh.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainRegionGrid.h>
 
@@ -85,6 +86,14 @@ namespace mir
             // No cull volumes means all resident RT coverage.
             return !volumes.empty() && std::all_of(volumes.begin(), volumes.end(), [&](const LocalCullVolume &volume)
                 { return Outside(volume.planes, Shifted(box, volume.origin)); });
+        }
+
+        bool Holds(const std::shared_ptr<const TerrainOverlay> &overlay, TileCoord tile)
+        {
+            if (!overlay)
+                return false;
+            const std::shared_ptr<const TileHeights> *held = overlay->Find(tile);
+            return held && *held;
         }
     } // namespace
 
@@ -178,6 +187,8 @@ namespace mir
             uint32_t roots = 0;
             // Set by the frustum pass.
             std::vector<uint8_t> inView;
+            // Every Region whose area holds an overlay tile.
+            std::unordered_set<TerrainRegionCoord> overlayRegions;
         };
 
         // What the frustum pass records besides draws.
@@ -316,6 +327,25 @@ namespace mir
                 PlanNode(inst, at, refined, levels);
         }
 
+        void PlanOverlayRegions(Instance &inst) const
+        {
+            inst.overlayRegions.clear();
+            const TerrainIndex &index = inst.input.release->Index();
+            if (!inst.input.overlay || !index.regionGrid)
+                return;
+            for (const auto &[tile, heights] : inst.input.overlay->Tiles())
+            {
+                if (!heights || !index.layout.Contains(tile) || !index.Find(tile))
+                    continue;
+                std::optional<TerrainRegionCoord> region = index.regionGrid->Containing(0, tile);
+                while (region)
+                {
+                    inst.overlayRegions.insert(*region);
+                    region = index.regionGrid->Parent(*region);
+                }
+            }
+        }
+
         void PlanNode(Instance &inst, uint32_t at, std::unordered_set<TerrainRegionCoord> &refined,
                       std::unordered_map<TileCoord, uint32_t> &levels)
         {
@@ -334,9 +364,10 @@ namespace mir
             node.error = Error(record ? record->maxDeviation : std::optional<double>(), node.distance);
             node.beyondFar = Beyond(node.distance);
             node.wasRefined = inst.state->refined.contains(region);
+            const bool overlaid = inst.overlayRegions.contains(region);
             const bool refine =
-                !node.beyondFar && (!record || (node.wasRefined ? node.error >= settings.mergeErrorPixels
-                                                                : node.error > settings.refineErrorPixels));
+                overlaid || (!node.beyondFar && (!record || (node.wasRefined ? node.error >= settings.mergeErrorPixels
+                                                                           : node.error > settings.refineErrorPixels)));
             if (refine)
             {
                 node.firstChild = uint32_t(inst.nodes.size());
@@ -370,6 +401,13 @@ namespace mir
                 return;
             const uint32_t count = uint32_t(info.lods.size());
             const auto error = [&](uint32_t level) { return Error(info.lods[level]->maxDeviation, node.distance); };
+            if (Holds(inst.input.overlay, node.coord))
+            {
+                node.level = 0;
+                node.error = error(0);
+                levels[node.coord] = 0;
+                return;
+            }
             uint32_t chosen = count - 1;
             const auto previous = inst.state->levels.find(node.coord);
             if (node.beyondFar)
@@ -389,29 +427,46 @@ namespace mir
             levels[node.coord] = chosen;
         }
 
+        bool OverlayUnit(const TerrainDrawUnit &unit) const
+        {
+            return unit.kind == TerrainUnitKind::Tile && unit.geometry.level == 0 && unit.instance < instances.size() &&
+                   Holds(instances[unit.instance].input.overlay, unit.geometry.coord);
+        }
+
+        void AddWant(const TerrainPayloadKey &key, TerrainDemand demand, float rank)
+        {
+            const auto [at, inserted] = wantAt.try_emplace(key, wants.size());
+            if (inserted)
+                wants.push_back({key, demand, rank});
+            else if (TerrainPayloadWant &want = wants[at->second]; demand > want.demand)
+            {
+                want.demand = demand;
+                want.rank = rank;
+            }
+            else if (demand == want.demand)
+                want.rank = std::min(want.rank, rank);
+        }
+
         void Want(const TerrainDrawUnit &unit, TerrainDemand demand, float rank)
         {
-            for (const TerrainPayloadKey *key : {&unit.geometry, &unit.normals})
+            AddWant(unit.geometry, demand, rank);
+            if (unit.kind == TerrainUnitKind::Region)
+                return;
+            if (OverlayUnit(unit))
             {
-                const auto [at, inserted] = wantAt.try_emplace(*key, wants.size());
-                if (inserted)
-                    wants.push_back({*key, demand, rank});
-                else if (TerrainPayloadWant &want = wants[at->second]; demand > want.demand)
-                {
-                    want.demand = demand;
-                    want.rank = rank;
-                }
-                else if (demand == want.demand)
-                    want.rank = std::min(want.rank, rank);
-                if (unit.kind == TerrainUnitKind::Region)
-                    break;
+                const Instance &inst = instances[unit.instance];
+                const TerrainIndex &index = inst.input.release->Index();
+                for (const TileCoord source : TerrainOverlaySourceTiles(index, unit.geometry.coord))
+                    AddWant(TerrainPayloadKeyOf(inst.input.release->Info(), *index.Find(source)), demand, rank);
+                return;
             }
+            AddWant(unit.normals, demand, rank);
         }
 
         bool Wanted(const TerrainDrawUnit &unit) const
         {
             return wantAt.contains(unit.geometry) &&
-                   (unit.kind == TerrainUnitKind::Region || wantAt.contains(unit.normals));
+                   (unit.kind == TerrainUnitKind::Region || OverlayUnit(unit) || wantAt.contains(unit.normals));
         }
 
         // Draws what the volume sees of the node's area at most once; false when part of it has nothing ready.
@@ -608,7 +663,9 @@ namespace mir
                 const TileInfo &info = inst.catalog->tiles.at(node.coord);
                 if (info.lods.empty())
                     return;
-                const uint32_t level = Coarsest(info, node.distance, *this, bound, false);
+                const uint32_t level = Holds(inst.input.overlay, node.coord)
+                                           ? 0
+                                           : Coarsest(info, node.distance, *this, bound, false);
                 if (level != node.level)
                 {
                     const TerrainDrawUnit unit = TileUnit(inst, instance, node.coord, level, node.distance);
@@ -759,6 +816,7 @@ namespace mir
         {
             if (!inst.catalog)
                 continue;
+            impl.PlanOverlayRegions(inst);
             std::unordered_set<TerrainRegionCoord> refined;
             std::unordered_map<TileCoord, uint32_t> levels;
             impl.Plan(inst, refined, levels);

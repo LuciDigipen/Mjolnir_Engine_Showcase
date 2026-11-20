@@ -198,6 +198,8 @@ namespace mir::test
         REQUIRE(WriteBytes(dir / kTerrainIndexFileName, encoded.index));
         for (const TerrainEncodedPack &pack : encoded.packs)
             REQUIRE(WriteBytes(dir / pack.fileName, pack.bytes));
+        for (const TerrainEncodedPack &pack : encoded.weightPacks)
+            REQUIRE(WriteBytes(dir / pack.fileName, pack.bytes));
         return dir;
     }
 
@@ -368,10 +370,83 @@ namespace mir::test
         return std::move(*encoded.value);
     }
 
+    inline TerrainEncodedRelease EncodeWithWeights(const TerrainReleaseInfo &info, const TerrainLayout &layout,
+                                                   std::span<const TileHeights> tiles,
+                                                   const TerrainWeightsWrites &weights,
+                                                   TerrainPackWriteOptions options = {})
+    {
+        std::vector<TerrainTileWrite> inputs;
+        for (const TileHeights &tile : tiles)
+            inputs.push_back({&tile});
+        TerrainResult<TerrainEncodedRelease> encoded =
+            EncodeTerrainRelease(info, std::span(&layout, 1), inputs, {}, {}, weights, options);
+        INFO(encoded.error.message);
+        REQUIRE(encoded);
+        return std::move(*encoded.value);
+    }
+
+    inline std::vector<std::byte> ReadWeightBytes(const TerrainByteSource &source, const TerrainIndex &index,
+                                                  const TerrainWeightRecord &record)
+    {
+        const std::string pack = TerrainWeightPackFileName(index.weightPacks[record.pack].chunk);
+        std::optional<std::vector<std::byte>> bytes = source.ReadRange(pack, record.offset, size_t(record.length));
+        INFO(pack);
+        REQUIRE(bytes);
+        return std::move(*bytes);
+    }
+
     inline size_t RegionRecordAt(const TerrainIndex &index, uint32_t region)
     {
         return kTerrainIndexHeaderSize + index.packs.size() * kTerrainPackRecordSize +
                index.tiles.size() * kTerrainTileRecordSize + index.layers.size() * kTerrainLayerRecordSize +
                size_t(region) * kTerrainTileRecordSize;
+    }
+
+    inline size_t WeightPackTableAt(const TerrainIndex &index)
+    {
+        return kTerrainWeightsIndexHeaderSize + index.packs.size() * kTerrainPackRecordSize +
+               index.tiles.size() * kTerrainTileRecordSize + index.layers.size() * kTerrainLayerRecordSize +
+               index.regions.size() * kTerrainTileRecordSize;
+    }
+
+    inline size_t WeightedTileRecordAt(const TerrainIndex &index, uint32_t tile)
+    {
+        return kTerrainWeightsIndexHeaderSize + index.packs.size() * kTerrainPackRecordSize +
+               size_t(tile) * kTerrainTileRecordSize;
+    }
+
+    inline size_t WeightRecordAt(const TerrainIndex &index, uint32_t record)
+    {
+        return WeightPackTableAt(index) + index.weightPacks.size() * kTerrainPackRecordSize +
+               size_t(record) * kTerrainWeightRecordSize;
+    }
+
+    inline size_t WeightLayerTableAt(const TerrainIndex &index)
+    {
+        return WeightRecordAt(index, static_cast<uint32_t>(index.weights.size())) +
+               index.regionWeights.size() * kTerrainRegionWeightRecordSize;
+    }
+
+    inline size_t RegionWeightRecordAt(const TerrainIndex &index, uint32_t record)
+    {
+        return WeightRecordAt(index, static_cast<uint32_t>(index.weights.size())) +
+               size_t(record) * kTerrainRegionWeightRecordSize;
+    }
+
+    inline TerrainEncodedRelease EncodeWithRegionsAndWeights(const TerrainReleaseInfo &info,
+                                                             const TerrainLayout &layout,
+                                                             std::span<const TileHeights> tiles,
+                                                             const TerrainRegionWrites &regions,
+                                                             const TerrainWeightsWrites &weights,
+                                                             TerrainPackWriteOptions options = {})
+    {
+        std::vector<TerrainTileWrite> inputs;
+        for (const TileHeights &tile : tiles)
+            inputs.push_back({&tile});
+        TerrainResult<TerrainEncodedRelease> encoded =
+            EncodeTerrainRelease(info, std::span(&layout, 1), inputs, {}, regions, weights, options);
+        INFO(encoded.error.message);
+        REQUIRE(encoded);
+        return std::move(*encoded.value);
     }
 }

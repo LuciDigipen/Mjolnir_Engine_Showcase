@@ -13,8 +13,10 @@
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainRegionGrid.h>
+#include <terrain/TerrainWeights.h>
 #include <terrain/TileHeights.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -44,6 +46,7 @@ namespace mir
     {
         std::vector<std::byte> index;
         std::vector<TerrainEncodedPack> packs;
+        std::vector<TerrainEncodedPack> weightPacks;
         uint64_t heightsHash = 0;
     };
 
@@ -92,6 +95,45 @@ namespace mir
                                  std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions);
 
     uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles);
+
+    struct TerrainEncodedWeights
+    {
+        std::array<uint8_t, kTerrainWeightSlots> slots{};
+        // (intervals + 1)^2 RGBA texels, row-major x fastest.
+        std::vector<std::byte> bytes;
+    };
+
+    // Keeps the four heaviest layers of the tile, renormalises each texel and quantises so its bytes sum to 255.
+    TerrainResult<TerrainEncodedWeights> EncodeTerrainWeightPayload(const TerrainWeightTile &tile,
+                                                                    std::span<const std::string> table);
+
+    // A Region's encoded image: one payload per Region of the release's grid.
+    struct TerrainRegionWeightImage
+    {
+        TerrainRegionCoord region;
+        uint32_t side = kTerrainRegionWeightSide;
+        std::array<uint8_t, kTerrainWeightSlots> slots{};
+        // side * side RGBA texels, row-major x fastest.
+        std::vector<std::byte> bytes;
+    };
+
+    struct TerrainWeightsWrites
+    {
+        // Layer names the records' slots index; every weighted tile's layers must be here.
+        std::vector<std::string> layers;
+        uint64_t fingerprint = 0;
+        std::span<const TerrainWeightTile> tiles;
+        // Every Region of regions.grid when the release has one; empty otherwise.
+        std::span<const TerrainRegionWeightImage> regionImages;
+    };
+
+    TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
+                                                              const TerrainRegionWrites &regions,
+                                                              const TerrainWeightsWrites &weights,
+                                                              const TerrainPackWriteOptions &options = {});
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
                                                               const TerrainLayout &layout,

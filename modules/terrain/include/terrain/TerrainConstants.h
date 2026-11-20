@@ -25,19 +25,27 @@ namespace mir
     inline constexpr uint32_t kMaxTerrainRegionTiles = 1u << 20;
     inline constexpr uint32_t kMaxTerrainRegionLevel = 40;
     inline constexpr int64_t kTerrainExactSampleLimit = int64_t(1) << 53;
+    // Side of one Region's RGBA8 weight image at every level.
+    inline constexpr uint32_t kTerrainRegionWeightSide = 257;
 
     // Wire layout: docs/modules/terrain.md#rules, binary-format table.
     inline constexpr TerrainFormatVersion kTerrainFormatVersion{2};
     inline constexpr uint32_t kTerrainFormatMinor = 2;
     inline constexpr uint32_t kTerrainRegionsFormatMinor = 2;
+    // A release without weight tiles keeps kTerrainFormatMinor and the shorter header.
+    inline constexpr uint32_t kTerrainWeightsFormatMinor = kTerrainFormatMinor + 1;
     inline constexpr uint32_t kTerrainHeightsContentVersion = 1;
     inline constexpr uint32_t kTerrainLodContentVersion = 1;
     inline constexpr uint32_t kTerrainRegionContentVersion = 1;
+    inline constexpr uint32_t kTerrainWeightsContentVersion = 1;
     inline constexpr uint32_t kTerrainIndexHeaderSize = 152;
+    inline constexpr uint32_t kTerrainWeightsIndexHeaderSize = 192;
     inline constexpr uint32_t kTerrainLegacyIndexHeaderSize = 128;
     inline constexpr uint32_t kTerrainPackRecordSize = 32;
     inline constexpr uint32_t kTerrainTileRecordSize = 144;
     inline constexpr uint32_t kTerrainLegacyTileRecordSize = 120;
+    inline constexpr uint32_t kTerrainWeightRecordSize = 48;
+    inline constexpr uint32_t kTerrainRegionWeightRecordSize = 48;
     inline constexpr uint32_t kTerrainLayerRecordSize = 16;
     inline constexpr uint32_t kTerrainPackHeaderSize = 48;
     inline constexpr uint32_t kTerrainIndexTrailerSize = 8;
@@ -106,6 +114,15 @@ namespace mir::terrainformat
         inline constexpr size_t kRegionCells = 140;
         inline constexpr size_t kRegionUnit = 144;
         inline constexpr size_t kRegionLevels = 148;
+        inline constexpr size_t kWeightPackCount = 152;
+        inline constexpr size_t kWeightPackRecordSize = 156;
+        inline constexpr size_t kWeightTileCount = 160;
+        inline constexpr size_t kWeightTileRecordSize = 164;
+        inline constexpr size_t kWeightLayerCount = 168;
+        inline constexpr size_t kWeightLayerBytes = 172;
+        inline constexpr size_t kWeightsFingerprint = 176;
+        inline constexpr size_t kRegionWeightCount = 184;
+        inline constexpr size_t kRegionWeightRecordSize = 188;
     } // namespace index
     namespace packRecord
     {
@@ -147,6 +164,28 @@ namespace mir::terrainformat
         inline constexpr size_t kSpacing = 0;
         inline constexpr size_t kIntervals = 8;
     } // namespace layer
+    namespace weightRecord
+    {
+        inline constexpr size_t kX = 0;
+        inline constexpr size_t kZ = 4;
+        inline constexpr size_t kPack = 8;
+        inline constexpr size_t kOffset = 16;
+        inline constexpr size_t kLength = 24;
+        inline constexpr size_t kChecksum = 32;
+        inline constexpr size_t kSlots = 40;
+    } // namespace weightRecord
+    namespace regionWeightRecord
+    {
+        inline constexpr size_t kLevel = 0;
+        inline constexpr size_t kX = 4;
+        inline constexpr size_t kZ = 8;
+        inline constexpr size_t kPack = 12;
+        inline constexpr size_t kOffset = 16;
+        inline constexpr size_t kLength = 24;
+        inline constexpr size_t kChecksum = 32;
+        inline constexpr size_t kSlots = 40;
+        inline constexpr size_t kSide = 44;
+    } // namespace regionWeightRecord
     namespace pack
     {
         inline constexpr size_t kMajor = 4;

@@ -114,6 +114,58 @@ namespace
                     const auto sourceSnapshot = mir::SnapshotShaderFile(source, Utf8(source));
                     const auto sourceText = mir::ReadText(source);
                     Require(sourceSnapshot.has_value() && sourceText.has_value(), "material source is missing: " + Utf8(source));
+                    if (entry.contains("layers"))
+                    {
+                        const auto layered = Json::parse(*sourceText);
+                        Require(layered.at("version") == 1, "layered material version changed; reconfigure before publishing the build");
+                        const auto expectedLayered = std::filesystem::weakly_canonical(manifest->workingDirectory /
+                            std::filesystem::u8path(entry.at("shader").get<std::string>()));
+                        Require(std::filesystem::weakly_canonical(source) == expectedLayered,
+                            "layered material source changed; reconfigure before publishing the build");
+                        const auto &catalogLayers = entry.at("layers");
+                        const auto &sourceLayers = layered.at("layers");
+                        Require(catalogLayers.size() == sourceLayers.size(),
+                            "layered material layer count changed; reconfigure before publishing the build");
+                        inputs.push_back(*sourceSnapshot);
+                        for (std::size_t index = 0; index < catalogLayers.size(); ++index)
+                        {
+                            Require(catalogLayers.at(index).at("name") == sourceLayers.at(index).at("name"),
+                                "layered material layer names changed; reconfigure before publishing the build");
+                            auto childSource = std::filesystem::u8path(catalogLayers.at(index).at("asset").get<std::string>());
+                            if (childSource.is_relative()) childSource = manifest->workingDirectory / childSource;
+                            const auto childSnapshot = mir::SnapshotShaderFile(childSource, Utf8(childSource));
+                            const auto childText = mir::ReadText(childSource);
+                            Require(childSnapshot.has_value() && childText.has_value(),
+                                "layered material child is missing: " + Utf8(childSource));
+                            const auto childMaterial = Json::parse(*childText);
+                            Require(childMaterial.at("shader").at("type") == catalogLayers.at(index).at("type"),
+                                "layered material child type changed; reconfigure before publishing the build");
+                            const auto &childFrontends = childMaterial.at("frontends");
+                            Require(std::find(childFrontends.begin(), childFrontends.end(), "terrain") !=
+                                    childFrontends.end(),
+                                "layered material child frontend changed; reconfigure before publishing the build");
+                            const auto childShader = std::filesystem::u8path(
+                                childMaterial.at("shader").at("file").get<std::string>());
+                            Require(!childShader.is_absolute() && std::none_of(childShader.begin(), childShader.end(),
+                                [](const auto &part) { return part == ".."; }),
+                                "layered material child shader leaves approved roots");
+                            const auto expectedChildShader = std::filesystem::weakly_canonical(
+                                manifest->workingDirectory / std::filesystem::u8path(
+                                    catalogLayers.at(index).at("shader").get<std::string>()));
+                            bool matchedChildShader = false;
+                            for (const auto &assetRoot : manifest->assetRoots)
+                            {
+                                auto approved = assetRoot.root;
+                                if (approved.is_relative()) approved = manifest->workingDirectory / approved;
+                                matchedChildShader |= std::filesystem::weakly_canonical(approved / childShader) ==
+                                    expectedChildShader;
+                            }
+                            Require(matchedChildShader,
+                                "layered material child shader changed; reconfigure before publishing the build");
+                            inputs.push_back(*childSnapshot);
+                        }
+                        continue;
+                    }
                     const auto material = Json::parse(*sourceText);
                     Require(material.at("shader").at("type") == entry.at("type"),
                         "material type changed; reconfigure before publishing the build");

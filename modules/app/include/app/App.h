@@ -65,6 +65,7 @@
 
 #if MIR_WITH_EDITOR
 #include <editor/EditorModule.h>
+#include <terrain_editor/TerrainEditorModule.h>
 #endif
 #if MIR_WITH_AUDIO && MIR_WITH_EDITOR
 #include <app/EditorAudioOptions.h>
@@ -348,6 +349,7 @@ namespace mir
     #if MIR_WITH_EDITOR
         SplashStep mEditorStep{ mSplash, "Initializing editor...", 0.5f };
         EditorModule mEditor;
+        TerrainEditorModule mTerrainEditor;
     #endif
         SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
         CameraModule mCamera;

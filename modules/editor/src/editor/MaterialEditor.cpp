@@ -168,6 +168,13 @@ namespace mir
                     ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Color(StatusColor::Danger));
                     ImGui::TextWrapped("%s", mLoadError.c_str());
                     ImGui::PopStyleColor();
+                    if (mNotImported && mSelection && context.mReimportMaterial && ImGui::Button("Import"))
+                    {
+                        context.mReimportMaterial(*mSelection, false);
+                        mNotImported = false;
+                        mState = TargetState::Loading;
+                        mLoadError = "Waiting for the selected material to be cooked.";
+                    }
                     break;
                 case TargetState::Ready:
                     DrawDraft(editing, import, context);
@@ -224,6 +231,7 @@ namespace mir
     {
         mState = TargetState::Loading;
         mLoadError.clear();
+        mNotImported = false;
         if (!mSelection || !context.mCatalog)
         {
             mState = TargetState::Invalid;
@@ -264,7 +272,10 @@ namespace mir
         if (!context.mLoadCooked(logicalPath, cooked, error))
         {
             mState = pending ? TargetState::Loading : TargetState::Invalid;
-            mLoadError = pending ? "Waiting for the selected material to be cooked." : error;
+            mNotImported = !pending;
+            mLoadError = pending ? "Waiting for the selected material to be cooked."
+                                 : "This material has not been imported yet (" + error +
+                                       "). Import it to edit it, or turn on watching in Asset Import.";
             return false;
         }
         if (cooked.frontends.empty())

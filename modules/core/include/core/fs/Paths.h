@@ -9,10 +9,13 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 namespace mir
 {
+    std::string GenericPathUtf8(const std::filesystem::path &path);
+
     // Full path of the running executable; empty if unknown
     const std::filesystem::path &ExecutablePath();
 

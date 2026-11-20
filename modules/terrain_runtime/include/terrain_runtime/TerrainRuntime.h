@@ -9,8 +9,10 @@
 #pragma once
 
 #include <terrain_runtime/TerrainGroundBridge.h>
+#include <terrain_runtime/TerrainMaterialSlots.h>
 #include <terrain_runtime/TerrainRender.h>
 #include <terrain_runtime/TerrainJobExecutor.h>
+#include <terrain_runtime/TerrainWeightResidency.h>
 
 #include <project/GameProject.h>
 #include <core/ecs/Entity.h>
@@ -21,6 +23,7 @@
 #include <terrain/TerrainExecutor.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainMeshResidency.h>
+#include <terrain/TerrainOverlayHandover.h>
 #include <terrain/TerrainReleaseSwitch.h>
 #include <terrain/TerrainScene.h>
 #include <terrain/TerrainStreamer.h>
@@ -80,6 +83,17 @@ namespace mir
         // prewarmed lets its work go until Stop.
         void BeginPlay();
 
+        // Applies an overlay snapshot to the live TerrainWorld; Play refuses it, and an applied snapshot restarts
+        // any ground snap. A null snapshot clears the overlay.
+        TerrainOverlayApplyResult SetTerrainOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay);
+
+        // Edit's snapshots, handed over before Play's PlayBegin; BeginPlay applies the ones whose releases loaded.
+        void OfferPlayOverlays(const TerrainWorld &source);
+
+        // Which material layer each release weight layer becomes on one instance, named from the layered
+        // material. False when no loaded instance has that entity.
+        bool SetInstanceMaterialLayers(Entity entity, std::span<const uint8_t> layers);
+
         // Retires every GPU mesh the terrain holds and forgets its builds; the next frame builds what it draws again.
         void ForgetMeshes();
 
@@ -112,8 +126,11 @@ namespace mir
             std::string materialLogicalPath;
             AssetId materialAsset;
             std::vector<TerrainMaterialLayer> materialLayers;
+            std::vector<std::string> materialLayerNames;
             MaterialHandle material;
             uint64_t materialGeneration = 0;
+            TerrainMaterialSlotBinding materialSlots;
+            TerrainSlotTable slotTable;
         };
 
         struct ViewState
@@ -159,10 +176,13 @@ namespace mir
         void SyncBindings(const TerrainSceneSpec &spec);
         void SyncSpecMaterials(const TerrainSceneSpec &spec);
         void ResolveBinding(InstanceResources &instance);
+        void SyncMaterialSlots(InstanceResources &instance, const TerrainInstanceState &state);
         const TerrainInstanceSpec *SpecFor(const TerrainSceneSpec &spec, Entity entity) const;
         const TerrainInstanceSpec *SpecForPlacement(const TerrainSceneSpec &spec,
             const TerrainInstanceState &instance) const;
         bool HasMeshPayloads(const TerrainInstanceState &instance);
+        // The collision residency draws from the same snapshots as the TerrainWorld.
+        void SyncCollisionOverlays(const TerrainWorld &world);
         // The loaded and staged releases to the mesh and collision residencies.
         void ApplyResidencies();
         bool IsStaged(AssetId asset, TerrainReleaseId release) const;
@@ -207,6 +227,8 @@ namespace mir
 
         // Parallel to TerrainWorld::Instances().
         std::vector<InstanceResources> mResources;
+        // Edit's snapshots until Play's releases load and BeginPlay applies them.
+        TerrainOverlayHandover mPlayOverlays;
 
         // The World's GroundQuery source; registered before any scene terrain resolves.
         std::unique_ptr<TerrainGroundBridge> mGround;
@@ -216,6 +238,8 @@ namespace mir
         std::unique_ptr<TerrainGpuUploader> mUploader;
         // Null without valid settings or renderer mesh streaming.
         std::unique_ptr<TerrainMeshResidency> mMeshes;
+        // Resident weight textures of the tiles the views draw.
+        std::unique_ptr<TerrainWeightResidency> mWeights;
         std::shared_ptr<Colliders> mColliders;
         // Null without valid settings.
         std::unique_ptr<TerrainCollisionResidency> mCollision;

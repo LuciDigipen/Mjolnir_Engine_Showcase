@@ -1029,6 +1029,7 @@ namespace mir::vk
                 .modelCol0 = item.model[0],
                 .modelCol1 = item.model[1],
                 .modelCol2 = item.model[2] };
+            FillRtTerrainWords(instanceInfos[instanceCount], item.terrain);
 
             ++instanceCount;
         }

@@ -59,6 +59,7 @@ namespace mir
         void SetUnsaved(bool unsaved) { SetUnsaved(kSceneDocument, unsaved); }
         void SetUnsaved(DocumentId document, bool unsaved);
 
+        bool HasPendingWork() const { return !mQueue.empty() || mPending != 0; }
         bool CanUndo() const { return mCursor > 0; }
         bool CanRedo() const { return mCursor < mSteps.size(); }
         std::string UndoName() const;

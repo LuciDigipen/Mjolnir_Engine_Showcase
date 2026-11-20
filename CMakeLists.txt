@@ -102,6 +102,7 @@ add_subdirectory(modules/scene)
 add_subdirectory(modules/script)
 add_subdirectory(modules/serial)
 add_subdirectory(modules/terrain)
+add_subdirectory(modules/terrain_editor)
 add_subdirectory(modules/terrain_runtime)
 add_subdirectory(modules/terrain_script)
 add_subdirectory(modules/window)
@@ -164,9 +165,9 @@ if(MJOLNIR_WITH_EDITOR)
     file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" asset_workspace_source_root)
     file(GENERATE
         OUTPUT "$<TARGET_FILE_DIR:MjolnirEngine>/asset_workspace.json"
-        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\",\n  \"buildTool\": \"$<TARGET_FILE:MjolnirBuild>\"\n}\n")
-    # File > Build runs it
-    add_dependencies(MjolnirEngine MjolnirBuild)
+        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\",\n  \"buildTool\": \"$<TARGET_FILE:MjolnirBuild>\",\n  \"terrainTool\": \"$<TARGET_FILE:TerrainTool>\"\n}\n")
+    # File > Build runs it; the Terrain panel's Bake runs TerrainTool
+    add_dependencies(MjolnirEngine MjolnirBuild TerrainTool)
 endif()
 
 if(MSVC)

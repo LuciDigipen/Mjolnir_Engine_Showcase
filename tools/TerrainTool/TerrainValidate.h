@@ -12,6 +12,8 @@
 #include "TerrainRecipe.h"
 #include "TerrainReport.h"
 
+#include <terrain/TerrainRelease.h>
+
 #include <filesystem>
 
 namespace mir::terrainbake
@@ -24,6 +26,8 @@ namespace mir::terrainbake
         bool requireManifest = true;
         // Manifest, files, packs and identity; content checks stay with bake and validate.
         bool integrityOnly = false;
+        // An incremental candidate: records of unchanged tiles must equal this release's payload bytes.
+        const TerrainReleaseHandle *baseRelease = nullptr;
     };
 
     // Reads only through TerrainReleaseHandle; writes nothing.
@@ -35,6 +39,8 @@ namespace mir::terrainbake
         std::filesystem::path candidateDir;
         // Empty: no recipe check.
         std::filesystem::path recipePath;
+        // An incremental candidate's base; absent rederives every payload.
+        std::optional<TerrainReleaseHandle> baseRelease;
     };
 
     TerrainReport RunTerrainValidate(const TerrainValidateRequest &request);

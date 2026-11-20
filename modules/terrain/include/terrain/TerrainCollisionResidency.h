@@ -34,6 +34,8 @@
 
 namespace mir
 {
+    class TerrainOverlay;
+
     // Something that may touch terrain: a dynamic body, or anything a game registers.
     struct TerrainCollisionSource
     {
@@ -242,6 +244,10 @@ namespace mir
                           std::span<const TerrainCollisionInstance> staged = {});
         // Spacings and error for pieces built from now on.
         void SetPolicy(const TerrainCollisionPolicy &policy);
+
+        // The asset's edited source tiles, or null to clear them. Pieces covering its tiles rebuild from it; a piece
+        // keeps its old collider until the rebuild is placed. Safe point, as SetInstances.
+        void SetOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay);
 
         // At a safe point: finished builds become colliders, pieces nobody needed for retainSeconds retire.
         void Install(double now);

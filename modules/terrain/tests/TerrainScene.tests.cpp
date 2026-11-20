@@ -17,6 +17,7 @@
 #include <terrain/TerrainScene.h>
 #include <terrain/TerrainSurface.h>
 #include <terrain/TerrainTileMesh.h>
+#include <terrain/TileAddressing.h>
 #include <terrain/components/TerrainInstance.h>
 
 #include <core/ecs/ComponentRegistry.h>
@@ -602,5 +603,69 @@ TEST_CASE("A pinned release ignores a publish until a safe point, which switches
     REQUIRE(issues.size() == 1);
     CHECK(issues[0] == refusal);
     CHECK(still.SameDerivedState(kept));
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("The world weight query answers from the instance containing the point", "[terrain][scene][weights]")
+{
+    const std::filesystem::path root = MakeScratchDir("scene_weights");
+    Scene scene;
+    AddInstance(scene.world, kRecipe, {0.0, 0.0, 0.0});
+    const AssetId asset = TerrainAsset(kRecipe);
+    const TerrainLayout layout = ReliefLayout();
+    const std::vector<TileHeights> heights = BuildTiles(layout);
+    const std::vector<std::string> table{"dirt", "sand"};
+    std::vector<TerrainWeightTile> weights;
+    for (const TileHeights &tile : heights)
+    {
+        TerrainWeightTile weight;
+        weight.tile = tile.Tile();
+        weight.intervals = layout.IntervalsPerTile();
+        weight.layers = table;
+        const size_t count = weight.SampleCount();
+        weight.weights.resize(count * table.size());
+        for (size_t sample = 0; sample < count; ++sample)
+        {
+            weight.weights[sample] = 0.6f;
+            weight.weights[count + sample] = 0.4f;
+        }
+        weights.push_back(std::move(weight));
+    }
+    const TerrainReleaseInfo info = Info(asset, 0xA11);
+    TerrainWeightsWrites writes;
+    writes.layers = table;
+    writes.fingerprint = 0xBEEF;
+    writes.tiles = weights;
+    WriteRelease(root, info, EncodeWithWeights(info, layout, heights, writes));
+    PointCurrentAt(root, asset, info.release);
+
+    std::vector<TerrainIssue> issues;
+    TerrainWorld world = Resolve(scene.world, root, nullptr, issues);
+    REQUIRE(issues.empty());
+    REQUIRE(world.Instances().size() == 1);
+    const TerrainInstanceState &instance = world.Instances().front();
+    const auto local = TerrainLocalPosition::FromMeters({10.0, 0.0, 10.0});
+    REQUIRE(local);
+    const TileAddress address = AddressLocal(layout, *local);
+    REQUIRE(address.IsInside());
+    TerrainResult<TerrainDecodedWeights> read = instance.release->Handle().ReadWeights(address.tile);
+    INFO(read.error.message);
+    REQUIRE(read);
+    REQUIRE(instance.release->WeightQuery()
+                .Insert(instance.release->Info(),
+                        std::make_shared<const TerrainDecodedWeights>(std::move(*read.value)))
+                .code == TerrainPackErrorCode::None);
+
+    const TerrainLayerWeightsResult inside = world.LayerWeightsAt(At(instance, {10.0, 10.0}));
+    CHECK(inside.status == TerrainLayerWeightsStatus::Ready);
+    CHECK(inside.tile == address.tile);
+    CHECK(inside.release == info);
+    REQUIRE(inside.layers.size() == 2);
+    CHECK(inside.layers[0].name == "dirt");
+    CHECK(inside.layers[1].name == "sand");
+
+    const TerrainLayerWeightsResult outside = world.LayerWeightsAt(At(instance, {100000.0, 0.0}));
+    CHECK(outside.status == TerrainLayerWeightsStatus::OutsideMap);
+    CHECK(outside.layers.empty());
     std::filesystem::remove_all(root);
 }

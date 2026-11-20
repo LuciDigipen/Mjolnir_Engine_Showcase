@@ -9,6 +9,7 @@
 #pragma once
 
 #include <core/math/WorldCoordinates.h>
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainPlacement.h>
 #include <terrain/TerrainRelease.h>
 #include <terrain/TerrainStreamer.h>
@@ -46,6 +47,8 @@ namespace mir
     {
         std::shared_ptr<const TerrainReleaseHandle> release;
         TerrainPlacement placement;
+        // The asset's edited sources; the tiles it holds stay at level 0 and refine their Regions.
+        std::shared_ptr<const TerrainOverlay> overlay;
     };
 
     enum class TerrainUnitKind : uint8_t
