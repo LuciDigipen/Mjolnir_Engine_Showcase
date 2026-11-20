@@ -90,8 +90,9 @@ namespace mir
         // when its delay ends, and a key never set holds 0
         ActionHandle TweenValue(std::string_view key, float goal, const ActionParams &params = {});
         ActionHandle TweenVec4(std::string_view key, const glm::vec4 &goal, const ActionParams &params = {});
-        void SetValue(std::string_view key, float value);
-        void SetVec4(std::string_view key, const glm::vec4 &value);
+       
+        bool SetValue(std::string_view key, float value);
+        bool SetVec4(std::string_view key, const glm::vec4 &value);
         float Value(std::string_view key, float fallback = 0.0f) const;
         glm::vec4 Vec4(std::string_view key, const glm::vec4 &fallback = glm::vec4(0.0f)) const;
         bool HasValue(std::string_view key) const;
@@ -108,11 +109,12 @@ namespace mir
         // every action, value, lane setting and time scale
         void Clear();
 
-        void SetTimeScale(ActionClock clock, float scale);
+        // A scale of 0 freezes like a pause. False, logged, for a negative or non-finite scale
+        bool SetTimeScale(ActionClock clock, float scale);
         float TimeScale(ActionClock clock) const { return mTimeScales[Index(clock)]; }
         void SetLanePaused(uint64_t lane, bool paused);
         bool IsLanePaused(uint64_t lane) const;
-        void SetLaneTimeScale(uint64_t lane, float scale);
+        bool SetLaneTimeScale(uint64_t lane, float scale);
         float LaneTimeScale(uint64_t lane) const;
 
         // Advances every action on that clock by dt seconds

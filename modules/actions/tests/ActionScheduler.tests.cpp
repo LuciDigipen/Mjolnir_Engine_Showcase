@@ -320,3 +320,83 @@ TEST_CASE("Clear drops every action, value and setting", "[actions]")
     CHECK_FALSE(f.actions.IsLanePaused(ActionLane("A")));
     CHECK(f.actions.TimeScale(ActionClock::Game) == 1.0f);
 }
+
+TEST_CASE("A dead target's blocking action frees its lane during its delay", "[actions][lanes]")
+{
+    Fixture f;
+    const Entity box = f.Spawn();
+    f.actions.MoveTo(box, WorldVec3(1.0, 0.0, 0.0), { .mDuration = 1.0f, .mDelay = 5.0f, .mBlocking = true });
+    f.actions.TweenValue("After", 1.0f, { .mDuration = 1.0f, .mLane = ActionLane(box) });
+    f.world.DestroyEntity(box);
+
+    f.Tick(0.5f);
+    CHECK(f.actions.Value("After") == Catch::Approx(0.5f));
+    CHECK(f.actions.Count() == 1);
+}
+
+TEST_CASE("A clock or lane scale of 0 freezes actions, and a zero dt at a live scale still runs instant ones", "[actions][clock]")
+{
+    Fixture f;
+
+    SECTION("Clock scale 0")
+    {
+        f.actions.SetTimeScale(ActionClock::Game, 0.0f);
+        f.actions.TweenValue("Snap", 1.0f, { .mDuration = 0.0f });
+        f.Tick(0.5f);
+        CHECK_FALSE(f.actions.HasValue("Snap"));
+    }
+
+    SECTION("Lane scale 0 reads no start value until it thaws")
+    {
+        const uint64_t lane = ActionLane("Frozen");
+        f.actions.SetLaneTimeScale(lane, 0.0f);
+        f.actions.TweenValue("Frozen", 10.0f, { .mDuration = 1.0f });
+        f.Tick(0.5f);
+        f.actions.SetValue("Frozen", 4.0f);
+
+        f.actions.SetLaneTimeScale(lane, 1.0f);
+        f.Tick(0.5f);
+        CHECK(f.actions.Value("Frozen") == Catch::Approx(7.0f));
+    }
+
+    SECTION("Zero dt at scale 1")
+    {
+        f.actions.TweenValue("Snap", 1.0f, { .mDuration = 0.0f });
+        f.Tick(0.0f);
+        CHECK(f.actions.Value("Snap") == 1.0f);
+    }
+}
+
+TEST_CASE("A tween ends exactly on its goal and never overflows between far-apart values", "[actions][values]")
+{
+    Fixture f;
+    const float max = std::numeric_limits<float>::max();
+
+    f.actions.SetValue("Far", 100000000.0f);
+    f.actions.TweenValue("Far", 1.0f, { .mDuration = 1.0f });
+    f.actions.SetValue("Wide", -max);
+    f.actions.TweenValue("Wide", max, { .mDuration = 1.0f });
+
+    f.Tick(0.5f);
+    CHECK(std::isfinite(f.actions.Value("Wide")));
+    CHECK(f.actions.Value("Wide") == Catch::Approx(0.0f).margin(1.0f));
+
+    f.Tick(0.5f);
+    CHECK(f.actions.Value("Far") == 1.0f);
+    CHECK(f.actions.Value("Wide") == max);
+}
+
+TEST_CASE("Setters say whether they took the value", "[actions]")
+{
+    Fixture f;
+    const float inf = std::numeric_limits<float>::infinity();
+
+    CHECK(f.actions.SetValue("A", 1.0f));
+    CHECK_FALSE(f.actions.SetValue("A", inf));
+    CHECK_FALSE(f.actions.SetValue("", 1.0f));
+    CHECK_FALSE(f.actions.SetVec4("B", glm::vec4(inf)));
+    CHECK(f.actions.SetTimeScale(ActionClock::Game, 0.0f));
+    CHECK_FALSE(f.actions.SetTimeScale(ActionClock::Game, inf));
+    CHECK_FALSE(f.actions.SetLaneTimeScale(ActionLane("C"), -1.0f));
+    CHECK(f.actions.Value("A") == 1.0f);
+}

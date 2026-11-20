@@ -180,8 +180,8 @@ namespace mir
         ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
         : physics(context, &jobs),
         terrainData(context),
-        actions(context),
         script(context, assets, resolver),
+        actions(context),
         particlesRuntime(context, particles, particlesGpu, rendering),
         particlesScript(script),
     #if MIR_WITH_AUDIO

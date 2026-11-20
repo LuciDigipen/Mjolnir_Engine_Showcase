@@ -93,7 +93,9 @@ call that is refused logs one error and returns `nil` (or `false`).
 `options` is optional: `duration` (seconds, default 1), `delay` (seconds),
 `ease` (a name from `Ease`, such as `"Out"`), `blocking` (boolean), `lane` (a
 name or an entity) and `clock` (`"game"` or `"ui"`). An unknown key is refused
-with an error that lists the valid ones.
+with an error that lists the valid ones. Lua numbers are doubles, so a number
+past what a float holds, such as `1e100`, is refused before it narrows, and
+`value(name, fallback)` returns the fallback exactly as given.
 
 ```lua
 function Door.OnStart(self, world, entity)
@@ -114,6 +116,20 @@ whole tick.** Time left over from the finished action is not handed on, so a
 long chain drifts by up to a frame per step. When steps must line up exactly,
 queue them without blocking and give each a delay instead.
 
+**A time scale of 0 freezes, like a pause.** At a clock or lane scale of 0 no
+action advances, an instant action does not fire, and no start value is read,
+so a value set while frozen is where the tween starts once it thaws.
+`Tick(..., 0)` at a scale above 0 still runs instant actions.
+
+**A dead target ends its action at once, delay or not.** It is checked before
+the delay counts down, so a blocking action on a destroyed entity frees its
+lane the next tick.
+
+**A tween lands exactly on its goal.** Values are blended as
+`from * (1 - t) + to * t`, which returns `to` exactly at the end and does not
+overflow between values far apart. Where rounding or a `Back` overshoot would
+still pass the largest float, it holds the nearer end for that frame.
+
 **Write a widget's rect, not its drawing.** `gameui` hit tests the rect a
 widget is given. Moving only the draw commands would leave the widget clickable
 where it used to be.
@@ -124,7 +140,10 @@ disable it, while it is hidden.
 
 **PlayEnd clears everything.** Actions, values, lane settings and time scales
 all go when Play stops, so nothing queued in Play reaches Edit. A Play session
-also has its own World, so its scheduler goes with it.
+also has its own World, so its scheduler goes with it. `App` declares
+`ActionsModule` after `ScriptModule`, and stage functions run in registration
+order, so a script's `OnStop` still reads its values before they are cleared.
+Keep it there.
 
 **Lanes are hashes.** `ActionLane(name)` is FNV-1a and `ActionLane(entity)`
 mixes the packed entity, so a name and an entity can in principle collide. At

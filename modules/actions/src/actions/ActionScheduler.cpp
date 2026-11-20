@@ -23,9 +23,39 @@ namespace mir
 {
     namespace
     {
-        bool IsFinite(const glm::vec3 &v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
-        bool IsFinite(const glm::vec4 &v) { return IsFinite(glm::vec3(v)) && std::isfinite(v.w); }
-        bool IsFinite(const WorldVec3 &v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+        
+        template <glm::length_t N, typename T>
+        bool IsFinite(const glm::vec<N, T> &v)
+        {
+            for (glm::length_t i = 0; i < N; ++i)
+                if (!std::isfinite(v[i]))
+                    return false;
+            return true;
+        }
+
+
+        template <typename T>
+        T Blend(T from, T to, T t)
+        {
+            if (t == T(0))
+                return from;
+            if (t == T(1))
+                return to;
+            const T value = from * (T(1) - t) + to * t;
+            if (std::isfinite(value))
+                return value;
+            
+            return t < T(0.5) ? from : to;
+        }
+
+        template <glm::length_t N, typename T>
+        glm::vec<N, T> Blend(const glm::vec<N, T> &from, const glm::vec<N, T> &to, float t)
+        {
+            glm::vec<N, T> out;
+            for (glm::length_t i = 0; i < N; ++i)
+                out[i] = Blend<T>(from[i], to[i], static_cast<T>(t));
+            return out;
+        }
 
         bool ValidTiming(const ActionParams &params, std::string_view call)
         {
@@ -143,24 +173,26 @@ namespace mir
         return ActionHandle{ action.mId };
     }
 
-    void ActionScheduler::SetValue(std::string_view key, float value)
+    bool ActionScheduler::SetValue(std::string_view key, float value)
     {
-        if (!std::isfinite(value))
+        if (key.empty() || !std::isfinite(value))
         {
-            MIR_LOG_ERROR("ActionScheduler::SetValue: '{}' must be finite", key);
-            return;
+            MIR_LOG_ERROR("ActionScheduler::SetValue: needs a key and a finite value");
+            return false;
         }
         mValues[ActionLane(key)].x = value;
+        return true;
     }
 
-    void ActionScheduler::SetVec4(std::string_view key, const glm::vec4 &value)
+    bool ActionScheduler::SetVec4(std::string_view key, const glm::vec4 &value)
     {
-        if (!IsFinite(value))
+        if (key.empty() || !IsFinite(value))
         {
-            MIR_LOG_ERROR("ActionScheduler::SetVec4: '{}' must be finite", key);
-            return;
+            MIR_LOG_ERROR("ActionScheduler::SetVec4: needs a key and a finite value");
+            return false;
         }
         mValues[ActionLane(key)] = value;
+        return true;
     }
 
     float ActionScheduler::Value(std::string_view key, float fallback) const
@@ -217,10 +249,12 @@ namespace mir
         mTimeScales = { 1.0f, 1.0f };
     }
 
-    void ActionScheduler::SetTimeScale(ActionClock clock, float scale)
+    bool ActionScheduler::SetTimeScale(ActionClock clock, float scale)
     {
-        if (ValidScale(scale, "SetTimeScale"))
-            mTimeScales[Index(clock)] = scale;
+        if (!ValidScale(scale, "SetTimeScale"))
+            return false;
+        mTimeScales[Index(clock)] = scale;
+        return true;
     }
 
     void ActionScheduler::SetLanePaused(uint64_t lane, bool paused)
@@ -237,14 +271,15 @@ namespace mir
         return found != mLanes.end() && found->second.mPaused;
     }
 
-    void ActionScheduler::SetLaneTimeScale(uint64_t lane, float scale)
+    bool ActionScheduler::SetLaneTimeScale(uint64_t lane, float scale)
     {
         if (!ValidScale(scale, "SetLaneTimeScale"))
-            return;
+            return false;
         LaneSettings &settings = mLanes[lane];
         settings.mTimeScale = scale;
         if (!settings.mPaused && settings.mTimeScale == 1.0f)
             mLanes.erase(lane);
+        return true;
     }
 
     float ActionScheduler::LaneTimeScale(uint64_t lane) const
@@ -258,7 +293,12 @@ namespace mir
         if (!std::isfinite(dt) || dt < 0.0f)
             return;
 
-        const float clockDt = dt * TimeScale(clock);
+
+        const float clockScale = TimeScale(clock);
+        if (clockScale == 0.0f)
+            return;
+
+        const float clockDt = dt * clockScale;
         mBlockedLanes.clear();
         for (Action &action : mActions)
         {
@@ -266,10 +306,10 @@ namespace mir
                 continue;
 
             const auto lane = mLanes.find(action.mLane);
-            if (lane != mLanes.end() && lane->second.mPaused)
+            const float laneScale = lane != mLanes.end() ? lane->second.mTimeScale : 1.0f;
+            if (lane != mLanes.end() && (lane->second.mPaused || laneScale == 0.0f))
                 continue;
 
-            const float laneScale = lane != mLanes.end() ? lane->second.mTimeScale : 1.0f;
             action.mDone = Advance(world, action, clockDt * laneScale);
             if (!action.mDone && action.mBlocking)
                 mBlockedLanes.push_back(action.mLane);
@@ -285,6 +325,10 @@ namespace mir
     // true when the action is finished or can no longer run
     bool ActionScheduler::Advance(World &world, Action &action, float dt)
     {
+        
+        if (action.mKind != Kind::Value && !world.IsAlive(action.mTarget))
+            return true;
+
         if (action.mDelay > 0.0f)
         {
             action.mDelay -= dt;
@@ -338,9 +382,9 @@ namespace mir
         {
             glm::vec4 &slot = mValues[action.mKey];
             if (action.mComponents == 1)
-                slot.x = action.mFrom.x + (action.mTo.x - action.mFrom.x) * eased;
+                slot.x = Blend(action.mFrom.x, action.mTo.x, eased);
             else
-                slot = action.mFrom + (action.mTo - action.mFrom) * eased;
+                slot = Blend(action.mFrom, action.mTo, eased);
             return true;
         }
 
@@ -351,14 +395,14 @@ namespace mir
         switch (action.mKind)
         {
         case Kind::Move:
-            transform->SetPosition(action.mFromPosition +
-                                   (action.mToPosition - action.mFromPosition) * static_cast<WorldReal>(eased));
+            transform->SetPosition(Blend(action.mFromPosition, action.mToPosition, eased));
             break;
         case Kind::Rotate:
-            transform->SetRotation(glm::normalize(glm::slerp(action.mFromRotation, action.mToRotation, eased)));
+            transform->SetRotation(eased == 1.0f ? action.mToRotation
+                                                 : glm::normalize(glm::slerp(action.mFromRotation, action.mToRotation, eased)));
             break;
         case Kind::Scale:
-            transform->SetScale(glm::vec3(action.mFrom + (action.mTo - action.mFrom) * eased));
+            transform->SetScale(Blend(glm::vec3(action.mFrom), glm::vec3(action.mTo), eased));
             break;
         case Kind::Value:
             break;

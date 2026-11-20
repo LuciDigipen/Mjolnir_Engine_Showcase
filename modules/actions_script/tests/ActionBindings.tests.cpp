@@ -38,6 +38,12 @@ namespace
             {"badGoal", FieldKind::Bool},
             {"score", FieldKind::Float},
             {"missing", FieldKind::Float},
+            {"setValueRefused", FieldKind::Bool},
+            {"tweenRefused", FieldKind::Bool},
+            {"scaleRefused", FieldKind::Bool},
+            {"laneScaleRefused", FieldKind::Bool},
+            {"durationRefused", FieldKind::Bool},
+            {"fallbackKept", FieldKind::Bool},
         };
         return ComponentRegistry::Instance().RegisterRuntime("ActionBindingsProbe", fields);
     }
@@ -92,6 +98,25 @@ function T.OnStart(self, world, entity)
     world:set_lane_paused("spin", true)
     world:tween_value("Fast", 1, { duration = 1 })
     world:set_action_time_scale(2)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kRangeSource = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set(entity, "ActionBindingsProbe", "setValueRefused", world:set_value("Big", 1e100) == false)
+    world:set(entity, "ActionBindingsProbe", "tweenRefused", world:tween_value("Big", 1e100) == nil)
+    world:set(entity, "ActionBindingsProbe", "scaleRefused", world:set_action_time_scale(1e100) == false)
+    world:set(entity, "ActionBindingsProbe", "laneScaleRefused", world:set_lane_time_scale("lane", 1e100) == false)
+    world:set(entity, "ActionBindingsProbe", "durationRefused", world:tween_value("Big", 1, { duration = 1e100 }) == nil)
+    world:set(entity, "ActionBindingsProbe", "fallbackKept", world:value("Missing", 1e100) == 1e100)
 end
 
 return T
@@ -166,4 +191,20 @@ TEST_CASE("Lua cancels actions, pauses lanes and scales a clock", "[script][acti
     CHECK(f.Pose().Position().x == Catch::Approx(0.0));
     CHECK(f.Pose().Rotation().w == Catch::Approx(1.0f));
     CHECK(f.actions.Value("Fast") == Catch::Approx(0.5f));
+}
+
+TEST_CASE("Lua numbers past the float range are refused before they narrow, and a fallback comes back as given", "[script][actions]")
+{
+    Fixture f;
+    f.Run("action_range", kRangeSource);
+
+    CHECK(ReadProbeField<bool>(f.probe, f.world, f.entity, "setValueRefused"));
+    CHECK(ReadProbeField<bool>(f.probe, f.world, f.entity, "tweenRefused"));
+    CHECK(ReadProbeField<bool>(f.probe, f.world, f.entity, "scaleRefused"));
+    CHECK(ReadProbeField<bool>(f.probe, f.world, f.entity, "laneScaleRefused"));
+    CHECK(ReadProbeField<bool>(f.probe, f.world, f.entity, "durationRefused"));
+    CHECK(ReadProbeField<bool>(f.probe, f.world, f.entity, "fallbackKept"));
+    CHECK_FALSE(f.actions.HasValue("Big"));
+    CHECK(f.actions.TimeScale(ActionClock::Game) == 1.0f);
+    CHECK(f.actions.Count() == 0);
 }

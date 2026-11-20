@@ -81,17 +81,33 @@ namespace mir
             return std::nullopt;
         }
 
-        bool ReadSeconds(const sol::object &value, float &out, std::string_view call, std::string_view argument)
+        // A Lua number is a double, so one such as 1e100 is finite there and infinite as a float. Refused before
+        // it narrows
+        bool ReadFloat(const sol::object &value, float &out, std::string_view call, std::string_view argument)
         {
             double number = 0.0;
             if (!ReadNumber(value, number, call, argument))
                 return false;
-            if (number < 0.0)
+            if (std::abs(number) > std::numeric_limits<float>::max())
+            {
+                MIR_LOG_ERROR("script: {}: {} is {}, outside what a float can hold", call, argument, number);
+                return false;
+            }
+            out = static_cast<float>(number);
+            return true;
+        }
+
+        bool ReadSeconds(const sol::object &value, float &out, std::string_view call, std::string_view argument)
+        {
+            float number = 0.0f;
+            if (!ReadFloat(value, number, call, argument))
+                return false;
+            if (number < 0.0f)
             {
                 MIR_LOG_ERROR("script: {}: {} must not be negative", call, argument);
                 return false;
             }
-            out = static_cast<float>(number);
+            out = number;
             return true;
         }
 
@@ -204,29 +220,30 @@ namespace mir
         LuaHandle WorldTweenValue(World &world, std::string_view name, const sol::object &goal, sol::optional<sol::object> options)
         {
             ActionParams params;
-            double number = 0.0;
+            float number = 0.0f;
             ActionScheduler *actions = SchedulerOf(world, "tween_value");
-            if (!ReadNumber(goal, number, "world:tween_value", "goal") || actions == nullptr ||
+            if (!ReadFloat(goal, number, "world:tween_value", "goal") || actions == nullptr ||
                 !ReadOptions(options, params, "tween_value"))
                 return sol::nullopt;
-            return ToLua(actions->TweenValue(name, static_cast<float>(number), params));
+            return ToLua(actions->TweenValue(name, number, params));
         }
 
         bool WorldSetValue(World &world, std::string_view name, const sol::object &value)
         {
-            double number = 0.0;
+            float number = 0.0f;
             ActionScheduler *actions = SchedulerOf(world, "set_value");
-            if (!ReadNumber(value, number, "world:set_value", "value") || actions == nullptr || name.empty())
+            if (!ReadFloat(value, number, "world:set_value", "value") || actions == nullptr)
                 return false;
-            actions->SetValue(name, static_cast<float>(number));
-            return true;
+            return actions->SetValue(name, number);
         }
 
+        // the fallback goes back exactly as given, never narrowed to a float
         double WorldValue(World &world, std::string_view name, sol::optional<double> fallback)
         {
-            const double otherwise = fallback.value_or(0.0);
             const ActionScheduler *actions = world.TryResource<ActionScheduler>();
-            return actions != nullptr ? actions->Value(name, static_cast<float>(otherwise)) : otherwise;
+            if (actions == nullptr || !actions->HasValue(name))
+                return fallback.value_or(0.0);
+            return actions->Value(name);
         }
 
         bool WorldActionRunning(World &world, const sol::object &handle)
@@ -291,8 +308,7 @@ namespace mir
             ActionScheduler *actions = SchedulerOf(world, "set_lane_time_scale");
             if (!read || !ReadSeconds(scale, number, "world:set_lane_time_scale", "scale") || actions == nullptr)
                 return false;
-            actions->SetLaneTimeScale(*read, number);
-            return true;
+            return actions->SetLaneTimeScale(*read, number);
         }
 
         bool WorldSetActionTimeScale(World &world, const sol::object &scale, sol::optional<std::string> clock)
@@ -309,8 +325,7 @@ namespace mir
             ActionScheduler *actions = SchedulerOf(world, "set_action_time_scale");
             if (actions == nullptr)
                 return false;
-            actions->SetTimeScale(name == "ui" ? ActionClock::UI : ActionClock::Game, number);
-            return true;
+            return actions->SetTimeScale(name == "ui" ? ActionClock::UI : ActionClock::Game, number);
         }
     }
 
