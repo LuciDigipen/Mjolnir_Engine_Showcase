@@ -681,6 +681,7 @@ namespace mir
     void Editor::DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
         DocumentId document)
     {
+        mGizmoHasPointer = false;
         // matches EditorCamera's own Edit-only gating in App::Run
         if (mode.mMode != EngineMode::Edit)
             return;
@@ -812,6 +813,7 @@ namespace mir
 
         if (ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             ImGuizmo::Enable(false);
+        mGizmoHasPointer = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
 
 
         const bool usingGizmo = ImGuizmo::IsUsing();
@@ -1062,6 +1064,7 @@ namespace mir
         const bool down = mWindow->RawInput().IsDown(MouseButton::Left);
         const bool justPressed = down && !mMouseWasDown;
         mMouseWasDown = down;
+        mPendingPick.reset();
 
         if (mode.mMode != EngineMode::Edit)
             return;
@@ -1140,7 +1143,19 @@ namespace mir
                 });
         }
 
-        ApplyClick(world.Resource<Selection>(), hitEntity, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift);
+        // the game UI has not hit-tested this frame's pointer yet
+        mPendingPick = PendingPick{ &world, hitEntity, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift };
+    }
+
+    void Editor::ResolveViewportPick(World &activeWorld, bool gameUIOverWidget)
+    {
+        const std::optional<PendingPick> pick = std::exchange(mPendingPick, std::nullopt);
+        if (!pick || gameUIOverWidget || pick->mWorld != &activeWorld)
+            return;
+        if (!pick->mEntity.IsNull() && !activeWorld.IsAlive(pick->mEntity))
+            return;
+        if (Selection *selection = activeWorld.TryResource<Selection>())
+            ApplyClick(*selection, pick->mEntity, pick->mAdditive);
     }
 
     void Editor::DrawSelectionHighlights(const EngineModeState &mode, World &world)
@@ -2206,6 +2221,11 @@ namespace mir
 
     bool Editor::WantsCaptureKeyboard() const { return ImGui::GetIO().WantCaptureKeyboard; }
     bool Editor::WantsCaptureMouse() const { return ImGui::GetIO().WantCaptureMouse; }
+
+    bool Editor::ViewportToolsHavePointer() const
+    {
+        return mGizmoHasPointer || mViewPieOpen || mExtensions.OwnsViewport();
+    }
 
     void Editor::UpdateCamera(float dt)
     {

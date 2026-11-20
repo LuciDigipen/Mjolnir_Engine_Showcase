@@ -166,6 +166,7 @@ namespace mir
 
         Registration mFrameBegin;
         Registration mDrawer;
+        Registration mLateDrawer;
         Registration mSceneUnload;
         Registration mSceneLoad;
         Registration mSceneSaved;

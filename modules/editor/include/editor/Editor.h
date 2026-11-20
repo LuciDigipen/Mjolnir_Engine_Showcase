@@ -196,6 +196,10 @@ namespace mir
 
         bool WantsCaptureKeyboard() const;
         bool WantsCaptureMouse() const;
+        // the gizmo, the view pie or an extension such as a brush has the pointer in the scene viewport
+        bool ViewportToolsHavePointer() const;
+        // after the game UI's frame: a scene click is applied unless a game widget took it
+        void ResolveViewportPick(World &activeWorld, bool gameUIOverWidget);
 
         void ClearHistory() { mHistory.Clear(); }
 
@@ -391,6 +395,15 @@ namespace mir
         DebugViewSettings mDebugView;
 
         bool mViewPieOpen = false;
+        bool mGizmoHasPointer = false;
+
+        struct PendingPick
+        {
+            World *mWorld = nullptr;
+            Entity mEntity;
+            bool mAdditive = false;
+        };
+        std::optional<PendingPick> mPendingPick;
         // Z came up inside the dead zone: the pie stays until a click or Escape
         bool mViewPieSticky = false;
         glm::vec2 mViewPieCenter{ 0.0f };
