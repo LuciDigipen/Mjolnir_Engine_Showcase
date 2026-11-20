@@ -10,6 +10,8 @@
 
 #include <app/ProjectResources.h>
 #include <project/GameProject.h>
+#include <actions/ActionsModule.h>
+#include <actions_script/ActionsScriptModule.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
@@ -368,6 +370,7 @@ namespace mir
 
             PhysicsModule physics;
             TerrainModule terrainData;
+            ActionsModule actions;
             ScriptModule script;
             ParticlesRuntimeModule particlesRuntime;
             ParticlesScriptModule particlesScript;
@@ -378,6 +381,7 @@ namespace mir
             PhysicsScriptModule physicsScript;
             RendererScriptModule rendererScript;
             TerrainScriptModule terrainScript;
+            ActionsScriptModule actionsScript;
         };
 
         SimulationSystems mSimulation;

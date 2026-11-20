@@ -247,7 +247,7 @@ TEST_CASE("A commit retries until a temporary file handle is released", "[build-
     CHECK_FALSE(fs::exists(out / "running.txt"));
 }
 
-TEST_CASE("--result and --progress are refused inside the output, its .tmp or its .old", "[build-output]")
+TEST_CASE("The result and progress files are refused inside the output, its .tmp or its .old", "[build-output]")
 {
     Sandbox sandbox;
     const fs::path out = sandbox.mRoot / "out";

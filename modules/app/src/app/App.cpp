@@ -180,6 +180,7 @@ namespace mir
         ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
         : physics(context, &jobs),
         terrainData(context),
+        actions(context),
         script(context, assets, resolver),
         particlesRuntime(context, particles, particlesGpu, rendering),
         particlesScript(script),
@@ -189,7 +190,8 @@ namespace mir
         inputScript(script),
         physicsScript(script),
         rendererScript(script),
-        terrainScript(script)
+        terrainScript(script),
+        actionsScript(script)
     {}
 
     struct App::RuntimeSession
