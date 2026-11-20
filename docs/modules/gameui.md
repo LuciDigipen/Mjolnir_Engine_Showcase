@@ -286,7 +286,7 @@ wrap or grid, and no measuring pass.
 | Type | Header | Role |
 |---|---|---|
 | `UIRect`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice |
-| `UIDrawList` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`, `PushClip`/`PopClip`, recorded as `UIDrawCommand`s; `Sprite` nine-slices into `Texture`s |
+| `UIDrawList` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`, `PushClip`/`PopClip`, `PushOpacity`/`PopOpacity`, recorded as `UIDrawCommand`s; `Sprite` nine-slices into `Texture`s |
 | `UITextures` | `gameui/UITextures.h` | Cooked textures as ImGui user textures, handed out as sprites; `Load` from an `AssetCache`, `Add` from a `TextureAsset` |
 | `UIId` | `gameui/UIId.h` | A widget's identity: a `constexpr` hash of a name and an optional index |
 | `UIState`, `UIPointer`, `UIInteraction` | `gameui/UIState.h` | Hot, active and focus, the press latch, the hit test, and `FollowLink` |
@@ -362,6 +362,13 @@ UI is built, so its extent would clip the first frame of every resize.
 
 **Balance every `PushClip`.** `EndFrame` asserts on an unpopped clip, and
 `PopClip` asserts on popping the root.
+
+**Balance every `PushOpacity` too, and know it only fades.** It multiplies the
+alpha of every command recorded until its pop, nested pushes multiply, and
+`EndFrame` asserts on one left open. A widget faded to 0 still takes the
+pointer and focus, so skip or disable it while it is hidden. To fade or slide a
+screen over time, ease the numbers with the `actions` module's value tweens on
+its UI clock and read them each frame: see [actions.md](actions.md).
 
 **Give each widget its own id within a frame.** Two widgets declared with one id
 are one widget to `UIState`: pressing either holds both. It is not an assert,
@@ -583,6 +590,12 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-11-19* — **An opacity stack.** Was: a widget drawn in style colours could
+not be faded, only an `Image` took a tint. Now: `UIDrawList::PushOpacity` and
+`PopOpacity` scale the alpha of everything between them. Because: menus and
+HUD elements fade in and out, and every widget would otherwise need a tint
+argument.
 
 *2026-11-05* — **`GameUIDemo`.** Was: the widget demo was chosen by
 `--ui-demo` at startup only. Now: a World resource the game shell reads each

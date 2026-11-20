@@ -59,6 +59,8 @@ namespace mir
         MIR_ASSERT(mInFrame, "UIContext::EndFrame without BeginFrame");
         MIR_ASSERT(mDrawList.ClipDepth() == 0, "UIContext::EndFrame with {} PushClip unpopped",
                    mDrawList.ClipDepth());
+        MIR_ASSERT(mDrawList.OpacityDepth() == 0, "UIContext::EndFrame with {} PushOpacity unpopped",
+                   mDrawList.OpacityDepth());
 
         if (mInFrame && !mArea.IsEmpty() && mBackend != nullptr)
             mBackend->Submit(mArea, mScale, mDrawList, mTextures);

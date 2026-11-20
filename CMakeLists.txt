@@ -69,6 +69,8 @@ if(BUILD_TESTING)
 endif()
 
 add_subdirectory(third_party)
+add_subdirectory(modules/actions)
+add_subdirectory(modules/actions_script)
 add_subdirectory(modules/animation)
 add_subdirectory(modules/app)
 add_subdirectory(modules/assets)
@@ -472,6 +474,8 @@ endif()
 find_package(nlohmann_json CONFIG REQUIRED)
 
 target_link_libraries(MjolnirEngine PRIVATE
+    mir::actions
+    mir::actions_script
     mir::app
     mir::assets
     mir::core

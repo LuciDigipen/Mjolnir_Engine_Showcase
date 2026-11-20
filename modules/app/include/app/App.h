@@ -10,6 +10,8 @@
 
 #include <app/ProjectResources.h>
 #include <project/GameProject.h>
+#include <actions/ActionsModule.h>
+#include <actions_script/ActionsScriptModule.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
@@ -371,6 +373,9 @@ namespace mir
             PhysicsModule physics;
             TerrainModule terrainData;
             ScriptModule script;
+            // after script: stages run in registration order, so scripts' OnStop at PlayEnd still reads action values
+            // before this module clears them
+            ActionsModule actions;
             ParticlesRuntimeModule particlesRuntime;
             ParticlesScriptModule particlesScript;
         #if MIR_WITH_AUDIO
@@ -380,6 +385,7 @@ namespace mir
             PhysicsScriptModule physicsScript;
             RendererScriptModule rendererScript;
             TerrainScriptModule terrainScript;
+            ActionsScriptModule actionsScript;
         };
 
         SimulationSystems mSimulation;

@@ -72,13 +72,26 @@ namespace mir
 
         size_t ClipDepth() const { return mClipStack.empty() ? 0 : mClipStack.size() - 1; }
 
+        // multiplies the alpha of everything drawn until the matching pop, nested pushes multiply.
+        // Clamped to [0, 1]. A faded widget still takes the pointer
+        void PushOpacity(float opacity);
+        void PopOpacity();
+
+        float CurrentOpacity() const { return mOpacityStack.empty() ? 1.0f : mOpacityStack.back(); }
+
+        size_t OpacityDepth() const { return mOpacityStack.empty() ? 0 : mOpacityStack.size() - 1; }
+
         std::span<const UIDrawCommand> Commands() const { return mCommands; }
         std::string_view TextOf(const UIDrawCommand &command) const;
 
     private:
+        UIColor Faded(UIColor color) const;
+
         std::vector<UIDrawCommand> mCommands;
 
         std::vector<UIRect> mClipStack;
+
+        std::vector<float> mOpacityStack;
 
         std::string mTextBuffer;
     };

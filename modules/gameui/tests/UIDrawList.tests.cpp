@@ -290,3 +290,46 @@ TEST_CASE("A null sprite or an empty rect records nothing, and pieces outside th
     for (const UIDrawCommand &command : list.Commands())
         CHECK(command.mRect.x < 30.0f);
 }
+
+TEST_CASE("PushOpacity fades every kind of command, nested pushes multiply, and PopOpacity restores", "[gameui]")
+{
+    UIDrawList list;
+    list.Reset(100, 100);
+    CHECK(list.CurrentOpacity() == 1.0f);
+
+    list.PushOpacity(0.5f);
+    list.Rect(UIRect{0, 0, 10, 10}, UIColor{1, 1, 1, 0.8f});
+    list.PushOpacity(0.5f);
+    list.Texture(UIRect{0, 0, 10, 10}, UITexture{1});
+    list.Text(0, 0, "faded", kUIWhite);
+    CHECK(list.OpacityDepth() == 2);
+    list.PopOpacity();
+    list.Sprite(UIRect{0, 0, 10, 10}, UISprite{.mTexture = UITexture{1}, .mTextureWidth = 4, .mTextureHeight = 4,
+                                               .mSource = UIRect{0, 0, 4, 4}});
+    list.PopOpacity();
+    list.Rect(UIRect{0, 0, 10, 10}, kUIWhite);
+
+    REQUIRE(list.Commands().size() == 5);
+    CHECK(list.Commands()[0].mColor.a == Catch::Approx(0.4f));
+    CHECK(list.Commands()[1].mColor.a == Catch::Approx(0.25f));
+    CHECK(list.Commands()[2].mColor.a == Catch::Approx(0.25f));
+    CHECK(list.Commands()[3].mColor.a == Catch::Approx(0.5f));
+    CHECK(list.Commands()[4].mColor.a == 1.0f);
+    CHECK(list.Commands()[0].mColor.r == 1.0f);
+    CHECK(list.OpacityDepth() == 0);
+}
+
+TEST_CASE("PushOpacity clamps to 0 and 1, and Reset drops a push left open", "[gameui]")
+{
+    UIDrawList list;
+    list.Reset(100, 100);
+
+    list.PushOpacity(3.0f);
+    CHECK(list.CurrentOpacity() == 1.0f);
+    list.PushOpacity(-1.0f);
+    CHECK(list.CurrentOpacity() == 0.0f);
+
+    list.Reset(100, 100);
+    CHECK(list.OpacityDepth() == 0);
+    CHECK(list.CurrentOpacity() == 1.0f);
+}

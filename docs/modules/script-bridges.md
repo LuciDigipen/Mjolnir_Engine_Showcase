@@ -1,11 +1,11 @@
 # script bridges
 
-Six small libraries, one per engine library with a Lua surface: `audio_script`,
-`input_script`, `physics_script`, `renderer_script` (post-processing) and
-`terrain_script` and `particles_script`. Each adds its library's Lua bindings to the script host, so
+Seven small libraries, one per engine library with a Lua surface: `audio_script`,
+`input_script`, `physics_script`, `renderer_script` (post-processing),
+`terrain_script`, `particles_script` and `actions_script`. Each adds its library's Lua bindings to the script host, so
 neither side links the other.
 
-`mir::audio_script`, `mir::input_script`, `mir::physics_script`, `mir::renderer_script`, `mir::terrain_script`, `mir::particles_script` · each depends `mir::script`, `script_bindings` (public) and its own library (private) · API `modules/<name>_script/include/<name>_script/` · maintainer Sumin Park · reviewed 2026-10-27
+`mir::audio_script`, `mir::input_script`, `mir::physics_script`, `mir::renderer_script`, `mir::terrain_script`, `mir::particles_script`, `mir::actions_script` · each depends `mir::script`, `script_bindings` (public) and its own library (private) · API `modules/<name>_script/include/<name>_script/` · maintainer Sumin Park · reviewed 2026-10-27
 
 ## Model
 
@@ -29,6 +29,7 @@ other library, `script`'s other public headers included.
 | `RendererScriptModule`, `RegisterPostProcessingBindings` | `renderer_script/` | `world:set_fog/get_fog` and the other post-processing pairs |
 | `TerrainScriptModule`, `RegisterTerrainBindings` | `terrain_script/` | `world:terrain_height_at` |
 | `ParticlesScriptModule`, `RegisterParticleBindings` | `particles_script/` | `world:particle_system_start/particle_system_stop/particle_system_pause/particle_system_reset/particle_system_destroy/particle_system_state/particle_system_parameters`, see [particles.md](particles.md) |
+| `ActionsScriptModule`, `RegisterActionBindings` | `actions_script/` | `world:move_to/rotate_to/scale_to/tween_value/set_value/value`, cancelling, lanes and time scales, see [actions.md](actions.md#lua) |
 
 ## Rules
 
@@ -110,6 +111,10 @@ Every function is on the `World` usertype, called as `world:name(entity, ...)`. 
 **The tables.** `PhysicsMotion`, `PhysicsShape` and `PhysicsAxis` map each name to the integer the fields hold.
 
 ## Changed
+
+*2026-11-19*, **`actions_script`.** Was: six bridges. Now: a seventh adds the `actions` module's calls, so a
+script can ease any entity or named value without holding a reference to anything. Because: the old engine needed
+an action list component on one object and a reference to that object everywhere else.
 
 *2026-10-25*, **Layers and ray cast filters in the physics bridge.** Was: every body collided with every other, and
 `world:raycast` hit whatever was first, its caster's own body included. Now: a body has a `layer` that a script sets by

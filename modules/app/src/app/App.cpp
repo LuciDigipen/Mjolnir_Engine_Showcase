@@ -182,6 +182,7 @@ namespace mir
         : physics(context, &jobs),
         terrainData(context),
         script(context, assets, resolver),
+        actions(context),
         particlesRuntime(context, particles, particlesGpu, rendering),
         particlesScript(script),
     #if MIR_WITH_AUDIO
@@ -190,7 +191,8 @@ namespace mir
         inputScript(script),
         physicsScript(script),
         rendererScript(script),
-        terrainScript(script)
+        terrainScript(script),
+        actionsScript(script)
     {}
 
     struct App::RuntimeSession
