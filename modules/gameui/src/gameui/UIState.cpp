@@ -23,7 +23,9 @@ namespace mir
         mPointerX = (pointer.mX - area.x) / scale;
         mPointerY = (pointer.mY - area.y) / scale;
 
-        mPointerMoved = mHasLastPointer && (pointer.mX != mLastPointerX || pointer.mY != mLastPointerY);
+        mPointerWithheld = pointer.mWithheld;
+        mPointerMoved = !mPointerWithheld && mHasLastPointer &&
+                        (pointer.mX != mLastPointerX || pointer.mY != mLastPointerY);
         mLastPointerX = pointer.mX;
         mLastPointerY = pointer.mY;
         mHasLastPointer = true;
@@ -36,8 +38,11 @@ namespace mir
         if (mRevealFocus)
             mConfirm = false;
 
-        mPressed = pointer.mDown && !mDown;
+        // a button held while withheld is latched as down, so taking the pointer back mid-hold presses nothing
+        mPressed = !mPointerWithheld && pointer.mDown && !mDown;
         mDown = pointer.mDown;
+        if (mPointerWithheld)
+            mActive = UIId{};
 
         mNavAdjusted = false;
         mNextHot = UIId{};
@@ -160,6 +165,6 @@ namespace mir
 
     bool UIState::HitTest(const UIRect &rect, const UIRect &clip) const
     {
-        return Contains(Intersect(Intersect(rect, clip), mBounds), mPointerX, mPointerY);
+        return !mPointerWithheld && Contains(Intersect(Intersect(rect, clip), mBounds), mPointerX, mPointerY);
     }
 } // namespace mir

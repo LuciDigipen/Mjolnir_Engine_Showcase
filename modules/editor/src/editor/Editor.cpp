@@ -21,6 +21,7 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <gameui/GameUIArea.h>
 #include <gameui/GameUIDemo.h>
 #include <editor/EditorWidgets.h>
 #include <physics_layers/PhysicsLayers.h>
@@ -681,6 +682,7 @@ namespace mir
     void Editor::DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
         DocumentId document)
     {
+        mGizmoHasPointer = false;
         // matches EditorCamera's own Edit-only gating in App::Run
         if (mode.mMode != EngineMode::Edit)
             return;
@@ -812,6 +814,7 @@ namespace mir
 
         if (ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             ImGuizmo::Enable(false);
+        mGizmoHasPointer = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
 
 
         const bool usingGizmo = ImGuizmo::IsUsing();
@@ -1057,7 +1060,7 @@ namespace mir
         mCamera.FocusOn(pose.position, bounds != nullptr ? BoundsRadius(*bounds, pose.linear) : 0.0f);
     }
 
-    void Editor::UpdateViewportPicking(const EngineModeState &mode, World &world)
+    void Editor::UpdateViewportPicking(const EngineModeState &mode, World &world, bool gameUIOverWidget)
     {
         const bool down = mWindow->RawInput().IsDown(MouseButton::Left);
         const bool justPressed = down && !mMouseWasDown;
@@ -1081,6 +1084,10 @@ namespace mir
 
         // a click that picks a pie wedge is not a pick in the scene
         if (mViewPieOpen)
+            return;
+
+        // the game UI draws over every tab's viewport and takes a click on one of its widgets
+        if (gameUIOverWidget)
             return;
 
         if (!justPressed)
@@ -1505,7 +1512,8 @@ namespace mir
                     sceneMin + sceneSize);
             }
 
-            UpdateViewportPicking(mode, activeWorld);
+            const GameUIPointer *gameUI = sceneWorld.TryResource<GameUIPointer>();
+            UpdateViewportPicking(mode, activeWorld, gameUI != nullptr && gameUI->mOverWidget);
             FocusSelection(mode, activeWorld);
             UpdateHistoryShortcuts(actions, mode);
             UpdateBuildShortcuts(actions, mode, build);
@@ -2206,6 +2214,11 @@ namespace mir
 
     bool Editor::WantsCaptureKeyboard() const { return ImGui::GetIO().WantCaptureKeyboard; }
     bool Editor::WantsCaptureMouse() const { return ImGui::GetIO().WantCaptureMouse; }
+
+    bool Editor::ViewportToolsHavePointer() const
+    {
+        return mGizmoHasPointer || mViewPieOpen || mExtensions.OwnsViewport();
+    }
 
     void Editor::UpdateCamera(float dt)
     {

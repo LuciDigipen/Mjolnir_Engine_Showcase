@@ -47,6 +47,8 @@ function registered with `AddScreen`. `SetSuspended(true)` makes `RunFrame` retu
 calls it; today that is `gameui_imgui`, which runs it in the ImGui frame's
 `Game` drawer group. The area comes from the `GameUIArea` World resource, which
 the editor's drawer writes with its scene viewport, or is the whole window.
+After each frame it writes `GameUIPointer::mOverWidget`: whether a widget is
+under the pointer or held by it.
 
 A widget is a rect plus a `UIId`. The id is a hash of a name and an optional
 index, the trick ImGui uses, so a widget in a loop keeps its identity
@@ -356,6 +358,18 @@ in the `Game` group, after every `Tools` drawer, so the area is this frame's.
 Neither library depends on the other, so the order comes from the group, not
 from declaration order.
 
+**A click in the viewport goes to one owner: the editor's tools, then the game
+UI, then the scene.** The tools have it while ImGui wants the mouse (a window,
+popup or menu under the pointer, or a drag that began in one) or while the
+editor sets `GameUIArea::mToolsHavePointer` (the gizmo, the view pie, or an
+extension such as a terrain brush). The bridge then passes a `UIPointer` with
+`mWithheld` set: nothing is hovered or pressed, a held widget lets go without a
+click, and the cursor is not hidden. Otherwise a widget that is hot or held, as
+`GameUIPointer` says, keeps the click from the editor's picking. The game UI's
+answer is from the frame before, because the editor draws first, so a pointer
+that lands on a widget and presses in the same frame still picks. Only widgets
+take the pointer: a panel drawn as a plain `Image` lets a click through.
+
 **The fullscreen area is the window's framebuffer size, not the swapchain's.**
 The swapchain catches up to a resize only inside `DrawFrame`, a frame after the
 UI is built, so its extent would clip the first frame of every resize.
@@ -546,11 +560,10 @@ looks right is verified by running `--ui-demo`.
 
 1. ~~**Textures.**~~ Landed 2026-10-02, through ImGui's dynamic texture path
    rather than a renderer bridge. See Art.
-2. **Pointer ownership.** Whether the game UI or the editor owns a click in the
-   viewport: a hot game widget should stop the editor picking under it, and an
-   editor popup over the viewport should hide the pointer from the game UI.
-   Belongs with `imguiruntime`'s input-capture item. Hit testing itself landed
-   2026-09-28.
+2. ~~**Pointer ownership.**~~ Landed 2026-11-20. See Rules. Left: a panel
+   that is not a widget, such as a backdrop `Image`, does not take the pointer,
+   and nothing yet keeps a click on a game widget from gameplay's mouse
+   bindings in Play.
 3. **Content from the game.** Replace `UIDemoScreen` as the only game UI with UI a game
    authors, through Lua or data.
 4. ~~**Text measurement**~~ for layout landed 2026-11-04. Culling text by its
@@ -590,6 +603,13 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-11-20* — **The pointer has one owner.** Was: the editor picked the entity
+behind a game button that was clicked, and the game UI hovered and clicked
+under an editor popup over the viewport. Now: `UIPointer::mWithheld`,
+`GameUIArea::mToolsHavePointer` and `GameUIPointer` hand each click to the
+editor's tools, the game UI or the scene, in that order. Because: one click
+did two things whenever a game screen was open in the editor.
 
 *2026-11-19* — **An opacity stack.** Was: a widget drawn in style colours could
 not be faded, only an `Image` took a tint. Now: `UIDrawList::PushOpacity` and

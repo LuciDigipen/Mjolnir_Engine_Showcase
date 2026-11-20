@@ -98,10 +98,10 @@ every frame and shutdown, and `smoke.switch` covers the restart that reloads
 1. ~~**`gameui`**, the second client~~, landed 2026-09-27; it draws into the
    background list between the same `BeginFrame` and `EndFrame`. See
    [gameui.md](gameui.md).
-2. **Input capture.** `App` still asks `Editor::WantsCaptureKeyboard`/
-   `WantsCaptureMouse`, which read the shared `ImGuiIO`. Once `gameui` also
-   draws, that question is about the context rather than the editor, and belongs
-   here.
+2. ~~**Input capture.**~~ Landed 2026-10-24: `RunUI` hands ImGui's own capture
+   to `InputState`, and `App` no longer asks the editor. Which of the editor
+   and the game UI owns a click is gameui's pointer rule, landed 2026-11-20.
+   See [gameui.md](gameui.md).
 3. **Font choice per build.** The icon font is loaded unconditionally; a game
    that wants its own fonts has no hook yet.
 

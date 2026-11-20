@@ -196,6 +196,8 @@ namespace mir
 
         bool WantsCaptureKeyboard() const;
         bool WantsCaptureMouse() const;
+        // the gizmo, the view pie or an extension such as a brush has the pointer in the scene viewport
+        bool ViewportToolsHavePointer() const;
 
         void ClearHistory() { mHistory.Clear(); }
 
@@ -261,7 +263,7 @@ namespace mir
         // Applies the pivot's change since the drag began to every target, as one merging command.
         void ApplyGizmoDrag(World &world);
         void DrawViewportPrefabDrop(bool documentTab, World &world);
-        void UpdateViewportPicking(const EngineModeState &mode, World &world);
+        void UpdateViewportPicking(const EngineModeState &mode, World &world, bool gameUIOverWidget);
         // F moves the scene camera next to the primary selection.
         void FocusSelection(const EngineModeState &mode, World &world);
         void DrawSelectionHighlights(const EngineModeState &mode, World &world);
@@ -391,6 +393,7 @@ namespace mir
         DebugViewSettings mDebugView;
 
         bool mViewPieOpen = false;
+        bool mGizmoHasPointer = false;
         // Z came up inside the dead zone: the pie stays until a click or Escape
         bool mViewPieSticky = false;
         glm::vec2 mViewPieCenter{ 0.0f };

@@ -23,6 +23,7 @@ namespace mir
     GameUIModule::GameUIModule(ModuleContext context) : mWorld(context.world)
     {
         context.world.EmplaceResource<GameUIArea>();
+        context.world.EmplaceResource<GameUIPointer>();
         context.world.EmplaceResource<GameUIDemo>();
 
         mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin,
@@ -33,10 +34,13 @@ namespace mir
 
     void GameUIModule::RunFrame(const UIRect &area, const UIPointer &pointer)
     {
+        GameUIPointer &owned = mWorld.Resource<GameUIPointer>();
+        owned.mOverWidget = false;
         if (mSuspended)
             return;
         mUI.BeginFrame(area, mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(), pointer);
         mScreens.Run(mUI, mFrameDt);
         mUI.EndFrame();
+        owned.mOverWidget = !mUI.State().Hot().IsNull() || !mUI.State().Active().IsNull();
     }
 }

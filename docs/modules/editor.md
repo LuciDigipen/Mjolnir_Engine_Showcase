@@ -167,7 +167,9 @@ scene ops and the Prefab documents. Its ImGui drawer draws the layout, turns the
 requests (scene commands, a game to open) or carries them out (an import, a
 content browser action, opening a file in the IDE), then feeds viewport 0's rect
 and, in Edit, the editor camera to `RenderSystem`, and the scene viewport to
-the `GameUIArea` resource for the game UI drawn later that frame. The drawer is
+the `GameUIArea` resource for the game UI drawn later that frame, with
+`mToolsHavePointer` set in Edit while the gizmo, the view pie or an extension
+that owns the viewport has the pointer. The drawer is
 in the `Tools` group, which runs before the game UI's. Its `FrameBegin` work polls
 the import and the content browser and asks for the swap once a cook finishes.
 Its stage functions keep the history and the unsaved mark: `SceneLoad` clears
@@ -324,7 +326,8 @@ viewport (`Editor::UpdateViewportPicking`, a ray/AABB test against every
 `(WorldTransform, MeshRenderer, MeshBounds)` entity - see
 [renderer.md](renderer.md) for `MeshBounds` - plus `RayIntersectsSphere`
 against every component that registered a pick radius, such as `Light`; the
-nearest entry along the ray wins), writes it into `Selection`
+nearest entry along the ray wins; a click on a game UI widget, as the scene
+World's `GameUIPointer` says, is the game UI's and picks nothing), writes it into `Selection`
 (`editor/Selection.h`), a `World` resource `HierarchyPanel` installs on
 first draw if nothing already has. Both call the same
 `ApplyClick(Selection&, Entity, bool additive)`: a plain click replaces the
@@ -678,6 +681,8 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-11-20* — **Viewport picking leaves game UI widgets alone.** Was: a click on a game button in Edit also selected the entity behind it. Now: picking skips a click the game UI holds, and the drawer reports the gizmo, the view pie and a viewport-owning extension in `GameUIArea::mToolsHavePointer` so the game UI stays out of their way. Because: one click did two things. See [gameui.md](gameui.md).
 
 *2026-11-05*, **The settings panels edit the project's values.** Was: `ProjectSettingsPanel`, `PostProcessingPanel` and `InputSettingsPanel` copied the live value into a whole-settings draft, assigned it back on Save, and so hid a script's later write and overwrote it. Now: the widgets edit the shared value, Save only writes it, SSGI, DDGI and a layer name edit a buffer until valid, the audio defaults edit through `SetDefaults`, Save no longer sets the live levels, and "Revert" became "Reload Saved Audio Defaults" and "Reload Saved Physics Layers". Because: a draft is a second owner of project configuration, and an invalid value in the renderer or the physics table would otherwise be applied or logged for every keystroke.
 

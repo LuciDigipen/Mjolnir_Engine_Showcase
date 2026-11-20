@@ -1,7 +1,7 @@
 /**
  * @file GameUIArea.h
  * @author sumin.park
- * @brief Where this frame's game UI goes, as a World resource.
+ * @brief Where this frame's game UI goes, and whether it has the pointer, as World resources.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -18,5 +18,14 @@ namespace mir
     {
         UIRect mRect;
         bool mSet = false;
+        // an editor tool over the viewport, such as the gizmo, has the pointer, so the game UI does not get it
+        bool mToolsHavePointer = false;
+    };
+
+    // Written at the end of each game UI frame: a widget is under the pointer or held by it, so a click there is
+    // the game UI's and the editor does not pick through it
+    struct GameUIPointer
+    {
+        bool mOverWidget = false;
     };
 }

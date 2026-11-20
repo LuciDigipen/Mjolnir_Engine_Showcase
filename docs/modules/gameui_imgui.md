@@ -11,7 +11,9 @@ a bridge, so gameui never sees ImGui and imguiruntime never sees gameui.
 `GameUIImGuiModule` installs an `ImGuiUIBackend` on the game UI's context and
 registers a drawer in the `Game` group. Each frame the drawer takes the area
 from `GameUIArea`, or the whole window, the pointer from the window's raw input,
-and calls `GameUIModule::RunFrame`.
+and calls `GameUIModule::RunFrame`. The pointer is withheld while ImGui wants
+the mouse or `GameUIArea::mToolsHavePointer` is set, and a withheld pointer
+leaves the cursor shown. See gameui.md's Rules.
 
 `ImGuiUIBackend` replays a draw list into ImGui's background list, its UI units
 times the frame's scale, font size and rounding included. ImGui renders that list
@@ -54,6 +56,11 @@ loading through an `AssetCache`, teardown before and after the context, and
 None yet.
 
 ## Changed
+
+*2026-11-20* — **The pointer is withheld under the editor.** Was: the game UI
+read the raw mouse even with an ImGui popup or the gizmo over it. Now: the
+drawer sets `UIPointer::mWithheld` from `WantCaptureMouse` and
+`GameUIArea::mToolsHavePointer`. Because: one click did two things.
 
 *2026-10-24* — **Added.** Was: `UIBackendImGui.cpp` in `gameui`, and `App`
 drew the game UI in its own ImGui drawer. Now: this bridge. Because: gameui must

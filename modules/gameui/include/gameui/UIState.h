@@ -31,6 +31,10 @@ namespace mir
 
         // The primary button
         bool mDown = false;
+
+        // Something above the game UI has the pointer, such as an editor popup: nothing is hovered or pressed, and
+        // a held widget lets go without a click
+        bool mWithheld = false;
     };
 
 
@@ -106,6 +110,7 @@ namespace mir
 
         bool FocusVisible() const { return mFocusVisible; }
 
+        bool PointerWithheld() const { return mPointerWithheld; }
         float PointerX() const { return mPointerX; }
         float PointerY() const { return mPointerY; }
         bool PointerMoved() const { return mPointerMoved; }
@@ -127,6 +132,7 @@ namespace mir
         float mPointerX = 0.0f;
         float mPointerY = 0.0f;
         bool mDown = false;
+        bool mPointerWithheld = false;
 
         bool mPressed = false;
 
