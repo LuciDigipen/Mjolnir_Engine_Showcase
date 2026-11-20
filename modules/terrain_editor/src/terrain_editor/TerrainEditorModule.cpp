@@ -209,7 +209,8 @@ namespace mir
                 if (error.empty()) SucceedMaterial("Shader published and material queued for import.");
                 else FailMaterial("Material files saved. " + error);
             }
-            if (mPainting && (SelectedAsset() != mStrokeAsset || mWorkspace.SelectedLayer() != mStrokeSequence))
+            if (mPainting && (!mMode.Active() || !context.mInput.IsDown(MouseButton::Left) ||
+                SelectedAsset() != mStrokeAsset || mWorkspace.SelectedLayer() != mStrokeSequence))
                 FinishStroke(context.mHistory);
         }
 
@@ -231,9 +232,11 @@ namespace mir
                 RefreshPaintedLayers(document, SelectedAsset());
 
                 std::string chosenMaterial = ChosenMaterial();
+                ImGui::BeginDisabled(mPainting);
                 const TerrainPanelActions actions = mPanel.Draw(mMode, mWorkspace, context.mHistory,
                     Availability(context), BakeView(context), MaterialLayersView(context, document),
                     mWeights.Layers(), chosenMaterial);
+                ImGui::EndDisabled();
                 if (mWeights.Ready() && chosenMaterial != ChosenMaterial())
                     mMaterialLayers[SelectedAsset().value] = std::move(chosenMaterial);
                 if (actions.mRescanMaterials)
@@ -263,6 +266,12 @@ namespace mir
         bool OwnsViewport() const override { return mMode.Active(); }
 
         void DrawOverlay(const EditorExtensionContext &context) override;
+
+        void BeforeHistoryFlush(History &history) override
+        {
+            if (mPainting)
+                FinishStroke(history);
+        }
 
     private:
         AssetId SelectedAsset() const

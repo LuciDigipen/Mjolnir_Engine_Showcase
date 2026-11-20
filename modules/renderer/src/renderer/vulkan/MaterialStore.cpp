@@ -1039,7 +1039,22 @@ namespace mir::vk
             return true;
 
         entry.mIndex = material.mMaterialIndex;
-        entry.mPipeline = BuildPipeline(material.mDesc, mColorFormat);
+        auto desc = material.mDesc;
+        const SurfaceMaterialCatalog &catalog = mReloadCatalogStaged ? mReloadCatalog : mSurfaceMaterials;
+        const SurfaceMaterialRegistration *registration = nullptr;
+        if (material.mSurfaceMaterial)
+        {
+            const auto *accepted = mSurfaceMaterials.Find(desc.shaderName, desc.surfaceAsset);
+            if (accepted) registration = catalog.FindByAsset(accepted->asset, accepted->frontend);
+            if (!registration)
+            {
+                if (error) *error = "surface material '" + desc.shaderName + "' lost its registration";
+                return false;
+            }
+            desc.shaderName = registration->stem;
+            entry.mShaderName = desc.shaderName;
+        }
+        entry.mPipeline = BuildPipeline(desc, mColorFormat);
         if (entry.mPipeline == VK_NULL_HANDLE)
         {
             if (error != nullptr)
@@ -1051,7 +1066,7 @@ namespace mir::vk
         // replacement generation here, so it never mixes old and new modules.
         if (material.mSurfacePipeline != VK_NULL_HANDLE)
         {
-            entry.mSurfacePipeline = BuildPipeline(material.mDesc, mColorFormat, PipelineTarget::OpaqueSsgi);
+            entry.mSurfacePipeline = BuildPipeline(desc, mColorFormat, PipelineTarget::OpaqueSsgi);
             if (entry.mSurfacePipeline == VK_NULL_HANDLE)
             {
                 if (error != nullptr)
@@ -1069,15 +1084,6 @@ namespace mir::vk
             return true;
         }
 
-        const SurfaceMaterialCatalog &catalog = mReloadCatalogStaged ? mReloadCatalog : mSurfaceMaterials;
-        const SurfaceMaterialRegistration *const registration =
-            catalog.Find(material.mDesc.shaderName, material.mDesc.surfaceAsset);
-        if (registration == nullptr)
-        {
-            if (error != nullptr)
-                *error = "surface material '" + material.mDesc.shaderName + "' lost its registration";
-            return false;
-        }
         const uint32_t registrationIndex = catalog.IndexOf(registration);
         if (registrationIndex == UINT32_MAX)
         {
@@ -1204,6 +1210,8 @@ namespace mir::vk
             if (entry.mIndex >= mMaterials.size())
                 continue;
             GpuMaterial &material = mMaterials[entry.mIndex];
+            if (!entry.mShaderName.empty())
+                material.mDesc.shaderName = std::move(entry.mShaderName);
             if (entry.mPipeline != VK_NULL_HANDLE)
             {
                 if (material.mPipeline != VK_NULL_HANDLE)

@@ -23,6 +23,7 @@ struct ImDrawList;
 namespace mir
 {
     class History;
+    class ISceneOps;
     class World;
     struct EngineModeState;
 
@@ -63,6 +64,9 @@ namespace mir
 
         // after the gizmo, into the viewport overlay
         virtual void DrawOverlay(const EditorExtensionContext &context) { (void)context; }
+
+        // Before queued commands or undo/redo may invalidate an active gesture.
+        virtual void BeforeHistoryFlush(History &history) { (void)history; }
     };
 
     // Extensions run in registration order; each Registration removes its extension when it dies.
@@ -79,6 +83,7 @@ namespace mir
         void DrawWindows(const EditorExtensionContext &context) const;
         void DrawToolbar(const EditorExtensionContext &context) const;
         void DrawOverlay(const EditorExtensionContext &context) const;
+        void FlushHistory(History &history, World &world, ISceneOps &scene) const;
         bool OwnsViewport() const;
         std::vector<const char *> WindowNames() const;
 

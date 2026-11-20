@@ -27,7 +27,8 @@ namespace mir::terrainbake
     // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package. 10: prune.
     // 11: sync keeps the base heights cache. 12: material weight payloads. 13: Region weight images.
     // 14: sync keeps the base weights cache. 15: package honors release reader locks.
-    inline constexpr uint32_t kTerrainToolVersion = 15;
+    // 16: recipe loading detects interrupted Edit Layer saves.
+    inline constexpr uint32_t kTerrainToolVersion = 16;
     inline constexpr uint32_t kTerrainReportVersion = 6;
 
     // In report order.

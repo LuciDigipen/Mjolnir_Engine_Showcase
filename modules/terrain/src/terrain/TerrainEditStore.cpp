@@ -103,9 +103,28 @@ namespace mir
     {
         using Result = std::vector<TerrainEditLayer>;
 
-        std::error_code ec;
-        if (!std::filesystem::exists(layersDir, ec))
+        if (layersDir.empty())
             return {Result{}, {}};
+
+        std::error_code ec;
+        if (!std::filesystem::exists(layersDir, ec) && !ec)
+        {
+            auto backup = layersDir;
+            backup += ".old";
+            if (std::filesystem::exists(backup, ec))
+                return Fail<Result>(Code::Io, "{}: the saved Edit Layers are in {}. Reopen the terrain in the "
+                                    "editor to recover them before baking.", GenericPathUtf8(layersDir),
+                                    GenericPathUtf8(backup));
+            if (ec)
+                return Fail<Result>(Code::Io, "{}: cannot inspect the saved Edit Layers ({})",
+                                    GenericPathUtf8(backup), ec.message());
+            // The editor may have promoted or restored the live directory between the two probes.
+            if (!std::filesystem::exists(layersDir, ec) && !ec)
+                return {Result{}, {}};
+        }
+        if (ec)
+            return Fail<Result>(Code::Io, "{}: cannot inspect the edit layer directory ({})",
+                                GenericPathUtf8(layersDir), ec.message());
         if (!std::filesystem::is_directory(layersDir, ec))
             return Fail<Result>(Code::Io, "{}: the edit layer path is not a directory", GenericPathUtf8(layersDir));
 

@@ -13,6 +13,7 @@
 #include <terrain_editor/TerrainLayerDocument.h>
 #include <terrain_editor/TerrainPaintBrush.h>
 
+#include <editor/EditorExtension.h>
 #include <editor/history/History.h>
 #include <editor/history/SceneOps.h>
 
@@ -242,6 +243,66 @@ TEST_CASE("One brush stroke is one History step and undo removes the tiles it cr
     CHECK(document.Layers() == afterStack);
     CHECK(document.Unsaved());
     CHECK_FALSE(editing.Steps().IsUnsaved(kSceneDocument));
+}
+
+TEST_CASE("Undo during a drag finishes the stroke before changing the layer stack", "[terrain_editor][brush]")
+{
+    Editing editing;
+    TerrainLayerDocument &document = editing.Document();
+    editing.Run(std::make_unique<AddTerrainLayerCommand>(document, TerrainEditBlend::Additive));
+    const uint32_t sequence = document.Layers().front().info.sequence;
+
+    struct Painting final : mir::IEditorExtension
+    {
+        Painting(TerrainLayerDocument &document, uint32_t sequence, const TerrainLayout &layout)
+            : document(document), sequence(sequence), stroke(std::in_place, *document.MutableLayer(sequence),
+                                                            layout, "sand")
+        {
+        }
+        void BeforeHistoryFlush(History &history) override
+        {
+            if (!stroke)
+                return;
+            if (!stroke->Empty())
+                history.Submit(std::make_unique<TerrainBrushCommand>(document, sequence,
+                    stroke->Before(), stroke->After()), true);
+            stroke.reset();
+        }
+
+        TerrainLayerDocument &document;
+        uint32_t sequence;
+        std::optional<TerrainPaintStroke> stroke;
+    } painting(document, sequence, MakeLayout());
+    mir::EditorExtensions extensions;
+    const auto registration = extensions.Add(painting);
+    const auto flush = [&] { extensions.FlushHistory(editing.Steps(), editing.mWorld, editing.mScene); };
+    flush();
+    REQUIRE(painting.stroke);
+
+    bool dabbed = false;
+    SECTION("the stroke has painted") { dabbed = true; }
+    SECTION("undo would remove the layer under an empty stroke") {}
+    if (dabbed)
+    {
+        const auto center = TerrainLocalPosition::FromMeters({4.0, 0.0, 4.0});
+        REQUIRE(center);
+        TerrainBrushSettings settings;
+        settings.brush = mir::TerrainBrush::Paint;
+        REQUIRE(painting.stroke->Dab(*center, settings, 0.1).Ok());
+        REQUIRE_FALSE(painting.stroke->Empty());
+    }
+
+    editing.Steps().RequestUndo();
+    flush();
+    CHECK_FALSE(painting.stroke);
+    if (dabbed)
+    {
+        REQUIRE(document.Find(sequence));
+        CHECK(document.Find(sequence)->tiles.empty());
+        editing.Steps().RequestUndo();
+        flush();
+    }
+    CHECK(document.Layers().empty());
 }
 
 TEST_CASE("A height stroke over a weight tile keeps the weights and undo restores the tile",

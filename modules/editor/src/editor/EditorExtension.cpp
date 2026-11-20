@@ -7,6 +7,7 @@
  *
  */
 #include <editor/EditorExtension.h>
+#include <editor/history/History.h>
 
 #include <algorithm>
 
@@ -49,6 +50,14 @@ namespace mir
     {
         for (const Entry &entry : mEntries)
             entry.mExtension->DrawOverlay(context);
+    }
+
+    void EditorExtensions::FlushHistory(History &history, World &world, ISceneOps &scene) const
+    {
+        if (history.HasPendingWork())
+            for (const Entry &entry : mEntries)
+                entry.mExtension->BeforeHistoryFlush(history);
+        history.Flush(world, scene);
     }
 
     bool EditorExtensions::OwnsViewport() const

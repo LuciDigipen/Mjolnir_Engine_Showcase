@@ -37,7 +37,7 @@ namespace mir
     // Nullopt unless name is exactly the file name of the coordinate it spells.
     std::optional<TileCoord> ParseTerrainEditTileFileName(std::string_view name);
 
-    // A missing directory is an empty stack; every other mismatch fails and names its file.
+    // A missing directory is an empty stack unless the saved layers still await editor recovery in .old.
     TerrainResult<std::vector<TerrainEditLayer>> LoadTerrainEditStack(const std::filesystem::path &layersDir);
 
     struct TerrainEditStackFile

@@ -24,6 +24,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <future>
@@ -475,12 +476,47 @@ TEST_CASE("Watcher compiles real manifest frontends and owns new material layout
         CHECK(std::filesystem::is_regular_file(mir::ShaderPath(registration->stem + ".fragmentMain.spv")));
         CHECK(std::filesystem::is_regular_file(mir::ShaderPath(registration->stem + ".closestHitSurface.spv")));
 
+        auto newShader = *definition;
+        newShader.replace(newShader.find("DefaultMaterial"), std::string("DefaultMaterial").size(), "OtherMaterial");
+        REQUIRE(mir::WriteText(content / "other.slang", newShader));
+        auto changedMaterial = material;
+        changedMaterial["shader"] = {{"file", "other.slang"}, {"type", "OtherMaterial"}};
+        REQUIRE(mir::WriteText(content / "new.material.json", changedMaterial.dump()));
+        publish(4);
+        const auto together = store.CurrentId();
+        REQUIRE(together);
+        mir::SetShaderRootOverride(store.GenerationPath(*together));
+        const auto updatedCatalog = mir::LoadSurfaceMaterialCatalog(&error);
+        REQUIRE(updatedCatalog);
+        const auto *child = updatedCatalog->FindByAsset("content/new.material.json", "terrain");
+        const auto *parent = updatedCatalog->FindByAsset(registration->asset, "terrain");
+        REQUIRE(child);
+        REQUIRE(parent);
+        CHECK(child->type == "OtherMaterial");
+        CHECK(parent->type == "Layered2<OtherMaterial, OtherMaterial>");
+        const auto updatedManifest = mir::LoadShaderManifest(mir::ShaderPath("shader_manifest.json"));
+        REQUIRE(updatedManifest);
+        for (const auto *stage : {".fragmentMain.spv", ".closestHitSurface.spv", ".layout.spv"})
+        {
+            const auto *output = updatedManifest->Find(parent->stem + stage);
+            REQUIRE(output);
+            CHECK(output->specialize == parent->type);
+            CHECK(std::ranges::find(output->arguments, Utf8(content / "other.slang")) != output->arguments.end());
+        }
+
+        changedMaterial["frontends"] = {"mesh"};
+        REQUIRE(mir::WriteText(content / "new.material.json", changedMaterial.dump()));
+        REQUIRE(Pump(watcher, [&] { return watcher.LastDiagnostic().find("no terrain shader registration") !=
+            std::string::npos; }, kRealShaderTimeout));
+        CHECK(fixture.commits == 4);
+        CHECK(store.CurrentId() == together);
+
         REQUIRE(mir::WriteText(layeredPath, "{}"));
         result.reset();
         watcher.QueueTerrainMaterial(layeredPath, [&](std::string diagnostic) { result = std::move(diagnostic); });
         REQUIRE(Pump(watcher, [&] { return result.has_value(); }, kRealShaderTimeout));
         CHECK_FALSE(result->empty());
-        CHECK(store.CurrentId() == published);
+        CHECK(store.CurrentId() == together);
     }
 }
 
@@ -669,4 +705,32 @@ TEST_CASE("A live Vulkan terrain draw can use a newly published layer", "[.gpu][
         CHECK(std::abs(unchanged[channel] - expected[channel]) <= 2);
         CHECK(std::abs(resized[channel] - expected[channel]) <= 2);
     }
+
+    auto otherShader = *shader;
+    otherShader.replace(otherShader.find("DefaultMaterial"), std::string("DefaultMaterial").size(), "OtherMaterial");
+    otherShader.insert(otherShader.find("float4 albedoRoughness;"), "float4 otherField;\n    ");
+    const std::string albedo = "output.albedo = albedoRoughness.rgb";
+    otherShader.replace(otherShader.find(albedo), albedo.size(), "output.albedo = albedoRoughness.gbr");
+    REQUIRE(WriteText(shaderPath, otherShader));
+    const auto childText = ReadText(materialPath);
+    REQUIRE(childText);
+    auto childSource = nlohmann::json::parse(*childText);
+    childSource["shader"]["type"] = "OtherMaterial";
+    const auto lastGeneration = renderer.ReloadStats().mGeneration;
+    REQUIRE(WriteText(materialPath, childSource.dump()));
+    REQUIRE(Pump(watcher, [&] { return renderer.ReloadStats().mGeneration > lastGeneration ||
+        !watcher.LastDiagnostic().empty(); }, kRealShaderTimeout));
+    INFO(watcher.LastDiagnostic());
+    REQUIRE(renderer.ReloadStats().mGeneration == lastGeneration + 1);
+    const auto reboundChild = capture(fixture / "changed-child.png");
+    item.material = accepted->mMaterial;
+    const auto reboundRecord = renderer.MaterialRecord(item.material);
+    REQUIRE(reboundRecord);
+    CHECK(reboundRecord->mBytes.size() > expanded->mBytes.size());
+    item.terrain = TerrainDrawData{texture.mIndex, renderer.MaterialSamplerRow({}),
+        {1, kTerrainSlotUnused, kTerrainSlotUnused, kTerrainSlotUnused}, 1.0f}.Pack();
+    const auto reboundParent = capture(fixture / "changed-parent.png");
+    CHECK(reboundChild[0] > reboundChild[1] + 30);
+    for (size_t channel = 0; channel < reboundChild.size(); ++channel)
+        CHECK(std::abs(reboundParent[channel] - reboundChild[channel]) <= 2);
 }

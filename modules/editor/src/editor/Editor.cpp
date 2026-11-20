@@ -1804,7 +1804,7 @@ namespace mir
         if (PlayEditing())
             mPlayHistory.Flush(activeWorld, *mPlaySceneOps);
         else if (mSceneOps != nullptr && mode.mMode == EngineMode::Edit)
-            mHistory.Flush(sceneWorld, *mSceneOps);
+            mExtensions.FlushHistory(mHistory, sceneWorld, *mSceneOps);
 
         return actions;
     }

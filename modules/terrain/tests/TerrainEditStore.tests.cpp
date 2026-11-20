@@ -202,6 +202,32 @@ TEST_CASE("A missing Edit Layer directory or layer directory contributes no tile
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Only the live Edit Layer stack is committed", "[terrain][editstore]")
+{
+    const auto root = MakeScratchDir("editstore_interrupted");
+    const auto live = root / "hills.terrain.layers";
+    const auto backup = root / "hills.terrain.layers.old";
+    const auto saving = root / "hills.terrain.layers.saving";
+    WriteManifest(saving, std::vector{Info("Uncommitted", 1, TerrainEditBlend::Additive)});
+    const auto firstSave = LoadTerrainEditStack(live);
+    REQUIRE(firstSave);
+    CHECK(firstSave.value->empty());
+
+    WriteManifest(backup, std::vector{Info("Previous", 1, TerrainEditBlend::Additive)});
+    const auto interrupted = LoadTerrainEditStack(live);
+    REQUIRE_FALSE(interrupted);
+    CHECK(interrupted.error.code == Code::Io);
+    CHECK(Mentions(interrupted.error, "hills.terrain.layers.old"));
+    CHECK_FALSE(std::filesystem::exists(live));
+
+    WriteManifest(live, std::vector{Info("Current", 1, TerrainEditBlend::Additive)});
+    const auto promoted = LoadTerrainEditStack(live);
+    REQUIRE(promoted);
+    REQUIRE(promoted.value->size() == 1);
+    CHECK(promoted.value->front().info.name == "Current");
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE("Loading an Edit Layer stack refuses a missing or invalid manifest", "[terrain][editstore]")
 {
     {

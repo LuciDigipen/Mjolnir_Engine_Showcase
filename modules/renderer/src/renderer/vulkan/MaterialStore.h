@@ -179,6 +179,7 @@ namespace mir::vk
         struct ReloadEntry
         {
             uint32_t mIndex = 0;
+            std::string mShaderName;
             VkPipeline mPipeline = VK_NULL_HANDLE;
             VkPipeline mSurfacePipeline = VK_NULL_HANDLE;
             MaterialRecordId mRecordId;

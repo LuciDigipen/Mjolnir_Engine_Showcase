@@ -301,6 +301,43 @@ TEST_CASE("Two builds syncing one asset at once publish it once", "[terraintool]
     CHECK(Sync(impatient).Status(check::kLock) == CheckStatus::Failed);
 }
 
+TEST_CASE("Sync preserves the edited release while its saved layers await recovery", "[terraintool][sync][edits]")
+{
+    SyncTree tree("sync_interrupted_save");
+    TerrainEditLayer layer = AdditiveEditLayer("Saved ridge");
+    const auto layout = LoadExample().layout;
+    SetTerrainEditSample(layer, layout, {layout.TileFirstSample(-1) + 8, layout.TileFirstSample(-1) + 8}, 4.0f);
+    WriteEditLayers(tree.recipe, std::span(&layer, 1));
+    const auto first = Sync(tree.Request());
+    REQUIRE(first.Ok());
+    REQUIRE(first.publish->current);
+    const auto before = Snapshot(tree.releases);
+
+    const auto live = TerrainEditLayersDir(tree.recipe);
+    auto backup = live;
+    backup += ".old";
+    auto saving = live;
+    saving += ".saving";
+    fs::rename(live, backup);
+    fs::create_directory(saving);
+    REQUIRE(WriteText(saving / kTerrainEditManifestFileName, "unfinished"));
+    const auto source = Snapshot(tree.recipe.parent_path());
+    const auto stopped = Sync(tree.Request());
+    CHECK(stopped.Status(check::kRecipe) == CheckStatus::Failed);
+    REQUIRE_FALSE(stopped.diagnostics.empty());
+    CHECK(stopped.diagnostics.front().field == "edits");
+    CHECK(stopped.diagnostics.front().message.find(".old") != std::string::npos);
+    CHECK(Snapshot(tree.releases) == before);
+    CHECK(Snapshot(tree.recipe.parent_path()) == source);
+
+    fs::rename(backup, live);
+    const auto recovered = Sync(tree.Request());
+    REQUIRE(recovered.Ok());
+    CHECK_FALSE(recovered.publish->published);
+    CHECK(recovered.publish->current == first.publish->current);
+    CHECK(recovered.recipeFingerprint == first.recipeFingerprint);
+}
+
 TEST_CASE("Sync republishes an edited recipe only when a layer tile changes", "[terraintool][sync][edits]")
 {
     SyncTree tree("sync_edits");
