@@ -373,6 +373,15 @@ namespace mir
                     mEnableLayout && IsEditing(mWorld), mImport.View(), materialContext);
                 FeedViewport();
             });
+
+        // after the game UI, so a click it took this frame selects nothing behind it
+        mLateDrawer = imgui.AddDrawer(DrawerGroup::Late, [this]
+            {
+                World *preview = mPlayWorld != nullptr ? mPlayWorld : ActivePreviewWorld();
+                const GameUIPointer *gameUI = mWorld.TryResource<GameUIPointer>();
+                mEditor.ResolveViewportPick(preview != nullptr ? *preview : mWorld,
+                    gameUI != nullptr && gameUI->mOverWidget);
+            });
     }
 
     EditorModule::~EditorModule()
@@ -383,6 +392,7 @@ namespace mir
         mSceneSaved.Reset();
         mSceneLoad.Reset();
         mSceneUnload.Reset();
+        mLateDrawer.Reset();
         mDrawer.Reset();
         mFrameBegin.Reset();
         mEditor.Shutdown();

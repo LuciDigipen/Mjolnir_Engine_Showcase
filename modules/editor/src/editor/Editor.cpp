@@ -21,7 +21,6 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
-#include <gameui/GameUIArea.h>
 #include <gameui/GameUIDemo.h>
 #include <editor/EditorWidgets.h>
 #include <physics_layers/PhysicsLayers.h>
@@ -1060,11 +1059,12 @@ namespace mir
         mCamera.FocusOn(pose.position, bounds != nullptr ? BoundsRadius(*bounds, pose.linear) : 0.0f);
     }
 
-    void Editor::UpdateViewportPicking(const EngineModeState &mode, World &world, bool gameUIOverWidget)
+    void Editor::UpdateViewportPicking(const EngineModeState &mode, World &world)
     {
         const bool down = mWindow->RawInput().IsDown(MouseButton::Left);
         const bool justPressed = down && !mMouseWasDown;
         mMouseWasDown = down;
+        mPendingPick.reset();
 
         if (mode.mMode != EngineMode::Edit)
             return;
@@ -1084,10 +1084,6 @@ namespace mir
 
         // a click that picks a pie wedge is not a pick in the scene
         if (mViewPieOpen)
-            return;
-
-        // the game UI draws over every tab's viewport and takes a click on one of its widgets
-        if (gameUIOverWidget)
             return;
 
         if (!justPressed)
@@ -1147,7 +1143,19 @@ namespace mir
                 });
         }
 
-        ApplyClick(world.Resource<Selection>(), hitEntity, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift);
+        // the game UI has not hit-tested this frame's pointer yet
+        mPendingPick = PendingPick{ &world, hitEntity, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift };
+    }
+
+    void Editor::ResolveViewportPick(World &activeWorld, bool gameUIOverWidget)
+    {
+        const std::optional<PendingPick> pick = std::exchange(mPendingPick, std::nullopt);
+        if (!pick || gameUIOverWidget || pick->mWorld != &activeWorld)
+            return;
+        if (!pick->mEntity.IsNull() && !activeWorld.IsAlive(pick->mEntity))
+            return;
+        if (Selection *selection = activeWorld.TryResource<Selection>())
+            ApplyClick(*selection, pick->mEntity, pick->mAdditive);
     }
 
     void Editor::DrawSelectionHighlights(const EngineModeState &mode, World &world)
@@ -1512,8 +1520,7 @@ namespace mir
                     sceneMin + sceneSize);
             }
 
-            const GameUIPointer *gameUI = sceneWorld.TryResource<GameUIPointer>();
-            UpdateViewportPicking(mode, activeWorld, gameUI != nullptr && gameUI->mOverWidget);
+            UpdateViewportPicking(mode, activeWorld);
             FocusSelection(mode, activeWorld);
             UpdateHistoryShortcuts(actions, mode);
             UpdateBuildShortcuts(actions, mode, build);

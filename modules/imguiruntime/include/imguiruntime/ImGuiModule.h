@@ -22,13 +22,15 @@ namespace mir
     class RendererModule;
     class WindowModule;
 
-    // RunUI runs every Tools drawer, then every Game drawer. An order that follows no
-    // dependency edge needs a boundary: the game UI fits the scene viewport a tool
-    // drawer, the editor's, writes the same frame
+    // RunUI runs every Tools drawer, then every Game drawer, then every Late drawer. An order
+    // that follows no dependency edge needs a boundary: the game UI fits the scene viewport a
+    // tool drawer, the editor's, writes the same frame, and the editor's scene pick waits for
+    // the game UI's hit test of the same frame
     enum class DrawerGroup : uint8_t
     {
         Tools,
         Game,
+        Late,
         kCount
     };
 

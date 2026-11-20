@@ -365,10 +365,10 @@ editor sets `GameUIArea::mToolsHavePointer` (the gizmo, the view pie, or an
 extension such as a terrain brush). The bridge then passes a `UIPointer` with
 `mWithheld` set: nothing is hovered or pressed, a held widget lets go without a
 click, and the cursor is not hidden. Otherwise a widget that is hot or held, as
-`GameUIPointer` says, keeps the click from the editor's picking. The game UI's
-answer is from the frame before, because the editor draws first, so a pointer
-that lands on a widget and presses in the same frame still picks. Only widgets
-take the pointer: a panel drawn as a plain `Image` lets a click through.
+`GameUIPointer` says, keeps the click from the editor's picking. The editor
+draws first, so it holds a scene click and applies it in a `Late` drawer, after
+the game UI has hit-tested the same frame's pointer. Only widgets take the
+pointer: a panel drawn as a plain `Image` lets a click through.
 
 **The fullscreen area is the window's framebuffer size, not the swapchain's.**
 The swapchain catches up to a resize only inside `DrawFrame`, a frame after the
