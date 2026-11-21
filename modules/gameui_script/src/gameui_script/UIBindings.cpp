@@ -442,7 +442,7 @@ namespace mir
         ui["set_focus"] = [](UIScriptFrame &self, const sol::object &name, const sol::object &index)
         {
             UIContext &context = Use(self, "set_focus");
-            context.State().SetFocus(MakeId(self, ReadText(name, "set_focus", "name"),
+            return context.SetFocus(MakeId(self, ReadText(name, "set_focus", "name"),
                 index == sol::lua_nil ? 0 : ReadIndex(index, "set_focus", "index")));
         };
         ui["measure_text"] = [](UIScriptFrame &self, const sol::object &text)

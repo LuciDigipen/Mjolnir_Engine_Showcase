@@ -50,7 +50,10 @@ draws in play: its HUD, inventory or own menus, from Lua through
 HUD and pause menu, which must stay on top and reachable whatever the game
 draws. When a `Shell` screen holds the input, the next frame's `Game` screens
 draw every widget disabled (`UIContext::SetWidgetsDisabled`), so nothing under
-an open pause menu can be clicked or focused. A backend bridge
+an open pause menu can be clicked or focused. A `Game` widget held when that
+happens lets go, so a drag under the menu stops, and `UIContext::SetFocus` is
+refused, so a `Game` screen cannot take focus from the menu. Screens move focus
+through `UIContext::SetFocus`, not `UIState::SetFocus`, for that reason. A backend bridge
 calls it; today that is `gameui_imgui`, which runs it in the ImGui frame's
 `Game` drawer group. The area comes from the `GameUIArea` World resource, which
 the editor's drawer writes with its scene viewport, or is the whole window.
@@ -306,7 +309,7 @@ wrap or grid, and no measuring pass.
 | `GameUIModule`, `UIScreenLayer` | `gameui/GameUIModule.h` | The context and the screens by layer; `RunFrame`, `SetSuspended`, `ShellHeldInput` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
 | `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area. Each command stores its clip already intersected with
@@ -612,6 +615,14 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-11-21* — **A disabled widget lets go, and a blocked layer cannot take
+focus.** Was: a widget disabled mid-press kept the pointer, so a `Game` slider
+dragged when the pause menu opened went on following the mouse behind it, and a
+`Game` screen could move focus off the menu every frame. Now: a held widget that
+is disabled or hidden releases the pointer, every widget reads
+`UIContext::WidgetsDisabled`, and `UIContext::SetFocus` is refused while it is
+set. Because: review of the Lua game UI.
 
 *2026-11-20* — **Screens have layers.** Was: `AddScreen(screen)` drew every
 screen in registration order. Now: `AddScreen(layer, screen)`, with `Game`

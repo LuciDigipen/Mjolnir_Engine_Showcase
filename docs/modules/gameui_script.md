@@ -98,7 +98,7 @@ Every call is a method, `ui:name(...)`. A widget call returns a result table
 | `hold_input()` | nothing | Gameplay reads every action at rest this frame, as an open menu wants |
 | `hide_cursor()` | nothing | The mouse cursor is hidden this frame |
 | `cancel_pressed()`, `pause_pressed()`, `focus_visible()` | bool | `UICancel` or `UIPause` this frame; whether the focus highlight shows |
-| `set_focus(name[, index])` | nothing | Moves focus to a widget |
+| `set_focus(name[, index])` | bool | Moves focus to a widget; `false` while the shell's pause menu holds the input |
 | `measure_text(text)` | width, height | Text size in UI units at the style's font size |
 | `prompt(action)` | label or `nil`, gamepad | The binding's short name on the active device |
 
@@ -128,7 +128,8 @@ next script's `OnUI` still runs.
 
 **Under the shell's pause menu, the widgets are disabled.** They draw greyed and
 take no press or focus, because the menu is a `Shell` screen that holds the
-input. See [gameui.md](gameui.md).
+input. A slider or button held when the menu opens lets go, and `ui:set_focus`
+returns `false` and leaves focus on the menu. See [gameui.md](gameui.md).
 
 **Scripts draw in query order.** Two entities' UIs overlap in whatever order the
 ECS walks them. Keep a game's screens on one entity, or apart on screen, until
@@ -155,6 +156,12 @@ and a bad argument, an unknown option and a kept `ui` each failing cleanly.
    through `audio_script` and `input_script`.
 
 ## Changed
+
+*2026-11-21* — **Under the pause menu, a held widget lets go and `set_focus` is
+refused.** Was: a slider dragged when the menu opened kept changing behind it,
+and a script setting focus every frame took it from the menu's Resume. Now:
+both are blocked in `gameui`, and `ui:set_focus` returns whether it took.
+Because: review.
 
 *2026-11-20* — **Added.** Was: every game UI was C++, and the shell's HUD and
 pause menu the only one. Now: a script's `OnUI` draws game UI. Because:

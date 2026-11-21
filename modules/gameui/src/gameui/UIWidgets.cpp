@@ -31,7 +31,10 @@ namespace mir
             return Declare(ui, id, rect, widget);
         }
 
-        bool IsEnabled(const UIWidgetOptions &options) { return !options.mHidden && !options.mDisabled; }
+        bool IsEnabled(const UIContext &ui, const UIWidgetOptions &options)
+        {
+            return !options.mHidden && !options.mDisabled && !ui.WidgetsDisabled();
+        }
 
 
         struct Part
@@ -117,7 +120,7 @@ namespace mir
             return result;
 
         const UIStyle &style = ui.Style();
-        const bool enabled = IsEnabled(options);
+        const bool enabled = IsEnabled(ui, options);
         FocusRing(ui, rect, result);
         DrawPart(ui, rect, FacePart(style, result, enabled), style.mWidgetRounding);
         DrawText(ui, rect, rect.x + style.mPadding, text, TextColor(style, enabled));
@@ -168,7 +171,7 @@ namespace mir
             return result;
 
         const UIStyle &style = ui.Style();
-        const bool enabled = IsEnabled(options);
+        const bool enabled = IsEnabled(ui, options);
         FocusRing(ui, rect, result);
         DrawPart(ui, rect, FacePart(style, result, enabled), style.mWidgetRounding);
 
@@ -188,7 +191,7 @@ namespace mir
         adjusting.mAdjustsX = true;
         UIWidgetResult result = Declare(ui, id, rect, adjusting);
 
-        const bool enabled = IsEnabled(options);
+        const bool enabled = IsEnabled(ui, options);
         const float range = max - min;
         if (enabled && range > 0.0f && (result.mHeld || result.mAdjust != 0))
         {

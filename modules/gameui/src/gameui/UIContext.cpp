@@ -109,6 +109,14 @@ namespace mir
         return mState.Interact(id, rect, mDrawList.CurrentClip(), disabled);
     }
 
+    bool UIContext::SetFocus(UIId id)
+    {
+        if (mWidgetsDisabled)
+            return false;
+        mState.SetFocus(id);
+        return true;
+    }
+
     UIPrompt UIContext::Prompt(std::string_view action) const
     {
         MIR_ASSERT(mInFrame, "UIContext::Prompt outside BeginFrame/EndFrame");

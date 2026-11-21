@@ -42,6 +42,7 @@ namespace
             {"w", FieldKind::Float},
             {"h", FieldKind::Float},
             {"calls", FieldKind::Int},
+            {"focusTaken", FieldKind::Bool},
         };
         return ComponentRegistry::Instance().RegisterRuntime("UIBindingsProbe", fields);
     }
@@ -284,4 +285,34 @@ return T
     {
     }
     CHECK(f.host.ErrorCount() == 3);
+}
+
+TEST_CASE("ui:set_focus says whether it took, and is refused while a Shell screen holds the input", "[gameui][script]")
+{
+    Fixture f;
+    const Entity entity = f.Spawn("ui_focus", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    ui:button("go", { x = 0, y = 0, w = 10, h = 10 }, "Go")
+    world:set(entity, "UIBindingsProbe", "focusTaken", ui:set_focus("go"))
+end
+return T
+)LUA");
+
+    f.Frame();
+    CHECK(ReadProbe<bool>(f.world, entity, "focusTaken"));
+
+    // as GameUIModule runs the Game layer under a Shell screen that holds the input
+    const UIId before = f.ui.State().Focus();
+    f.ui.BeginFrame(kArea, f.world.Resource<InputState>(), f.world.Resource<InputMap>(), f.pointer);
+    f.ui.SetFocus(UIId("menu"));
+    f.ui.SetWidgetsDisabled(true);
+    DrawScriptScreens(f.host, f.world, f.frame, f.ui, 0.0f);
+    f.ui.SetWidgetsDisabled(false);
+    f.ui.EndFrame();
+    CHECK_FALSE(ReadProbe<bool>(f.world, entity, "focusTaken"));
+    CHECK(f.ui.State().Focus() == UIId("menu"));
+    CHECK(f.ui.State().Focus() != before);
+    CHECK(f.host.ErrorCount() == 0);
 }
