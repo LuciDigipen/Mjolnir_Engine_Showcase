@@ -779,3 +779,19 @@ The packaged `game.json` serves as the runtime catalog and uses paths relative
 to the packaged game. Legacy games can keep `sceneDir`. To register a legacy
 startup scene explicitly, give it the ID `default` and use its existing path.
 Opening or packaging a game leaves the source manifest intact.
+
+### Engine HUD and pause menu
+
+Every game gets the engine's HUD and pause menu. A game that draws its own
+from Lua turns them off in `game.json`:
+
+```json
+{
+  "shell": { "hud": false, "menu": false }
+}
+```
+
+Both default to `true`, and either can be off alone. With the menu off, the
+game must give the player a way to pause and quit, with `world:pause()`,
+`world:resume()` and `world:quit()`. See
+[gameshell.md](modules/gameshell.md) and [gameui_script.md](modules/gameui_script.md).

@@ -980,3 +980,31 @@ TEST_CASE("The HUD sizes its button and key cap to their text, on any display", 
         CHECK(labelMiddle == Catch::Approx(cap->y + cap->height * 0.5f));
     }
 }
+
+TEST_CASE("With the shell's menu off nothing opens it, the HUD keeps only its clock and the cursor is the game's", "[gameshell]")
+{
+    Fixture f;
+    f.Shell().SetParts(GameShellParts{ .mHud = true, .mMenu = false });
+    f.Frame();
+    CHECK(f.TextAt("00:00").has_value());
+    CHECK_FALSE(f.TextAt("Pause").has_value());
+
+    CHECK(f.Tap(Key::Escape) == GameShellAction::None);
+    CHECK(f.Tap(GamepadButton::Start) == GameShellAction::None);
+    CHECK_FALSE(f.Shell().MenuOpen());
+    CHECK_FALSE(f.Input().GameInputHeld());
+
+    // the keyboard is the active device, which hides the cursor while the shell's menu is on
+    f.Frame();
+    CHECK_FALSE(f.UI().HidesCursor());
+
+    f.Shell().SetParts(GameShellParts{ .mHud = false, .mMenu = false });
+    f.Frame();
+    CHECK(f.UI().DrawList().Commands().empty());
+
+    // the HUD alone off keeps the menu
+    f.Shell().SetParts(GameShellParts{ .mHud = false, .mMenu = true });
+    f.Frame();
+    CHECK_FALSE(f.TextAt("00:00").has_value());
+    CHECK(f.Tap(Key::Escape) == GameShellAction::Pause);
+}

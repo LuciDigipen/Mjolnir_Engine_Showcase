@@ -19,6 +19,7 @@ namespace mir
     {
     public:
 
-        bool Draw(UIContext &ui, float playSeconds, bool interactive);
+        // without the pause button, only the clock; true when the button was clicked
+        bool Draw(UIContext &ui, float playSeconds, bool interactive, bool pauseButton = true);
     };
 } // namespace mir

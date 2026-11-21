@@ -51,6 +51,8 @@ namespace mir
 
         const bool focusVisible = input.ActiveDevice() != DeviceKind::Mouse;
         mState.BeginFrame(area, pointer, mNav, focusVisible, mScale);
+        mHoldInputCalls = 0;
+        mWidgetsDisabled = false;
         mInFrame = true;
     }
 
@@ -87,6 +89,7 @@ namespace mir
     {
         MIR_ASSERT(mInFrame, "UIContext::HoldInput outside BeginFrame/EndFrame");
         mHoldInput = mInFrame;
+        ++mHoldInputCalls;
     }
 
     void UIContext::HideCursor()
@@ -99,7 +102,19 @@ namespace mir
     {
         MIR_ASSERT(mInFrame, "UIContext::Interact outside BeginFrame/EndFrame");
 
-        return mState.Interact(id, rect, mDrawList.CurrentClip(), options);
+        if (!mWidgetsDisabled)
+            return mState.Interact(id, rect, mDrawList.CurrentClip(), options);
+        UIWidgetOptions disabled = options;
+        disabled.mDisabled = true;
+        return mState.Interact(id, rect, mDrawList.CurrentClip(), disabled);
+    }
+
+    bool UIContext::SetFocus(UIId id)
+    {
+        if (mWidgetsDisabled)
+            return false;
+        mState.SetFocus(id);
+        return true;
     }
 
     UIPrompt UIContext::Prompt(std::string_view action) const

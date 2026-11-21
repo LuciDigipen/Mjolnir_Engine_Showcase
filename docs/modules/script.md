@@ -82,6 +82,7 @@ return Spin
 | `ScriptResolveSystem`, `MakeScriptAssetLoader`, `ReleaseScriptInstance` | `script/ScriptResolveSystem.h` | Gives every `ScriptRef` its instance; loads a script from the cooked assets; drops an instance |
 | `ScriptModule` | `script/ScriptModule.h` | The host, the watcher, both systems, the hook and the stage functions |
 | `AddBindings`, `LuaBindings` | `script/BindingApi.h` | How a bridge adds its bindings; behind the `script_bindings` target, the only header with sol2 in it |
+| `CallScriptCallback`, `LuaState` | `script/BindingApi.h` | Calls a callback a bridge defines, such as `gameui_script`'s `OnUI`, isolated and counted like `OnUpdate`; the host's Lua state, for the values a bridge passes it |
 | `ScriptReloadWatcher` | `script/ScriptReloadWatcher.h` | Polls a tracked script's cooked file and reloads on change |
 | `RegisterScriptComponents` | `script/ComponentRegistration.h` | Registers `ScriptRef`, mirroring `core` and `renderer` |
 
@@ -92,6 +93,12 @@ physics, audio, terrain and post-processing bindings live in the bridges, and
 each extends that same `World` usertype rather than adding one of its own. The
 host binds `Entity` and `World` when it builds its state, so every bridge's
 bindings run after them.
+
+`world:pause()`, `world:resume()`, `world:restart()` and `world:quit()` push
+the pause menu's requests, for a game that draws its own: `restart` is Stop then
+Play, and `quit` stops Play in the editor and closes a game build. Each returns
+`true` when queued, and outside Play does nothing and returns `false`.
+`world:is_paused()` says whether Play is paused.
 
 `world:load_scene("sceneId")` queues a swap of the running Play scene to a
 scene registered in `game.json`. It returns `true` when the request is queued.
@@ -438,6 +445,13 @@ made the `ScriptRef`.
    flavour underneath.
 
 ## Changed
+
+*2026-11-20* — **Bridges can call callbacks of their own, and scripts control
+the session.** Was: a script got `OnStart`, `OnUpdate`, `OnFixedUpdate` and
+`OnStop` only, and could not pause or quit. Now: `CallScriptCallback` and
+`LuaState` in `BindingApi.h`, which `gameui_script` uses for `OnUI`, and
+`world:pause/resume/restart/quit/is_paused`. Because: a game draws its own UI
+and pause menu from Lua. `IScriptHost` is unchanged.
 
 *2026-10-27* — **Exposure, focus distance, aperture and shutter strength
 left the post-processing bindings (#231).** Was: `set_hdr`/`get_hdr` carried

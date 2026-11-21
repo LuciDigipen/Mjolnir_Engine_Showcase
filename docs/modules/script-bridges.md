@@ -1,11 +1,11 @@
 # script bridges
 
-Seven small libraries, one per engine library with a Lua surface: `audio_script`,
+Eight small libraries, one per engine library with a Lua surface: `audio_script`,
 `input_script`, `physics_script`, `renderer_script` (post-processing),
-`terrain_script`, `particles_script` and `actions_script`. Each adds its library's Lua bindings to the script host, so
+`terrain_script`, `particles_script`, `actions_script` and `gameui_script`. Each adds its library's Lua bindings to the script host, so
 neither side links the other.
 
-`mir::audio_script`, `mir::input_script`, `mir::physics_script`, `mir::renderer_script`, `mir::terrain_script`, `mir::particles_script`, `mir::actions_script` · each depends `mir::script`, `script_bindings` (public) and its own library (private) · API `modules/<name>_script/include/<name>_script/` · maintainer Sumin Park · reviewed 2026-10-27
+`mir::audio_script`, `mir::input_script`, `mir::physics_script`, `mir::renderer_script`, `mir::terrain_script`, `mir::particles_script`, `mir::actions_script`, `mir::gameui_script` · each depends `mir::script`, `script_bindings` (public) and its own library (private) · API `modules/<name>_script/include/<name>_script/` · maintainer Sumin Park · reviewed 2026-10-27
 
 ## Model
 
@@ -30,6 +30,7 @@ other library, `script`'s other public headers included.
 | `TerrainScriptModule`, `RegisterTerrainBindings` | `terrain_script/` | `world:terrain_height_at` |
 | `ParticlesScriptModule`, `RegisterParticleBindings` | `particles_script/` | `world:particle_system_start/particle_system_stop/particle_system_pause/particle_system_reset/particle_system_destroy/particle_system_state/particle_system_parameters`, see [particles.md](particles.md) |
 | `ActionsScriptModule`, `RegisterActionBindings` | `actions_script/` | `world:move_to/rotate_to/scale_to/tween_value/set_value/value`, cancelling, lanes and time scales, see [actions.md](actions.md#lua) |
+| `GameUIScriptModule`, `RegisterUIBindings` | `gameui_script/` | A script's `OnUI(self, world, entity, ui, dt)` and the `ui` object it gets, see [gameui_script.md](gameui_script.md) |
 
 ## Rules
 
@@ -111,6 +112,11 @@ Every function is on the `World` usertype, called as `world:name(entity, ...)`. 
 **The tables.** `PhysicsMotion`, `PhysicsShape` and `PhysicsAxis` map each name to the integer the fields hold.
 
 ## Changed
+
+*2026-11-20*, **`gameui_script`.** Was: seven bridges, each adding `World`
+functions. Now: an eighth, which also registers a game UI screen and calls a
+callback of its own, `OnUI`, through `CallScriptCallback`. Because: game UI
+authored in Lua. See [gameui_script.md](gameui_script.md).
 
 *2026-11-19*, **`actions_script`.** Was: six bridges. Now: a seventh adds the `actions` module's calls, so a
 script can ease any entity or named value without holding a reference to anything. Because: the old engine needed

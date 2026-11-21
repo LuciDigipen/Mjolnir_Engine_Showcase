@@ -115,10 +115,15 @@ namespace mir
 
         if (mActive == id)
         {
-            mActiveSeen = true;
-            result.mHeld = mDown;
-
-            result.mClicked = !mDown && over && enabled;
+            // disabled or hidden mid-press, it lets go, so a drag does not carry on behind what disabled it
+            if (!enabled)
+                mActive = UIId{};
+            else
+            {
+                mActiveSeen = true;
+                result.mHeld = mDown;
+                result.mClicked = !mDown && over;
+            }
         }
 
         if (mConfirm && result.mFocused && enabled)
