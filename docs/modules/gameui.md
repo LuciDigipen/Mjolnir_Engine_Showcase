@@ -42,8 +42,15 @@ and centre their text with it. Without a backend it estimates half the font
 size a character.
 
 `GameUIModule` owns the `UIContext` and the screens drawn into it, each a
-function registered with `AddScreen`. `SetSuspended(true)` makes `RunFrame` return without running a screen or reading the pointer, for a scene that is still preparing its resources. `RunFrame(area, pointer)` is one frame:
-`BeginFrame`, every screen in registration order, `EndFrame`. A backend bridge
+function registered with `AddScreen(layer, screen)`. `SetSuspended(true)` makes `RunFrame` return without running a screen or reading the pointer, for a scene that is still preparing its resources. `RunFrame(area, pointer)` is one frame:
+`BeginFrame`, every `UIScreenLayer::Game` screen, then every `Shell` screen,
+each layer in registration order, `EndFrame`. A `Game` screen is what a game
+draws in play: its HUD, inventory or own menus, from Lua through
+[gameui_script](gameui_script.md). A `Shell` screen is the engine's, gameshell's
+HUD and pause menu, which must stay on top and reachable whatever the game
+draws. When a `Shell` screen holds the input, the next frame's `Game` screens
+draw every widget disabled (`UIContext::SetWidgetsDisabled`), so nothing under
+an open pause menu can be clicked or focused. A backend bridge
 calls it; today that is `gameui_imgui`, which runs it in the ImGui frame's
 `Game` drawer group. The area comes from the `GameUIArea` World resource, which
 the editor's drawer writes with its scene viewport, or is the whole window.
@@ -296,9 +303,10 @@ wrap or grid, and no measuring pass.
 | `UINavInput`, `UINavDirection` | `gameui/UINavInput.h` | The UI actions for a frame, read from `InputState` by name; `UINavStepper` turns `UINavigate` into steps, one per direction per press |
 | `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing |
 | `UIAnchor`, `UIAxis`, `UIStack`; `Inset`, `Anchor` | `gameui/UILayout.h` | Layout over rects: insets, anchoring to a point of a container, rows and columns cut from either end; `kUITopLeft` to `kUIBottomRight` |
+| `GameUIModule`, `UIScreenLayer` | `gameui/GameUIModule.h` | The context and the screens by layer; `RunFrame`, `SetSuspended`, `ShellHeldInput` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
 | `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area. Each command stores its clip already intersected with
@@ -564,8 +572,9 @@ looks right is verified by running `--ui-demo`.
    that is not a widget, such as a backdrop `Image`, does not take the pointer,
    and nothing yet keeps a click on a game widget from gameplay's mouse
    bindings in Play.
-3. **Content from the game.** Replace `UIDemoScreen` as the only game UI with UI a game
-   authors, through Lua or data.
+3. ~~**Content from the game.**~~ Landed 2026-11-20 through Lua: a script's
+   `OnUI`, see [gameui_script.md](gameui_script.md). Layouts from data are that
+   module's backlog.
 4. ~~**Text measurement**~~ for layout landed 2026-11-04. Culling text by its
    bounds still uses only the clip.
 5. **DPI.** The UI scales with the display's height above the reference
@@ -603,6 +612,13 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-11-20* — **Screens have layers.** Was: `AddScreen(screen)` drew every
+screen in registration order. Now: `AddScreen(layer, screen)`, with `Game`
+screens first and `Shell` screens over them, and a `Shell` screen that holds
+the input disables the `Game` layer's widgets the next frame. Because: a game's
+own screens, from Lua, are built after the shell and would otherwise draw over
+its pause menu and stay clickable under it.
 
 *2026-11-20* — **The pointer has one owner.** Was: the editor picked the entity
 behind a game button that was clicked, and the game UI hovered and clicked

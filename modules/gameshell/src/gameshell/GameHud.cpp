@@ -35,7 +35,7 @@ namespace mir
         constexpr std::string_view kWidestClock = "00:00";
     } // namespace
 
-    bool GameHud::Draw(UIContext &ui, float playSeconds, bool interactive)
+    bool GameHud::Draw(UIContext &ui, float playSeconds, bool interactive, bool pauseButton)
     {
         const UIStyle &style = ui.Style();
         const UIPrompt prompt = ui.Prompt(kUIPauseAction);
@@ -43,14 +43,17 @@ namespace mir
             prompt.mLabel.empty() ? 0.0f : shell::CapWidth(ui, prompt.mLabel, kHeight - 2.0f * kCapInset);
 
         const float clockWidth = ui.TextWidth(kWidestClock) + 2.0f * style.mPadding;
-        const float buttonWidth = style.mPadding + ui.TextWidth(kPauseText) + kGap + capWidth + kCapInset;
+        const float buttonWidth =
+            pauseButton ? kGap + style.mPadding + ui.TextWidth(kPauseText) + kGap + capWidth + kCapInset : 0.0f;
         const UIRect strip = Anchor(Inset(ui.SafeArea(), kMargin), kUITopRight,
-                                    clockWidth + kGap + buttonWidth + 2.0f * kGap, kHeight + 2.0f * kGap);
+                                    clockWidth + buttonWidth + 2.0f * kGap, kHeight + 2.0f * kGap);
         Panel(ui, strip);
 
         UIStack row = UIStack::Row(Inset(strip, kGap), kGap);
         const int seconds = static_cast<int>(std::max(playSeconds, 0.0f));
         Label(ui, UIId("hud_clock"), row.Next(clockWidth), std::format("{:02}:{:02}", seconds / 60, seconds % 60));
+        if (!pauseButton)
+            return false;
 
         const UIRect button = row.Rest();
         const bool clicked =

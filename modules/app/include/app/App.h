@@ -33,6 +33,7 @@
 #include <core/ecs/World.h>
 #include <gameshell/GameShellModule.h>
 #include <gameui/GameUIModule.h>
+#include <gameui_script/GameUIScriptModule.h>
 #include <gameui_imgui/GameUIImGuiModule.h>
 #include <imguiruntime/ImGuiModule.h>
 #include <input/InputModule.h>
@@ -368,7 +369,7 @@ namespace mir
         {
             SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
                 AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
-                ParticlesGpuModule &particlesGpu, RenderSystem &rendering);
+                ParticlesGpuModule &particlesGpu, RenderSystem &rendering, GameUIModule &gameUI);
 
             PhysicsModule physics;
             TerrainModule terrainData;
@@ -386,6 +387,7 @@ namespace mir
             RendererScriptModule rendererScript;
             TerrainScriptModule terrainScript;
             ActionsScriptModule actionsScript;
+            GameUIScriptModule gameUIScript;
         };
 
         SimulationSystems mSimulation;

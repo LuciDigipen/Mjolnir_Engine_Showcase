@@ -12,6 +12,7 @@ target_link_libraries(engine_app
            mir::gameshell
            mir::gameui
            mir::gameui_imgui
+           mir::gameui_script
            mir::imguiruntime
            mir::input
            mir::input_script

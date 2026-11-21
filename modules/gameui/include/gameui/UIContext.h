@@ -22,6 +22,7 @@
 #include <input/InputMap.h>
 #include <input/InputState.h>
 
+#include <cstdint>
 #include <string_view>
 
 namespace mir
@@ -98,6 +99,12 @@ namespace mir
 
         bool HoldsInput() const { return mHoldsInput; }
 
+        // HoldInput calls this frame, so a caller can tell whether the screens it ran held the input
+        uint32_t HoldInputCalls() const { return mHoldInputCalls; }
+
+        // every Interact until it is turned off reports its widget disabled: drawn, but not pressed or focused
+        void SetWidgetsDisabled(bool disabled) { mWidgetsDisabled = disabled; }
+
         //the mouse cursor is hidden from the frame this is called in until a frame does not call it; the backend
         //bridge applies it
         void HideCursor();
@@ -147,6 +154,8 @@ namespace mir
         bool mInFrame = false;
         bool mHoldInput = false;
         bool mHoldsInput = false;
+        uint32_t mHoldInputCalls = 0;
+        bool mWidgetsDisabled = false;
         bool mHideCursor = false;
         bool mHidesCursor = false;
     };

@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,6 +41,16 @@ namespace mir
 {
     namespace
     {
+        // Play only, so a script running in no session asks nothing of the editor
+        bool PushSessionRequests(World &world, std::initializer_list<Request> requests)
+        {
+            if (!world.HasResource<EngineModeState>() || !IsPlaying(world) || !world.HasResource<RequestQueue>())
+                return false;
+            for (const Request request : requests)
+                world.Resource<RequestQueue>().Push(request);
+            return true;
+        }
+
         // Mirrors FieldKind::Handle's layout ({index, generation}, 8 bytes) -
         // core never names what a Handle points at, so neither does this.
         struct RawHandle
@@ -731,6 +742,12 @@ namespace mir
                 lua.registry()["mir.sessionData"] = created;
                 return created;
             },
+            // the pause menu's requests, for a game that draws its own; App applies them next frame
+            "pause", [](World &world) { return PushSessionRequests(world, { Request::Pause }); },
+            "resume", [](World &world) { return PushSessionRequests(world, { Request::Resume }); },
+            "restart", [](World &world) { return PushSessionRequests(world, { Request::Stop, Request::Play }); },
+            "quit", [](World &world) { return PushSessionRequests(world, { Request::Quit }); },
+            "is_paused", [](World &world) { return world.HasResource<EngineModeState>() && IsPaused(world); },
             "load_scene", [](World &world, const std::string &id)
             {
                 if (id.empty() || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||

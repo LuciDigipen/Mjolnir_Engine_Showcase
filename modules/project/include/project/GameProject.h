@@ -58,6 +58,11 @@ namespace mir
         std::filesystem::path mSceneDir;
         std::filesystem::path mProjectSettingsPath;
         std::filesystem::path mSoundBankDir;
+
+        // game.json's "shell": { "hud": false, "menu": false } turns off the engine's HUD and pause menu for a game
+        // that draws its own
+        bool mShellHud = true;
+        bool mShellMenu = true;
     };
 
     // Where games/ lives: the source tree in a development build (asset_workspace.json),

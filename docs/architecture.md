@@ -116,7 +116,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `particles_runtime` | module, bridge | `particles`, `particles_gpu` |
 | `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project`, `jobs` |
 | `script` | module | `assets`, `scene` |
-| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script`, `actions_script` | module, bridge | `script` and its library |
+| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script`, `actions_script`, `gameui_script` | module, bridge | `script` and its library |
 | `imguiruntime` | module | `window`, `renderer`, `input` |
 | `gameui` | module | `assets`, `input` |
 | `gameui_imgui` | module, bridge | `gameui`, `imguiruntime`, `window` |
@@ -126,7 +126,7 @@ each library links in the engine, besides `core`; `app` links everything.
 A cross-library piece moves into a library only when that adds no cycle, no new
 third-party code to the library's link closure, and no new runtime setup to its
 tests. Otherwise it is a bridge library. `terrain_runtime` is one, so `terrain`
-and `TerrainTool` need neither Vulkan nor Jolt. The seven `*_script` bridges are
+and `TerrainTool` need neither Vulkan nor Jolt. The eight `*_script` bridges are
 the others, so no library but `script` and its bridges sees Lua.
 
 `gameui` names no graphics API. The `gameui_imgui` bridge puts its draw list in
@@ -149,7 +149,7 @@ would.
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
 | `physics` | Jolt world, `RigidBody`, the step, layers, events | [physics.md](modules/physics.md) |
-| `*_script` | Seven bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
+| `*_script` | Eight bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
 | `terrain_runtime` | Terrain streaming, drawing and collision at runtime | [terrain_runtime.md](modules/terrain_runtime.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
 | `camera` | Gameplay camera control: follow a target, or free-fly from input | [camera.md](modules/camera.md) |

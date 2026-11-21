@@ -84,7 +84,7 @@ Each device does the whole round trip alone:
 
 ### The module
 
-`GameShellModule` registers one screen with `GameUIModule`: the HUD and the
+`GameShellModule` registers one `UIScreenLayer::Shell` screen with `GameUIModule`: the HUD and the
 pause menu, or `UIDemoScreen` while the `GameUIDemo` resource asks for it. `--ui-demo`
 sets it at startup and the editor's **Debug > Game UI Widget Demo** switches it
 at any time; the demo's art loads the first time it shows, and the style it
@@ -92,13 +92,21 @@ swaps is put back when the menus return. The PlayBegin and PlayEnd stages call
 `GameShell::Reset`, which shuts the menu and zeroes the clock, so a Stop or Play
 while the demo shows leaves no stale menu behind. It turns a `GameShellAction`
 into requests on the `RequestQueue`: Pause, Resume, Restart as Stop then Play,
-and Quit as Stop in the editor or Quit in a game build.
+and Quit. `App` turns a Quit from Play into Stop in the editor, so a Lua
+`world:quit()` and the menu's Quit do the same thing.
+
+`game.json`'s `"shell": { "hud": false, "menu": false }` turns either part off,
+through `GameShellSettings::mParts`, for a game that draws its own. Both
+default to on. With the menu off nothing opens it, the HUD keeps only its clock,
+since its Pause button only opens the menu, and the shell leaves the cursor to
+the game. The game is then responsible for a pause menu: `world:pause()`,
+`world:resume()`, `world:restart()` and `world:quit()` do what this one does.
 
 ## API
 
 | Type | Header | Role |
 |---|---|---|
-| `GameShell`, `GameShellAction` | `gameshell/GameShell.h` | The HUD and the menu together, the play clock, and what the player asked this frame |
+| `GameShell`, `GameShellAction`, `GameShellParts` | `gameshell/GameShell.h` | The HUD and the menu together, the play clock, and what the player asked this frame; `SetParts` turns either off |
 | `PauseMenu`, `PauseMenuAction` | `gameshell/PauseMenu.h` | Opens, closes, holds the input, and the Audio screen; `Open` for a button elsewhere |
 | `IAudioOptions`, `AudioChannel` | `gameshell/AudioOptions.h` | What the Audio screen reads and changes: each channel's volume and mute, and Restore defaults |
 | `GameShellModule::SetAudioOptions` | `gameshell/GameShellModule.h` | Gives the menu its Audio entry; null leaves it out |
@@ -142,15 +150,18 @@ clickable, and the clock. The
 Audio screen is covered the same way against a stand-in `IAudioOptions`: no entry
 without one, each device alone opening it on its first control, stepping and
 dragging the sliders, ten steps from full to silent, the mutes, Restore
-defaults, and backing out a step at a time.
+defaults, and backing out a step at a time. With the menu turned off, neither
+Escape nor Start opens it, the HUD keeps only its clock and the cursor is left
+alone; with the HUD off, the menu still opens.
 `smoke.game-mode` runs a game build for 120 frames on the GPU. Whether it looks
 right is checked by running a game: Play in the editor, or `--no-editor`.
 
 ## Backlog
 
-1. **Content from the game.** The shell is the engine's. A game will want its
-   own HUD and its own options in the menu, through Lua or data, which is
-   `gameui`'s content backlog item.
+1. ~~**Content from the game.**~~ Landed 2026-11-20: a game draws its own HUD
+   and menus from Lua ([gameui_script.md](gameui_script.md)) and turns the
+   shell's off in `game.json`. Restyling the shell's own menu from data, without
+   replacing it, is still open.
 2. **Settings.** Audio is the one options screen. Bindings and the safe-area
    inset would join it.
 3. **Confirm before Quit.** Quit and Restart act at once; a game with progress
@@ -161,6 +172,13 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
    before it opens. A game that binds those keys for itself sees them once.
 
 ## Changed
+
+*2026-11-20* — **The HUD and the menu can be turned off.** Was: every game had
+both, and Quit decided Stop or Quit itself through `mQuitStopsPlay`. Now:
+`game.json`'s `shell` section turns either off, the screen is a `Shell` layer
+screen, and Quit is always a Quit request that `App` turns into Stop in the
+editor. Because: a game drawing its own pause menu from Lua needs the shell's
+out of the way, and its `world:quit()` must act like the menu's.
 
 *2026-11-05* — **The widget demo switches at runtime.** Was: `--ui-demo`
 picked the demo or the menus once at startup. Now: `GameUIDemo` picks it each

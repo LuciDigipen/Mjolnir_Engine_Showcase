@@ -49,6 +49,11 @@ namespace mir
 {
     namespace
     {
+        GameShellParts ShellParts(const GameProject &project)
+        {
+            return GameShellParts{ .mHud = project.mShellHud, .mMenu = project.mShellMenu };
+        }
+
         size_t MissingFileCount(const SceneProbe &probe)
         {
             return probe.mMissingEntities.size() + probe.mMissingInstances.size();
@@ -178,7 +183,7 @@ namespace mir
 
     App::SimulationSystems::SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
         AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
-        ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
+        ParticlesGpuModule &particlesGpu, RenderSystem &rendering, GameUIModule &gameUI)
         : physics(context, &jobs),
         terrainData(context),
         script(context, assets, resolver),
@@ -192,14 +197,15 @@ namespace mir
         physicsScript(script),
         rendererScript(script),
         terrainScript(script),
-        actionsScript(script)
+        actionsScript(script),
+        gameUIScript(context, script, gameUI, assets, resolver)
     {}
 
     struct App::RuntimeSession
     {
         explicit RuntimeSession(App &app)
             : state(app.mProjectResources, app.mProject, app.mAssets, app.mResolver,
-                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
+                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mParts = ShellParts(app.mProject) }),
             rendering(app.mRenderer.BindWorld(state.Context(),
                 RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
                                         .mEnableValidation = app.mDesc.mEnableValidation,
@@ -213,7 +219,7 @@ namespace mir
             audio(app.mAudio.BindWorld(state.Context())),
         #endif
             simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
-                app.mParticlesGpu, rendering->Rendering()),
+                app.mParticlesGpu, rendering->Rendering(), state.gameUI),
             terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
         {
             state.gameShell.SetControlsOptions(&app.mControlsOptions);
@@ -268,7 +274,7 @@ namespace mir
         mControls(LoadControlsSettings(UserSettingsPath(mProject))),
         mControlsOptions(mControls, UserSettingsPath(mProject)),
         mWorldState(mProjectResources, mProject, mAssets, mResolver,
-            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
+            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mParts = ShellParts(mProject) }),
         mWindow(MakeWindowDesc(mDesc)),
         mRenderer(Context(), mWindow.Get(),
             RendererModuleSettings{ .mAppName = mDesc.mAppName,
@@ -292,7 +298,7 @@ namespace mir
             UserSettingsPath(mProject)),
     #endif
         mSimulation(Context(), mProject, mJobs, mAssets, mResolver, mWorldState.particles,
-            mParticlesGpu, mRenderer.Rendering()),
+            mParticlesGpu, mRenderer.Rendering(), mWorldState.gameUI),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
@@ -961,6 +967,9 @@ namespace mir
             unloadScenes = runtimeQueue.TakeUnloadScenes();
             primaryScene = runtimeQueue.TakePrimaryScene();
             std::vector<Request> runtimeActions = runtimeQueue.Take();
+            // the game asked to quit: in the editor that leaves Play, as the pause menu's Quit always has
+            if (mDesc.mEnableEditorLayout)
+                std::ranges::replace(runtimeActions, Request::Quit, Request::Stop);
             actions.insert(actions.end(), runtimeActions.begin(), runtimeActions.end());
             // A Lua failure ends Play in the editor so it is fixed before it hides behind later frames. A
             // standalone game has nowhere to return to, so it logs the error and keeps running.

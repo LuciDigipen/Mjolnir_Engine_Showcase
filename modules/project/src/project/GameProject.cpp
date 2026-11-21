@@ -138,6 +138,31 @@ namespace mir
         if (project.mName.empty())
             project.mName = gameDir.filename().string();
 
+        if (const auto shell = json->find("shell"); shell != json->end())
+        {
+            const auto flag = [&](const char *key, bool &out)
+            {
+                const auto it = shell->find(key);
+                if (it == shell->end())
+                    return;
+                if (!it->is_boolean())
+                {
+                    throw SetupError(ErrorCategory::ProjectData, "game.json has a key of the wrong type", manifestPath,
+                        std::string("shell.") + key + " is not a boolean",
+                        "Make shell.hud and shell.menu true or false in " + manifestPath.string() + ".");
+                }
+                out = it->get<bool>();
+            };
+            if (!shell->is_object())
+            {
+                throw SetupError(ErrorCategory::ProjectData, "game.json has a key of the wrong type", manifestPath,
+                    "shell is not an object",
+                    "Make shell an object such as { \"menu\": false } in " + manifestPath.string() + ".");
+            }
+            flag("hud", project.mShellHud);
+            flag("menu", project.mShellMenu);
+        }
+
         project.mRootDir = root;
         project.mAssetsDir = (root / project.mAssetsRoot).lexically_normal();
         project.mSceneDir = (root / sceneDir).lexically_normal();
