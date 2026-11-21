@@ -13,17 +13,24 @@
 
 namespace mir
 {
-    size_t SelectBlasCompactions(std::span<const uint64_t> sourceBytes, uint64_t cap)
+    size_t SelectBlasCompactions(std::span<const BlasCompactionCandidate> candidates, uint64_t inFlightBytes,
+        uint64_t freeBytes, uint64_t cap, uint64_t headroom)
     {
-        if (sourceBytes.empty())
-            return 0;
-        uint64_t used = 0;
+        const uint64_t spare = freeBytes > headroom ? freeBytes - headroom : 0;
+        uint64_t source = inFlightBytes;
+        uint64_t allocated = 0;
         size_t count = 0;
-        for (const uint64_t bytes : sourceBytes)
+        for (const BlasCompactionCandidate &candidate : candidates)
         {
-            if (count > 0 && (used >= cap || bytes > cap - used))
-                break;
-            used += bytes;
+            if (count > 0 || inFlightBytes > 0)
+            {
+                if (source >= cap || candidate.sourceBytes > cap - source)
+                    break;
+                if (allocated > spare || candidate.compactedBytes > spare - allocated)
+                    break;
+            }
+            source += candidate.sourceBytes;
+            allocated += candidate.compactedBytes;
             ++count;
         }
         return count;

@@ -183,8 +183,10 @@ namespace mir::vk
             DestroyImages(/*guides*/ true);
     }
 
-    bool RayTracer::BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount)
+    bool RayTracer::BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount,
+        VkDeviceSize &outCompactedBytes)
     {
+        outCompactedBytes = 0;
         if (mBlases.size() <= meshIndex)
             mBlases.resize(meshIndex + 1);
         MeshBlas &blas = mBlases[meshIndex];
@@ -202,18 +204,22 @@ namespace mir::vk
         const bool submitted = SubmitAndWait(*mDevice, [&](VkCommandBuffer cmd)
             {
                 built = BuildBLAS(mesh, vertexCount, cmd, blas, scratch, scratchAllocation, kMeshBlasBuildFlags);
-                if (!built || queryPool == VK_NULL_HANDLE)
+                if (!built)
                     return;
+                // The host wait does not make the build visible to the TLAS build in a later submission.
                 const VkMemoryBarrier2 builtBarrier{
                     .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
                     .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                     .srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                        VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
                     .dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
                 const VkDependencyInfo builtDependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                     .memoryBarrierCount = 1,
                     .pMemoryBarriers = &builtBarrier };
                 vkCmdPipelineBarrier2(cmd, &builtDependency);
+                if (queryPool == VK_NULL_HANDLE)
+                    return;
                 vkCmdResetQueryPool(cmd, queryPool, 0, 1);
                 const VkAccelerationStructureKHR handle = blas.mBlas;
                 vkCmdWriteAccelerationStructuresPropertiesKHR(cmd, 1, &handle,
@@ -243,53 +249,7 @@ namespace mir::vk
             MIR_LOG_WARN("BuildMeshBlas: compacted size was not readable, mesh {} stays uncompacted", meshIndex);
             return true;
         }
-
-        MeshBlas compacted;
-        if (!CreateAccelerationStructureObject(compactedSize, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-            compacted.mBuffer, compacted.mAllocation, compacted.mBlas))
-        {
-            MIR_LOG_WARN("BuildMeshBlas: compacted acceleration structure creation failed for mesh {}", meshIndex);
-            return true;
-        }
-        const bool copied = SubmitAndWait(*mDevice, [&](VkCommandBuffer cmd)
-            {
-                const VkMemoryBarrier2 ready{
-                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                    .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                    .srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                    .dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
-                const VkDependencyInfo readyDependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                    .memoryBarrierCount = 1,
-                    .pMemoryBarriers = &ready };
-                vkCmdPipelineBarrier2(cmd, &readyDependency);
-                const VkCopyAccelerationStructureInfoKHR copyInfo{
-                    .sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR,
-                    .src = blas.mBlas,
-                    .dst = compacted.mBlas,
-                    .mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR };
-                vkCmdCopyAccelerationStructureKHR(cmd, &copyInfo);
-            });
-        if (!copied)
-        {
-            DestroyBLAS(compacted);
-            MIR_LOG_WARN("BuildMeshBlas: compacted copy failed for mesh {}, it keeps the original", meshIndex);
-            return true;
-        }
-
-        const VkAccelerationStructureDeviceAddressInfoKHR addressInfo{
-            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
-            .accelerationStructure = compacted.mBlas };
-        compacted.mAddress = vkGetAccelerationStructureDeviceAddressKHR(mDevice->Handle(), &addressInfo);
-        compacted.mBytes = compactedSize;
-        compacted.mSerial = ++mBlasSerial;
-        MeshBlas retired = blas;
-        blas = compacted;
-        const VkDeviceSize sourceBytes = retired.mBytes;
-        DestroyBLAS(retired);
-        const uint64_t savedBytes = sourceBytes > compactedSize ? sourceBytes - compactedSize : 0;
-        ++mBlasCompacted;
-        mBlasCompactedSavedBytes += savedBytes;
+        outCompactedBytes = compactedSize;
         return true;
     }
 
@@ -467,7 +427,7 @@ namespace mir::vk
     {
         if (meshIndex >= mBlases.size() || compactedSize == 0)
             return {};
-        const MeshBlas &source = mBlases[meshIndex];
+        const MeshBlas source = mBlases[meshIndex];
         if (source.mBlas == VK_NULL_HANDLE || source.mSerial != serial)
             return {};
 

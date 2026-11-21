@@ -204,6 +204,31 @@ TEST_CASE("A unit is ready only once its GPU upload has completed", "[terrain][g
     CHECK(stats.uploadsReady == 2);
 }
 
+TEST_CASE("A ready mesh the renderer shrinks holds its new size", "[terrain][gpu]")
+{
+    const Release a(0x127, {0.0, 0.0, 0.0});
+    const Payloads payloads{&a};
+    Harness h(GpuSettings(uint64_t(1) << 30, uint64_t(1) << 30));
+    const TerrainPayloadKey tile = a.Tile({1, 2});
+    const std::vector<TerrainPayloadWant> wants{{tile, Demand::Visible, 5.0f}};
+
+    h.Request({&a.instance, 1}, wants, payloads.streamer);
+    h.BuildAll();
+    h.Request({&a.instance, 1}, wants, payloads.streamer);
+    h.uploader.Frame();
+    h.uploader.Frame();
+    h.residency.Install();
+    REQUIRE(h.residency.Ready(tile));
+    const uint64_t uploaded = a.Bytes(tile, h.uploader);
+    CHECK(h.residency.Stats().heldBytes == uploaded);
+
+    const TerrainResidentMesh *mesh = h.residency.Acquire(tile, h.now);
+    REQUIRE(mesh != nullptr);
+    h.uploader.meshes.at(mesh->id).bytes = uploaded / 2;
+    h.residency.Install();
+    CHECK(h.residency.Stats().heldBytes == uploaded / 2);
+}
+
 TEST_CASE("Builds start Visible before Prefetch, nearest first, a frame's upload at a time", "[terrain][gpu]")
 {
     const Release a(0x127, {0.0, 0.0, 0.0});

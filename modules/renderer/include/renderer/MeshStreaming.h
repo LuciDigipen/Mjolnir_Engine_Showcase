@@ -26,11 +26,23 @@ namespace mir
     // Defaults the renderer starts with.
     inline constexpr uint64_t kDefaultStagingBytes = uint64_t(32) * 1024 * 1024;
     inline constexpr uint64_t kDefaultFrameBytes = uint64_t(4) * 1024 * 1024;
-    // Caps the uncompacted BLAS bytes one frame may compact, so both copies never peak together.
-    inline constexpr uint64_t kBlasCompactionFrameBytes = uint64_t(256) * 1024 * 1024;
+    // Caps the uncompacted BLAS bytes whose compaction has not retired yet, across frames in flight.
+    inline constexpr uint64_t kBlasCompactionInFlightBytes = uint64_t(256) * 1024 * 1024;
+    // Device-local memory a compaction leaves free for uploads.
+    inline constexpr uint64_t kBlasCompactionHeadroomBytes = uint64_t(256) * 1024 * 1024;
 
-    // How many leading source sizes fit within cap bytes; one is taken even when it passes the cap.
-    size_t SelectBlasCompactions(std::span<const uint64_t> sourceBytes, uint64_t cap);
+    struct BlasCompactionCandidate
+    {
+        uint64_t sourceBytes = 0;
+        uint64_t compactedBytes = 0;
+    };
+
+    // How many leading candidates to compact this frame. Copies still in flight count against the cap, and each
+    // new copy must leave the headroom free. With nothing in flight one is always taken: it frees memory once it
+    // retires, so low memory serializes compaction instead of stopping it.
+    size_t SelectBlasCompactions(std::span<const BlasCompactionCandidate> candidates, uint64_t inFlightBytes,
+        uint64_t freeBytes, uint64_t cap = kBlasCompactionInFlightBytes,
+        uint64_t headroom = kBlasCompactionHeadroomBytes);
 
     struct MeshStreamingDesc
     {

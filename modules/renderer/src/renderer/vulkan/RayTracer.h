@@ -99,7 +99,9 @@ namespace mir::vk
         };
 
         // Indexed by mesh slot, so the resource store never sees ray tracing. False leaves the mesh raster-only.
-        bool BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount);
+        // The compacted size is zero when it could not be read; the caller schedules the compaction.
+        bool BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount,
+            VkDeviceSize &outCompactedBytes);
         struct MeshBlasBuild
         {
             uint32_t meshIndex = 0;

@@ -65,6 +65,7 @@ namespace mir
         using Retire = std::function<void(Handle)>;
         using Footprint = std::function<uint64_t(UploadKey, Handle, const Decoded &)>;
         using Metadata = std::function<void(View &, const Decoded &)>;
+        using Measure = std::function<uint64_t(Handle)>;
         AssetUploadCache(AsyncAssetService *assets, const AssetDecoder<Decoded> &decoder,
             Queue queue, State state, Retire retire, Footprint footprint, Metadata metadata,
             std::function<uint64_t()> retiring = {}, std::shared_ptr<GpuResidency> residency = nullptr,
@@ -101,6 +102,9 @@ namespace mir
         void EvictUnused();
         // A cap for this cache alone, beside the renderer-wide residency target.
         void SetBudget(uint64_t bytes) { mCap = bytes; Trim(); }
+        // What a ready handle holds now, for resources that shrink after their upload; without it the footprint
+        // recorded at upload counts.
+        void SetMeasure(Measure measure) { mMeasure = std::move(measure); }
         uint64_t HeldBytes() const;
         uint64_t BytesOf(UploadKey key) const;
         size_t ConsumersOf(UploadKey key) const;
@@ -127,6 +131,7 @@ namespace mir
         static Handle &HandleOf(Entry &entry) { return entry.mView.*Member; }
         static const Handle &HandleOf(const Entry &entry) { return entry.mView.*Member; }
         void RetireEntry(const Entry &entry);
+        uint64_t Charged(const Entry &entry) const;
         void Fail(Entry &entry, const std::string &reason);
         void Decode(Entry &entry);
         void Publish(Entry &entry, const std::shared_ptr<const Decoded> &decoded);
@@ -139,6 +144,7 @@ namespace mir
         Retire mRetire;
         Footprint mFootprint;
         Metadata mMetadata;
+        Measure mMeasure;
         std::function<uint64_t()> mRetiring;
         std::unordered_map<UploadKey, Entry, UploadKeyHash> mEntries;
         std::vector<UploadKey> mWaiting;

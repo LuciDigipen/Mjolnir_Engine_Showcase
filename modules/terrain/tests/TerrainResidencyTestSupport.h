@@ -104,6 +104,12 @@ namespace mir::test
             return retiring;
         }
 
+        uint64_t Bytes(TerrainGpuMeshId id) const override
+        {
+            const auto found = meshes.find(id);
+            return found == meshes.end() ? 0 : found->second.bytes;
+        }
+
         // A frame: what was recorded completes when complete holds, and everything queued is recorded.
         void Frame(const std::function<bool(const TerrainPayloadKey &)> &complete = {})
         {

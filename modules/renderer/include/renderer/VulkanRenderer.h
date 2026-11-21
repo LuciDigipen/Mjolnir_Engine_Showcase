@@ -338,6 +338,7 @@ namespace mir
         bool RetireMesh(MeshHandle handle) override;
         uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
             const MeshUploadOptions &options) const override;
+        uint64_t MeshBytes(MeshHandle handle) const override;
         MeshStreamingStats MeshStreaming() const override;
         RtDeformationStats RayTracingDeformations() const;
 

@@ -299,7 +299,15 @@ namespace mir::vk
             });
         mRetired.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
         mRetiredTextures.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
+        std::erase_if(mCompactionsInFlight, [&](const auto &entry) { return entry.first <= completed; });
         ReadBlasQueries(completed);
+    }
+
+    void MeshUploader::QueueBlasCompaction(MeshHandle mesh, uint64_t serial, uint64_t sourceBytes,
+        uint64_t compactedBytes)
+    {
+        if (compactedBytes != 0)
+            mBlasReady.push_back({ mesh, serial, sourceBytes, compactedBytes });
     }
 
     void MeshUploader::RecordBlasQueries(VkCommandBuffer cmd, uint64_t frame, RayTracer &rayTracer,
@@ -370,11 +378,14 @@ namespace mir::vk
         if (mBlasReady.empty())
             return false;
 
-        std::vector<uint64_t> sourceBytes;
-        sourceBytes.reserve(mBlasReady.size());
+        std::vector<BlasCompactionCandidate> candidates;
+        candidates.reserve(mBlasReady.size());
         for (const ReadyBlas &ready : mBlasReady)
-            sourceBytes.push_back(ready.sourceBytes);
-        const size_t take = SelectBlasCompactions(sourceBytes, kBlasCompactionFrameBytes);
+            candidates.push_back({ ready.sourceBytes, ready.compactedBytes });
+        uint64_t inFlightBytes = 0;
+        for (const auto &[inFlightFrame, bytes] : mCompactionsInFlight)
+            inFlightBytes += bytes;
+        const size_t take = SelectBlasCompactions(candidates, inFlightBytes, mDevice->DeviceLocalFreeBytes());
         bool compactedAny = false;
         for (size_t i = 0; i < take; ++i)
         {
@@ -385,11 +396,12 @@ namespace mir::vk
             if (!compacted.compacted)
                 continue;
             compactedAny = true;
-            const uint64_t saved = ready.sourceBytes > ready.compactedBytes
-                ? ready.sourceBytes - ready.compactedBytes : 0;
+            const uint64_t sourceBytes = compacted.retired.mBytes;
+            const uint64_t saved = sourceBytes > ready.compactedBytes ? sourceBytes - ready.compactedBytes : 0;
             if (GpuMesh *mesh = resources.FindMeshSlot(ready.mesh))
                 mesh->mBytes -= std::min<uint64_t>(mesh->mBytes, saved);
-            mRetired.Push(frame, ready.sourceBytes, Garbage{ compacted.retired, {}, {} });
+            mRetired.Push(frame, sourceBytes, Garbage{ compacted.retired, {}, {} });
+            mCompactionsInFlight.emplace_back(frame, sourceBytes);
         }
         return compactedAny;
     }
@@ -401,6 +413,7 @@ namespace mir::vk
                 vkDestroyQueryPool(mDevice->Handle(), batch.pool, nullptr);
         mBlasQueries.clear();
         mBlasReady.clear();
+        mCompactionsInFlight.clear();
     }
 
     void MeshUploader::Record(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources, RayTracer &rayTracer)

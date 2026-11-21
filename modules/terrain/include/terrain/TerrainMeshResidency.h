@@ -68,6 +68,8 @@ namespace mir
         virtual void Retire(TerrainGpuMeshId mesh) = 0;
         // Retired and not freed yet.
         virtual uint64_t RetiringBytes() const = 0;
+        // GPU bytes an upload holds now; less than its footprint once the renderer compacts it.
+        virtual uint64_t Bytes(TerrainGpuMeshId mesh) const = 0;
     };
 
     enum class TerrainMeshState : uint8_t

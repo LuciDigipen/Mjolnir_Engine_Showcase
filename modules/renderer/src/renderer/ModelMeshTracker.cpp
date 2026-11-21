@@ -41,7 +41,9 @@ namespace mir
             },
             [](MeshLoad &view, const DecodedMesh &mesh) { view.bounds = mesh.bounds; },
             [&uploader] { return uploader.MeshStreaming().retiringMeshBytes; }, uploader.SharedResidency(), GpuCategory::Mesh)
-    {}
+    {
+        SetMeasure([&uploader](MeshHandle handle) { return uploader.MeshBytes(handle); });
+    }
 
     AssetId ModelMeshTracker::Request(const GpuRecordKey &key, const Make &make, const std::string &label)
     {

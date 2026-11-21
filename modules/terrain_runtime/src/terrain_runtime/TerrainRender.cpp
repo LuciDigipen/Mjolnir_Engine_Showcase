@@ -79,6 +79,11 @@ namespace mir
         return mUploader.MeshStreaming().retiringBytes;
     }
 
+    uint64_t TerrainGpuUploader::Bytes(TerrainGpuMeshId mesh) const
+    {
+        return mUploader.MeshBytes(Handle(mesh));
+    }
+
     MeshHandle TerrainGpuUploader::Handle(TerrainGpuMeshId mesh)
     {
         return MeshHandle{uint32_t(mesh & 0xffffffffu), uint32_t(mesh >> 32)};

@@ -477,20 +477,25 @@ namespace mir
 
         for (auto &[key, entry] : impl.entries)
         {
-            if (entry.state != TerrainMeshState::Uploading)
-                continue;
-            switch (impl.uploader.State(entry.mesh.id))
+            if (entry.state == TerrainMeshState::Uploading)
+                switch (impl.uploader.State(entry.mesh.id))
+                {
+                case TerrainGpuMeshState::Uploading:
+                    break;
+                case TerrainGpuMeshState::Ready:
+                    entry.state = TerrainMeshState::Ready;
+                    ++impl.stats.uploadsReady;
+                    break;
+                case TerrainGpuMeshState::Failed:
+                    impl.uploader.Retire(entry.mesh.id);
+                    impl.Fail(entry, key.geometry, "the GPU upload failed");
+                    break;
+                }
+            if (entry.state == TerrainMeshState::Ready)
             {
-            case TerrainGpuMeshState::Uploading:
-                break;
-            case TerrainGpuMeshState::Ready:
-                entry.state = TerrainMeshState::Ready;
-                ++impl.stats.uploadsReady;
-                break;
-            case TerrainGpuMeshState::Failed:
-                impl.uploader.Retire(entry.mesh.id);
-                impl.Fail(entry, key.geometry, "the GPU upload failed");
-                break;
+                const uint64_t bytes = impl.uploader.Bytes(entry.mesh.id);
+                impl.held = impl.held - entry.bytes + bytes;
+                entry.bytes = bytes;
             }
         }
     }
