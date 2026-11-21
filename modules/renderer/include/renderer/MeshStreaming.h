@@ -26,6 +26,11 @@ namespace mir
     // Defaults the renderer starts with.
     inline constexpr uint64_t kDefaultStagingBytes = uint64_t(32) * 1024 * 1024;
     inline constexpr uint64_t kDefaultFrameBytes = uint64_t(4) * 1024 * 1024;
+    // Caps the uncompacted BLAS bytes one frame may compact, so both copies never peak together.
+    inline constexpr uint64_t kBlasCompactionFrameBytes = uint64_t(256) * 1024 * 1024;
+
+    // How many leading source sizes fit within cap bytes; one is taken even when it passes the cap.
+    size_t SelectBlasCompactions(std::span<const uint64_t> sourceBytes, uint64_t cap);
 
     struct MeshStreamingDesc
     {
@@ -84,6 +89,8 @@ namespace mir
         uint64_t textureAllocatedBytes = 0;
         uint64_t blasBuilt = 0;
         uint64_t blasBytes = 0;
+        uint64_t blasCompacted = 0;
+        uint64_t blasCompactedSavedBytes = 0;
         uint64_t lastFrameBytes = 0;
         uint64_t maxFrameBytes = 0;
         // vkDeviceWaitIdle and vkQueueWaitIdle calls, by every caller.

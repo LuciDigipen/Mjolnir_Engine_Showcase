@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -95,6 +96,34 @@ namespace mir::vk
         void RecordTexture(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources,
             const MeshUploadQueue::Admitted &band);
 
+        struct PendingBlas
+        {
+            MeshHandle mesh;
+            uint64_t serial = 0;
+            uint64_t sourceBytes = 0;
+        };
+        struct BlasQueryBatch
+        {
+            VkQueryPool pool = VK_NULL_HANDLE;
+            uint64_t frame = 0;
+            std::vector<PendingBlas> entries;
+        };
+        struct ReadyBlas
+        {
+            MeshHandle mesh;
+            uint64_t serial = 0;
+            uint64_t sourceBytes = 0;
+            uint64_t compactedBytes = 0;
+        };
+
+        void RecordBlasQueries(VkCommandBuffer cmd, uint64_t frame, RayTracer &rayTracer,
+            const RayTracer::BlasBatch &batch, const std::unordered_map<uint32_t, MeshHandle> &handles);
+        void ReadBlasQueries(uint64_t completed);
+        // Compacts ready entries in order within this frame's source-byte budget.
+        bool CompactReadyBlases(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources,
+            RayTracer &rayTracer);
+        void DestroyBlasQueries();
+
         // Replaces the ring when nothing is queued or in flight.
         bool Configure(const MeshStreamingDesc &desc);
         void Free(RayTracer &rayTracer, Garbage &garbage);
@@ -111,6 +140,8 @@ namespace mir::vk
         std::unordered_map<uint32_t, TextureFinish> mTextureFinishes;
         FrameRetireList<Garbage> mRetired;
         FrameRetireList<Garbage> mRetiredTextures;
+        std::vector<BlasQueryBatch> mBlasQueries;
+        std::deque<ReadyBlas> mBlasReady;
 
         uint64_t mQueuedCount = 0;
         uint64_t mTextureQueuedCount = 0;

@@ -360,3 +360,32 @@ TEST_CASE("Prepared texture mips filter RGB in linear light and alpha linearly",
     CHECK(source.desc.mips[0].pixels[3] == std::byte{ 42 });
     CHECK(PrepareTextureUpload({ .width = 2, .height = 2, .pixels = image }).desc.width == 0);
 }
+
+TEST_CASE("Compaction selection takes nothing when no BLAS is ready", "[renderer][streaming][compaction]")
+{
+    CHECK(SelectBlasCompactions({}, 1000) == 0);
+}
+
+TEST_CASE("Compaction selection takes every entry that fits the cap", "[renderer][streaming][compaction]")
+{
+    const std::vector<uint64_t> sizes{ 100, 200, 300 };
+    CHECK(SelectBlasCompactions(sizes, 1000) == 3);
+    CHECK(SelectBlasCompactions(sizes, 600) == 3);
+}
+
+TEST_CASE("Compaction selection stops before the entry that passes the cap", "[renderer][streaming][compaction]")
+{
+    const std::vector<uint64_t> sizes{ 400, 300, 300, 100 };
+    CHECK(SelectBlasCompactions(sizes, 1000) == 3);
+    CHECK(SelectBlasCompactions(sizes, 700) == 2);
+    const std::vector<uint64_t> belowFirst{ 400, 300 };
+    CHECK(SelectBlasCompactions(belowFirst, 399) == 1);
+}
+
+TEST_CASE("A single entry larger than the cap is still taken", "[renderer][streaming][compaction]")
+{
+    const std::vector<uint64_t> sizes{ 5000, 10 };
+    CHECK(SelectBlasCompactions(sizes, 1000) == 1);
+    const std::vector<uint64_t> single{ 5000 };
+    CHECK(SelectBlasCompactions(single, 1000) == 1);
+}

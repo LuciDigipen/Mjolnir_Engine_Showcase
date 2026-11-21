@@ -13,6 +13,22 @@
 
 namespace mir
 {
+    size_t SelectBlasCompactions(std::span<const uint64_t> sourceBytes, uint64_t cap)
+    {
+        if (sourceBytes.empty())
+            return 0;
+        uint64_t used = 0;
+        size_t count = 0;
+        for (const uint64_t bytes : sourceBytes)
+        {
+            if (count > 0 && (used >= cap || bytes > cap - used))
+                break;
+            used += bytes;
+            ++count;
+        }
+        return count;
+    }
+
     MeshUploadSource MeshUploadSource::Own(std::vector<Vertex> vertices, std::vector<uint32_t> indices)
     {
         struct Payload
