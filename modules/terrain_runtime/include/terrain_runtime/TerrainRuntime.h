@@ -208,6 +208,8 @@ namespace mir
         World *mWorld = nullptr;
         VulkanRenderer *mRenderer = nullptr;
         SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
+        // Edit and Play each hold their own, so one runtime's unload cannot retire a material the other draws.
+        uint64_t mMaterialUseOwner = 0;
         const AssetResolver *mResolver = nullptr;
         std::string mAssetIdRoot;
         std::filesystem::path mReleasesRoot;

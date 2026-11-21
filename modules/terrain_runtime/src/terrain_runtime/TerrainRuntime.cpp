@@ -205,6 +205,8 @@ namespace mir
             std::erase(gates->mGates, static_cast<PhysicsStepGate *>(this));
         if (mCollision)
             mCollision->Clear();
+        if (mSurfaceMaterials)
+            mSurfaceMaterials->RemoveMaterialUseOwner(mMaterialUseOwner);
     }
 
     void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
@@ -213,6 +215,7 @@ namespace mir
         mWorld = &world;
         mRenderer = &renderer;
         mSurfaceMaterials = &materials;
+        mMaterialUseOwner = mSurfaceMaterials->AddMaterialUseOwner();
         mSurfaceMaterials->SetMaterialValidator([](const SurfaceMaterialBinding &binding, std::string &error)
             {
                 return ValidateSurfaceMaterialParameters(binding, error);
@@ -372,7 +375,7 @@ namespace mir
                 ResolveBinding(mResources[i]);
                 SyncMaterialSlots(mResources[i], instances[i]);
             }
-            mSurfaceMaterials->AcknowledgeGeneration(0, mSurfaceMaterials->Generation());
+            mSurfaceMaterials->AcknowledgeGeneration(mMaterialUseOwner, mSurfaceMaterials->Generation());
         }
         if (mMeshes)
             mMeshes->Install();
@@ -527,6 +530,8 @@ namespace mir
         mStagedProblems.clear();
         mGuards.clear();
         mResources.clear();
+        if (mSurfaceMaterials)
+            mSurfaceMaterials->SetMaterialUses(mMaterialUseOwner, {});
         mWorld->Resource<TerrainWorld>() = TerrainWorld{};
         if (mGround)
             mGround->Invalidate();
@@ -728,7 +733,7 @@ namespace mir
         for (const InstanceResources &resources : mResources)
             if (!resources.materialLogicalPath.empty() && !resources.materialAsset.IsNull())
                 uses.push_back({resources.materialLogicalPath, resources.materialAsset, "terrain"});
-        mSurfaceMaterials->SetActiveMaterials(uses);
+        mSurfaceMaterials->SetMaterialUses(mMaterialUseOwner, uses);
     }
 
     void TerrainRuntime::ResolveBinding(InstanceResources &instance)

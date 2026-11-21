@@ -265,6 +265,24 @@ TEST_CASE("Terrain and mesh owners merge their active material uses", "[renderer
     CHECK(library.ActiveMaterials()[0].frontend == "terrain");
 }
 
+TEST_CASE("One terrain owner's unload keeps another terrain owner's material active", "[renderer][material]")
+{
+    SurfaceMaterialLibrary library;
+    const std::vector<SurfaceMaterialUse> ground{
+        { .logicalPath = "assets/materials/ground.material.json", .asset = AssetId{ 1 }, .frontend = "terrain" } };
+    const uint64_t edit = library.AddMaterialUseOwner();
+    const uint64_t play = library.AddMaterialUseOwner();
+    library.SetMaterialUses(edit, ground);
+    library.SetMaterialUses(play, ground);
+
+    library.SetActiveMaterials({});
+    library.SetMaterialUses(play, {});
+    library.RemoveMaterialUseOwner(play);
+
+    REQUIRE(library.ActiveMaterials().size() == 1);
+    CHECK(library.ActiveMaterials()[0] == ground[0]);
+}
+
 TEST_CASE("Shared bounds apply to every frontend and the terrain phase rule only to terrain",
     "[renderer][material]")
 {
