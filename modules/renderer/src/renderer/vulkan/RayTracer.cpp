@@ -183,18 +183,47 @@ namespace mir::vk
             DestroyImages(/*guides*/ true);
     }
 
-    bool RayTracer::BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount)
+    bool RayTracer::BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount,
+        VkDeviceSize &outCompactedBytes)
     {
+        outCompactedBytes = 0;
         if (mBlases.size() <= meshIndex)
             mBlases.resize(meshIndex + 1);
         MeshBlas &blas = mBlases[meshIndex];
+
+        VkQueryPool queryPool = VK_NULL_HANDLE;
+        const VkQueryPoolCreateInfo queryInfo{ .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+            .queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+            .queryCount = 1 };
+        if (vkCreateQueryPool(mDevice->Handle(), &queryInfo, nullptr, &queryPool) != VK_SUCCESS)
+            MIR_LOG_WARN("BuildMeshBlas: query pool creation failed, mesh {} stays uncompacted", meshIndex);
 
         VkBuffer scratch = VK_NULL_HANDLE;
         VmaAllocation scratchAllocation = VK_NULL_HANDLE;
         bool built = false;
         const bool submitted = SubmitAndWait(*mDevice, [&](VkCommandBuffer cmd)
             {
-                built = BuildBLAS(mesh, vertexCount, cmd, blas, scratch, scratchAllocation);
+                built = BuildBLAS(mesh, vertexCount, cmd, blas, scratch, scratchAllocation, kMeshBlasBuildFlags);
+                if (!built)
+                    return;
+                // The host wait does not make the build visible to the TLAS build in a later submission.
+                const VkMemoryBarrier2 builtBarrier{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                    .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    .srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                        VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                    .dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+                const VkDependencyInfo builtDependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                    .memoryBarrierCount = 1,
+                    .pMemoryBarriers = &builtBarrier };
+                vkCmdPipelineBarrier2(cmd, &builtDependency);
+                if (queryPool == VK_NULL_HANDLE)
+                    return;
+                vkCmdResetQueryPool(cmd, queryPool, 0, 1);
+                const VkAccelerationStructureKHR handle = blas.mBlas;
+                vkCmdWriteAccelerationStructuresPropertiesKHR(cmd, 1, &handle,
+                    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, queryPool, 0);
             });
 
         if (scratch != VK_NULL_HANDLE)
@@ -203,8 +232,24 @@ namespace mir::vk
         if (!built || !submitted)
         {
             DestroyBLAS(blas);
+            if (queryPool != VK_NULL_HANDLE)
+                vkDestroyQueryPool(mDevice->Handle(), queryPool, nullptr);
             return false;
         }
+        blas.mSerial = ++mBlasSerial;
+        if (queryPool == VK_NULL_HANDLE)
+            return true;
+
+        VkDeviceSize compactedSize = 0;
+        const VkResult result = vkGetQueryPoolResults(mDevice->Handle(), queryPool, 0, 1,
+            sizeof(compactedSize), &compactedSize, sizeof(compactedSize), VK_QUERY_RESULT_64_BIT);
+        vkDestroyQueryPool(mDevice->Handle(), queryPool, nullptr);
+        if (result != VK_SUCCESS || compactedSize == 0)
+        {
+            MIR_LOG_WARN("BuildMeshBlas: compacted size was not readable, mesh {} stays uncompacted", meshIndex);
+            return true;
+        }
+        outCompactedBytes = compactedSize;
         return true;
     }
 
@@ -236,7 +281,7 @@ namespace mir::vk
             VkAccelerationStructureBuildGeometryInfoKHR info{
                 .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
                 .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-                .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+                .flags = kMeshBlasBuildFlags,
                 .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
                 .geometryCount = 1,
                 .pGeometries = &geometry };
@@ -253,6 +298,8 @@ namespace mir::vk
                 MIR_LOG_ERROR("RecordMeshBlases: acceleration structure creation failed for mesh {}", build.meshIndex);
                 continue;
             }
+            blas.mBytes = sizes.accelerationStructureSize;
+            blas.mSerial = ++mBlasSerial;
             info.dstAccelerationStructure = blas.mBlas;
             const VkDeviceSize offset =
                 (batch.scratchBytes + mScratchAlignment - 1) / mScratchAlignment * mScratchAlignment;
@@ -301,12 +348,20 @@ namespace mir::vk
             mBlases[slot].mAddress = vkGetAccelerationStructureDeviceAddressKHR(mDevice->Handle(), &addressInfo);
         }
         batch.built = slots.size();
+        batch.slots = std::move(slots);
         return batch;
     }
 
     bool RayTracer::HasMeshBlas(uint32_t meshIndex) const
     {
         return meshIndex < mBlases.size() && mBlases[meshIndex].mBlas != VK_NULL_HANDLE;
+    }
+
+    RayTracer::MeshBlasInfo RayTracer::BlasInfo(uint32_t meshIndex) const
+    {
+        if (meshIndex >= mBlases.size() || mBlases[meshIndex].mBlas == VK_NULL_HANDLE)
+            return {};
+        return { true, mBlases[meshIndex].mSerial, mBlases[meshIndex].mBytes };
     }
 
     RayTracer::BlasSizes RayTracer::MeshBlasSizes(uint32_t vertexCount, uint32_t indexCount) const
@@ -325,7 +380,7 @@ namespace mir::vk
         const VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
             .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-            .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+            .flags = kMeshBlasBuildFlags,
             .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
             .geometryCount = 1,
             .pGeometries = &geometry };
@@ -340,6 +395,81 @@ namespace mir::vk
         const MeshBlas taken = mBlases[meshIndex];
         mBlases[meshIndex] = MeshBlas{};
         return taken;
+    }
+
+    void RayTracer::RecordMeshBlasCompactedSizes(VkCommandBuffer cmd, VkQueryPool pool,
+        std::span<const uint32_t> meshIndices)
+    {
+        if (meshIndices.empty())
+            return;
+        std::vector<VkAccelerationStructureKHR> handles;
+        handles.reserve(meshIndices.size());
+        for (const uint32_t meshIndex : meshIndices)
+            handles.push_back(mBlases[meshIndex].mBlas);
+
+        const VkMemoryBarrier2 builtBarrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            .srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+            .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            .dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+        const VkDependencyInfo builtDependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers = &builtBarrier };
+        vkCmdPipelineBarrier2(cmd, &builtDependency);
+        vkCmdResetQueryPool(cmd, pool, 0, static_cast<uint32_t>(handles.size()));
+        vkCmdWriteAccelerationStructuresPropertiesKHR(cmd, static_cast<uint32_t>(handles.size()), handles.data(),
+            VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, pool, 0);
+    }
+
+    RayTracer::BlasCompaction RayTracer::CompactMeshBlas(VkCommandBuffer cmd, uint32_t meshIndex, uint64_t serial,
+        VkDeviceSize compactedSize)
+    {
+        if (meshIndex >= mBlases.size() || compactedSize == 0)
+            return {};
+        const MeshBlas source = mBlases[meshIndex];
+        if (source.mBlas == VK_NULL_HANDLE || source.mSerial != serial)
+            return {};
+
+        MeshBlas compacted;
+        if (!CreateAccelerationStructureObject(compactedSize, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+            compacted.mBuffer, compacted.mAllocation, compacted.mBlas))
+        {
+            MIR_LOG_WARN("CompactMeshBlas: acceleration structure creation failed for mesh {}", meshIndex);
+            return {};
+        }
+
+        const VkMemoryBarrier2 ready{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            .srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+            .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            .dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+        const VkDependencyInfo readyDependency{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers = &ready };
+        vkCmdPipelineBarrier2(cmd, &readyDependency);
+        const VkCopyAccelerationStructureInfoKHR copyInfo{
+            .sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR,
+            .src = source.mBlas,
+            .dst = compacted.mBlas,
+            .mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR };
+        vkCmdCopyAccelerationStructureKHR(cmd, &copyInfo);
+
+        const VkAccelerationStructureDeviceAddressInfoKHR addressInfo{
+            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
+            .accelerationStructure = compacted.mBlas };
+        compacted.mAddress = vkGetAccelerationStructureDeviceAddressKHR(mDevice->Handle(), &addressInfo);
+        compacted.mBytes = compactedSize;
+        compacted.mSerial = ++mBlasSerial;
+        BlasCompaction result;
+        result.compacted = true;
+        result.retired = source;
+        mBlases[meshIndex] = compacted;
+        const uint64_t savedBytes = source.mBytes > compactedSize ? source.mBytes - compactedSize : 0;
+        ++mBlasCompacted;
+        mBlasCompactedSavedBytes += savedBytes;
+        return result;
     }
 
     namespace
@@ -1128,6 +1258,8 @@ namespace mir::vk
             blas.mAllocation = VK_NULL_HANDLE;
         }
         blas.mAddress = 0;
+        blas.mBytes = 0;
+        blas.mSerial = 0;
     }
 
     void RayTracer::DestroyMeshBlas(uint32_t meshIndex)
@@ -1144,7 +1276,8 @@ namespace mir::vk
     }
 
     bool RayTracer::BuildBLAS(const GpuMesh &mesh, uint32_t vertexCount, VkCommandBuffer cmd, MeshBlas &outBlas,
-        VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation)
+        VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation,
+        VkBuildAccelerationStructureFlagsKHR flags)
     {
         const VkDeviceAddress vertexAddress = GetBufferAddress(mDevice->Handle(), mesh.mVertexBuffer);
         const VkDeviceAddress indexAddress = GetBufferAddress(mDevice->Handle(), mesh.mIndexBuffer);
@@ -1169,7 +1302,7 @@ namespace mir::vk
         VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
             .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-            .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+            .flags = flags,
             .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
             .geometryCount = 1,
             .pGeometries = &geometry };
@@ -1183,6 +1316,7 @@ namespace mir::vk
             MIR_LOG_CRITICAL("BuildBLAS: acceleration structure creation failed");
             return false;
         }
+        outBlas.mBytes = sizes.accelerationStructureSize;
 
         if (!CreateScratchBuffer(sizes.buildScratchSize, outScratchBuffer, outScratchAllocation))
         {

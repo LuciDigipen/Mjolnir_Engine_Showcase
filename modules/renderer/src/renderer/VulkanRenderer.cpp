@@ -710,6 +710,12 @@ namespace mir
         return mMeshUploads->Footprint(*mRayTracer, vertexCount, indexCount, options);
     }
 
+    uint64_t VulkanRenderer::MeshBytes(MeshHandle handle) const
+    {
+        const vk::GpuMesh *const mesh = mResources->FindMeshSlot(handle);
+        return mesh != nullptr ? mesh->mBytes : 0;
+    }
+
     RtDeformationStats VulkanRenderer::RayTracingDeformations() const
     {
         return mRayTracer ? mRayTracer->DeformationStats() : RtDeformationStats{};
@@ -724,6 +730,12 @@ namespace mir
         stats.queueWaits = mDevice->QueueWaits();
         stats.skippedDraws = mSkippedDraws;
         stats.highestGeneration = mResources->HighestMeshGeneration();
+        if (mRayTracer)
+        {
+            const vk::RayTracer::BlasCompactionStats compaction = mRayTracer->CompactionStats();
+            stats.blasCompacted = compaction.compacted;
+            stats.blasCompactedSavedBytes = compaction.savedBytes;
+        }
         return stats;
     }
 

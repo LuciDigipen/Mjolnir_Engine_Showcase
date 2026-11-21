@@ -78,11 +78,19 @@ namespace mir
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
+    uint64_t AssetUploadCache<Decoded, Handle, View, Member>::Charged(const Entry &entry) const
+    {
+        if (mMeasure && entry.mView.phase == AssetUploadPhase::Ready && !HandleOf(entry).IsNull())
+            return mMeasure(HandleOf(entry));
+        return entry.mBytes;
+    }
+
+    template <class Decoded, class Handle, class View, Handle View::*Member>
     uint64_t AssetUploadCache<Decoded, Handle, View, Member>::HeldBytes() const
     {
         uint64_t bytes = 0;
         for (const auto &[key, entry] : mEntries)
-            bytes += entry.mBytes;
+            bytes += Charged(entry);
         return bytes;
     }
 
@@ -90,7 +98,7 @@ namespace mir
     uint64_t AssetUploadCache<Decoded, Handle, View, Member>::BytesOf(UploadKey key) const
     {
         const auto found = mEntries.find(key);
-        return found == mEntries.end() ? 0 : found->second.mBytes;
+        return found == mEntries.end() ? 0 : Charged(found->second);
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
@@ -292,7 +300,7 @@ namespace mir
             if (freed >= need)
                 break;
             auto found = mEntries.find(key);
-            freed += found->second.mBytes;
+            freed += Charged(found->second);
             RetireEntry(found->second);
             mEntries.erase(found);
         }

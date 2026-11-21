@@ -31,6 +31,8 @@ namespace mir
         // GPU bytes a queued mesh of this size holds, BLAS included.
         virtual uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
             const MeshUploadOptions &options) const = 0;
+        // GPU bytes a queued or uploaded mesh holds now, zero for a stale handle. Drops once its BLAS is compacted.
+        virtual uint64_t MeshBytes(MeshHandle handle) const = 0;
         virtual MeshStreamingStats MeshStreaming() const = 0;
         // The GPU bytes one frame may write, shared by every consumer.
         virtual uint64_t UploadFrameBudget() const = 0;

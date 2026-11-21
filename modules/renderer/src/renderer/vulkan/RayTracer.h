@@ -32,6 +32,13 @@ namespace mir::vk
     class MaterialTable;
     struct GpuMesh;
 
+    // Static mesh BLASes are compacted after their build; deformation BLASes are rebuilt every frame.
+    constexpr VkBuildAccelerationStructureFlagsKHR kMeshBlasBuildFlags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+        VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+    constexpr VkBuildAccelerationStructureFlagsKHR kDeformationBlasBuildFlags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+
     // Every image the trace writes, one per frame in flight each. Adding one is a row in
     // RayTracer.cpp's kRtImages (format, binding, clear value, stage) plus the shader side.
     // The always-present outputs come first, then Ray Reconstruction's guide buffers.
@@ -80,6 +87,9 @@ namespace mir::vk
             VkBuffer mBuffer = VK_NULL_HANDLE;
             VmaAllocation mAllocation = VK_NULL_HANDLE;
             VkDeviceAddress mAddress = 0;
+            VkDeviceSize mBytes = 0;
+            // Proves a scheduled compaction still names this BLAS, not one that reused the slot.
+            uint64_t mSerial = 0;
         };
 
         struct BlasSizes
@@ -89,7 +99,9 @@ namespace mir::vk
         };
 
         // Indexed by mesh slot, so the resource store never sees ray tracing. False leaves the mesh raster-only.
-        bool BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount);
+        // The compacted size is zero when it could not be read; the caller schedules the compaction.
+        bool BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount,
+            VkDeviceSize &outCompactedBytes);
         struct MeshBlasBuild
         {
             uint32_t meshIndex = 0;
@@ -101,7 +113,8 @@ namespace mir::vk
         {
             size_t built = 0;
             VkDeviceSize blasBytes = 0;
-            // Shared by the batch; it must outlive the frame.
+            // Slots built in this batch, and the scratch the batch shares; the scratch must outlive the frame.
+            std::vector<uint32_t> slots;
             VkBuffer scratchBuffer = VK_NULL_HANDLE;
             VmaAllocation scratchAllocation = VK_NULL_HANDLE;
             VkDeviceSize scratchBytes = 0;
@@ -117,6 +130,35 @@ namespace mir::vk
         MeshBlas TakeMeshBlas(uint32_t meshIndex);
         void DestroyBLAS(MeshBlas &blas);
         void DestroyBlases();
+
+        struct MeshBlasInfo
+        {
+            bool exists = false;
+            uint64_t serial = 0;
+            VkDeviceSize bytes = 0;
+        };
+        MeshBlasInfo BlasInfo(uint32_t meshIndex) const;
+
+        // Records the build barrier and the compacted-size queries for the slots just built; the pool is the caller's.
+        void RecordMeshBlasCompactedSizes(VkCommandBuffer cmd, VkQueryPool pool,
+            std::span<const uint32_t> meshIndices);
+
+        struct BlasCompaction
+        {
+            bool compacted = false;
+            // The uncompacted BLAS the slot held; the caller retires it once its frame has completed.
+            MeshBlas retired;
+        };
+        // Replaces the slot's BLAS with a compacted copy; false leaves the slot as it was.
+        BlasCompaction CompactMeshBlas(VkCommandBuffer cmd, uint32_t meshIndex, uint64_t serial,
+            VkDeviceSize compactedSize);
+
+        struct BlasCompactionStats
+        {
+            uint64_t compacted = 0;
+            uint64_t savedBytes = 0;
+        };
+        BlasCompactionStats CompactionStats() const { return { mBlasCompacted, mBlasCompactedSavedBytes }; }
 
         struct PreparedScene
         {
@@ -188,7 +230,8 @@ namespace mir::vk
         void WriteDescriptorSets();
         void WriteMaterialTableDescriptors(uint32_t frame);
         bool BuildBLAS(const GpuMesh &mesh, uint32_t vertexCount, VkCommandBuffer cmd, MeshBlas &outBlas,
-            VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation);
+            VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation,
+            VkBuildAccelerationStructureFlagsKHR flags);
         // Aligned to minAccelerationStructureScratchOffsetAlignment.
         bool CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation);
         bool InitializeDeformation();
@@ -278,6 +321,9 @@ namespace mir::vk
         std::byte *mInstanceInfoMapped[kFramesInFlight]{};
 
         std::vector<MeshBlas> mBlases;
+        uint64_t mBlasSerial = 0;
+        uint64_t mBlasCompacted = 0;
+        uint64_t mBlasCompactedSavedBytes = 0;
 
         struct ShaderReloadCandidate
         {

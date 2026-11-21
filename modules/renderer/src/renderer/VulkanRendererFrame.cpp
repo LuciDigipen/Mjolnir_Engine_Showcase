@@ -657,8 +657,14 @@ namespace mir
             vk::GpuMesh &mesh = *mResources->FindMeshSlot(handle);
             // cleared either way, so a failure reports once and the mesh stays out of the trace
             const uint32_t vertexCount = std::exchange(mesh.mBlasVertexCount, 0);
-            if (!mRayTracer->BuildMeshBlas(index, mesh, vertexCount))
+            VkDeviceSize compactedBytes = 0;
+            if (!mRayTracer->BuildMeshBlas(index, mesh, vertexCount, compactedBytes))
+            {
                 MIR_LOG_ERROR("BuildOwedBlases: BLAS build failed for mesh {}, it stays out of the trace", index);
+                continue;
+            }
+            const vk::RayTracer::MeshBlasInfo blas = mRayTracer->BlasInfo(index);
+            mMeshUploads->QueueBlasCompaction(handle, blas.serial, blas.bytes, compactedBytes);
         }
         return true;
     }

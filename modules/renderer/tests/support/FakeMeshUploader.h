@@ -30,6 +30,8 @@ namespace mir::test
             MeshUploadOptions options;
             // dropped once recorded or retired, as the renderer drops it after the staging copy
             std::shared_ptr<const void> keepalive;
+            // Nonzero once a test shrinks the mesh, as BLAS compaction does.
+            uint64_t compactedBytes = 0;
         };
 
         MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options) override
@@ -57,8 +59,7 @@ namespace mir::test
             retired.push_back(handle);
             // a mesh the GPU may have used stays occupied until its last frame completes
             if (found->second.state != MeshUploadState::Pending)
-                deferred.push_back(MeshFootprint(uint32_t(found->second.vertices), uint32_t(found->second.indices),
-                    found->second.options));
+                deferred.push_back(MeshBytes(handle));
             meshes.erase(found);
             return true;
         }
@@ -66,6 +67,17 @@ namespace mir::test
         uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount, const MeshUploadOptions &) const override
         {
             return uint64_t(vertexCount) * 64 + uint64_t(indexCount) * 4;
+        }
+
+        uint64_t MeshBytes(MeshHandle handle) const override
+        {
+            const auto found = meshes.find(handle.mIndex);
+            if (found == meshes.end() || handle.mGeneration != 1)
+                return 0;
+            if (found->second.compactedBytes != 0)
+                return found->second.compactedBytes;
+            return MeshFootprint(uint32_t(found->second.vertices), uint32_t(found->second.indices),
+                found->second.options);
         }
 
         MeshStreamingStats MeshStreaming() const override

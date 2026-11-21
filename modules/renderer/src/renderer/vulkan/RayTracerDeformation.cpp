@@ -225,7 +225,8 @@ namespace mir::vk
 
         GpuMesh geometry = mesh;
         geometry.mVertexBuffer = posed.vertices;
-        if (!BuildBLAS(geometry, count, cmd, posed.blas, posed.scratch, posed.scratchAllocation))
+        if (!BuildBLAS(geometry, count, cmd, posed.blas, posed.scratch, posed.scratchAllocation,
+            kDeformationBlasBuildFlags))
         {
             MIR_LOG_ERROR("RT deformation: instance BLAS build failed");
             return nullptr;

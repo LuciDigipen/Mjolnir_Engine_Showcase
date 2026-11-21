@@ -62,6 +62,7 @@ namespace mir
       TerrainGpuMeshState State(TerrainGpuMeshId mesh) const override;
       void Retire(TerrainGpuMeshId mesh) override;
       uint64_t RetiringBytes() const override;
+      uint64_t Bytes(TerrainGpuMeshId mesh) const override;
 
       static MeshHandle Handle(TerrainGpuMeshId mesh);
 
