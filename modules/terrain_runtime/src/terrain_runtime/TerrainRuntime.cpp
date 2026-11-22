@@ -257,6 +257,13 @@ namespace mir
 
         const TerrainStreamingSettings &settings = *configuration.Effective();
         mSeenSettings = settings;
+        const TerrainStreamingSettings::Gpu &gpu = settings.gpu;
+        // Asked when joining the cache too, so an increase applies at the next Play. A smaller ring only slows
+        // uploads, so terrain carries on.
+        if (!renderer.RequestStagingBytes(gpu.stagingBytes))
+            MIR_LOG_WARN("Terrain asked for a {:.1f} MiB staging ring and the renderer kept its current one, so "
+                         "its meshes upload over more frames",
+                         MiB(gpu.stagingBytes));
         if (cache)
         {
             mCache = std::move(cache);
@@ -269,12 +276,6 @@ namespace mir
         }
         else
         {
-            const TerrainStreamingSettings::Gpu &gpu = settings.gpu;
-            // A smaller ring only slows uploads, so terrain carries on.
-            if (!renderer.RequestStagingBytes(gpu.stagingBytes))
-                MIR_LOG_WARN("Terrain asked for a {:.1f} MiB staging ring and the renderer kept its current one, so "
-                             "its meshes upload over more frames",
-                             MiB(gpu.stagingBytes));
             mCache = std::make_shared<TerrainRuntimeCache>(settings, jobs, renderer);
             mCacheOwner = mCache->AddOwner();
             LogBudgets(settings, renderer, jobs, configuration);
