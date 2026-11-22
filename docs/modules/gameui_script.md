@@ -16,6 +16,9 @@ calls `OnUI` on every `ScriptRef` whose `OnStart` has run, through
 `CallScriptCallback` from `script/BindingApi.h`. A script without `OnUI` costs a
 table lookup. Nothing runs in Edit, since no script has started there.
 
+`OnUI` runs after `LateUpdate`, so what it reads is what the frame renders:
+positions, the camera and this frame's input.
+
 There is no canvas object. The entity running the script stands in for one: its
 UI exists while the entity does, `world:persist(entity)` keeps it across a
 scene swap, and two entities make two UIs. `gameui` is immediate mode, so `OnUI`
@@ -212,6 +215,10 @@ Lua, only `with_opacity`, `with_clip`, `with_offset`, `with_rotation`,
 each `OnUI` the bridge also pops anything left pushed, so a broken script never
 trips `EndFrame`'s balance asserts.
 
+**`OnUI` draws, and `OnUpdate` changes the world.** `OnUI` runs after
+`Propagate`, so a move it makes renders the next frame, and a light or camera
+it spawns renders one frame at the origin.
+
 **A bad argument fails that `OnUI`.** The error names the call and the argument,
 and counts as a script error like any other, so in the editor it ends Play. The
 next script's `OnUI` still runs.
@@ -271,6 +278,11 @@ stack balanced.
    through `audio_script` and `input_script`.
 
 ## Changed
+
+*2026-11-22* — **`OnUI` runs after `LateUpdate`.** Was: before the frame's
+systems, so it read the previous frame's positions and camera. Now: after them
+and before `Render`. Because: a marker drawn over a moving entity trailed it by
+a frame. See [gameui.md](gameui.md).
 
 *2026-11-21* — **Style.** Was: screens drew in the shared `UIStyle`, changed
 only by a widget's text options. Now: `ui:with_style` pushes any style keys

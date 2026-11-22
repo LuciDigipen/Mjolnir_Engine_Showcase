@@ -225,11 +225,14 @@ see, and `App.cpp` may not call ImGui.
 and `imgui.ini`. The runtime leaves `IniFilename` null, so a build without
 `editor` persists nothing.
 
-`ImGuiModule::RunUI` brackets the frame and runs the drawers modules registered,
-the `Tools` group before the `Game` group: the editor's layout first, then the
-game UI, which fits the scene viewport the editor wrote that frame. It hands
-the draw data to the renderer and the frame's keyboard and mouse capture to
-`InputState`. `App.cpp` contains no ImGui call and includes no ImGui header.
+`ImGuiModule` brackets the frame and runs the drawers modules registered, split
+around the systems. `BeginUI`, before them, runs the `Tools` group, the editor's
+layout, and hands the frame's keyboard and mouse capture to `InputState`.
+`EndUI` runs in the `BeforeRender` slot, after `LateUpdate`: the `Game` group,
+the game UI, which fits the scene viewport the editor wrote that frame and reads
+the transforms and camera the frame renders, then the `Late` group, then the
+draw data to the renderer. `App.cpp` contains no ImGui call and includes no
+ImGui header.
 
 **The game UI draws into ImGui's background draw list and nowhere else.**
 
@@ -288,9 +291,10 @@ PollEvents                       close flag and framebuffer size refresh here
 dt = min(elapsed, mMaxDeltaSeconds)
 ApplyRequests                    last frame's Play, Stop, Load, Save, Quit, import swap, project switch
 RunFrameSlot(FrameBegin)         script reload poll, terrain installs and Edit refresh, import and content browser polls
-ImGuiModule::RunUI               editor drawer, then the game UI drawer; draw data and UI capture handed on
+ImGuiModule::BeginUI             ImGui's frame opens, the editor drawer; UI capture handed on
 FixedTimestep::Advance(dt)       substeps this frame, mFixedDeltaSeconds each, at most mMaxFixedSteps
-SystemScheduler::Update          PreUpdate, Update, FixedUpdate x substeps, PostUpdate, Propagate, LateUpdate, Render
+SystemScheduler::Update          PreUpdate, Update, FixedUpdate x substeps, PostUpdate, Propagate, LateUpdate,
+                                 BeforeRender (ImGuiModule::EndUI: the game UI, the editor's pick; draw data handed on), Render
 ```
 
 A transition someone asks for mid-frame waits in the `RequestQueue` World

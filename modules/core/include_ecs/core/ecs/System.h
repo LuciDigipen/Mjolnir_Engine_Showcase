@@ -74,6 +74,8 @@ namespace mir
     {
         // after requests are applied, before the UI and the systems
         FrameBegin,
+        // inside Update, after LateUpdate and before Render: every WorldTransform and the camera are this frame's
+        BeforeRender,
         kCount
     };
 

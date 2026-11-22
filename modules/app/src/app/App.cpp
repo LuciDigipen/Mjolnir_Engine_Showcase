@@ -240,7 +240,8 @@ namespace mir
             simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
                 app.mParticlesGpu, rendering->Rendering(), state.gameUI),
             terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs, true,
-                app.mTerrain.Cache())
+                app.mTerrain.Cache()),
+            uiEnd(app.mImGui.EndUIOn(state.scheduler))
         {
             state.gameShell.SetControlsOptions(&app.mControlsOptions);
         #if MIR_WITH_AUDIO
@@ -281,6 +282,8 @@ namespace mir
     #endif
         SimulationSystems simulation;
         TerrainRuntimeModule terrain;
+        // last, so it unregisters before the scheduler goes
+        Registration uiEnd;
     };
 
     App::App(const AppDesc &desc)
@@ -1271,7 +1274,8 @@ namespace mir
                 mRuntime->state.scheduler.RunFrameSlot(FrameSlot::FrameBegin, runtimeFrame);
             }
 
-            mImGui.RunUI();
+            // the frame's game UI runs inside Update, after LateUpdate
+            mImGui.BeginUI();
 
             // advances in every mode; FixedUpdate systems check IsSimulating
             // themselves, as ScriptSystem does

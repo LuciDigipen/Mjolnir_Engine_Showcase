@@ -358,7 +358,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
-| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
+| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the system last in `SystemPhase::LateUpdate`, before the game UI and `RenderSystem`, that keeps one flagged |
 | `CameraCuts`, `CutCamera`, `IsCameraCut`, `ClearCameraCuts` | `renderer/CameraCut.h` | The World resource of cameras cut since the last frame (made by the first `CutCamera`); mark one (false without a `Camera`); ask; `RenderSystem` clears them after the views - see Rules |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
@@ -1280,7 +1280,8 @@ Play.** It remembers each camera's flag from last frame: a camera flagged since
 then wins and the others are cleared; a camera that arrives already flagged (a
 duplicate, a paste, a prefab) is cleared if another is active. The Inspector,
 `world:set` and `world:set_active_camera` all go through it, so a change made
-before the Render phase shows that frame. The Inspector clears the other
+before the end of `LateUpdate` shows that frame, and one from a script's `OnUI`,
+which runs after it, shows the next. The Inspector clears the other
 cameras itself in the same undo step (`MakeFieldEditCommand`, see
 [editor.md](editor.md)), so undo brings the previous camera back. With none
 flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
@@ -1421,6 +1422,11 @@ shutdown. Run it through `ctest -R smoke.texture-gpu`, it is built only with
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-11-22* — **`ActiveCameraSystem` runs last in `LateUpdate`.** Was: first
+in `Render`. Now: `SystemOrder::kMax` in `LateUpdate`. Because: the game UI
+runs between the two phases and must see the camera this frame renders
+through.
 
 *2026-11-05*, **`RenderSettings` and `PostProcessingSettings` are shared project
 resources.** Was: each world binding loaded both from `project_settings.json` and

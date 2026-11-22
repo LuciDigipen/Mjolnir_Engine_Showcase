@@ -128,7 +128,10 @@ A screen that takes the player's input from the game while it is open, such
 as a pause menu, calls `UIContext::HoldInput()` in each frame it is open.
 `EndFrame` then writes `InputState::SetGameInputHeld`, and gameplay, which
 reads `InputState::ForGame`, sees every action at rest. The first frame no
-screen calls it, the game has its input back. gameui's own reads go on through
+screen calls it, the game has its input back. Gameplay runs before the game UI
+in a frame, so a hold applies from the next frame's gameplay: the press that
+opens a menu, a key or a click on a widget, still reaches gameplay, and the
+click that closes it does not. gameui's own reads go on through
 `Get`, and no device is dropped, so the screen holding the input is still
 driven by every device. That is the difference from
 `InputState::SetUiCapture`, the editor's: it drops the keyboard or the mouse
@@ -456,6 +459,12 @@ in the `Game` group, after every `Tools` drawer, so the area is this frame's.
 Neither library depends on the other, so the order comes from the group, not
 from declaration order.
 
+**The game UI runs after `LateUpdate`, so it reads the world the frame
+renders.** The `Game` group runs in the scheduler's `BeforeRender` slot, after
+`Propagate`, the camera controllers and `ActiveCameraSystem`, and before
+`Render`. A screen reads this frame's transforms, camera and `InputState`, with
+no frame of lag. What it changes in the world shows next frame.
+
 **A click in the viewport goes to one owner: the editor's tools, then the game
 UI, then the scene.** The tools have it while ImGui wants the mouse (a window,
 popup or menu under the pointer, or a drag that began in one) or while the
@@ -539,10 +548,10 @@ them would stop answering the keyboard or the mouse it is driven by, and
 device to the game UI and hides the actions from gameplay alone.
 
 **`UIConfirm` while the pointer's button is down, or the frame after, is the
-pointer's.** `UIConfirm` is bound to the primary button too, and `InputState`
-is a frame behind the pointer, so every mouse click would otherwise also arrive
-as a confirm a frame later and activate the focused widget a second time, or
-the focused widget from a click on empty space. `UIState` drops those; the
+pointer's.** `UIConfirm` is bound to the primary button too, so every mouse
+click would otherwise also arrive as a confirm, on the frame of the press, and
+activate the focused widget a second time, or the focused widget from a click
+on empty space. `UIState` drops those; the
 latch reports the pointer's click on release. A keyboard or pad confirm pressed
 while the mouse button is held is dropped with them.
 
@@ -767,6 +776,15 @@ looks right is verified by running `--ui-demo`.
    the backend's shading.
 
 ## Changed
+
+*2026-11-22* — **The game UI runs after `LateUpdate`.** Was: before the
+frame's systems, reading the previous frame's transforms, camera and
+`InputState`, with the pointer a frame ahead of `InputState`. Now: in the
+`BeforeRender` slot, so all of it is this frame's. A hold still reaches
+gameplay a frame after the input that asked for it, but for a click that frame
+moved: the click that opens a menu now reaches gameplay, and the click that
+closes one no longer does. Because: a marker over a moving target trailed it
+by a frame.
 
 *2026-11-21* — **A style stack.** Was: one `UIStyle` that screens changed in
 place and put back by hand, as the shell did around the widget demo. Now:

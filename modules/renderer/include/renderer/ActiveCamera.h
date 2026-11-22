@@ -38,7 +38,7 @@ namespace mir
     // The flagged Camera or the lowest-index one
     PlayCamera ResolvePlayCamera(World &world);
 
-    // Runs in Edit and Play, before RenderSystem. A camera flagged since last frame wins
+    // Runs in Edit and Play, last in LateUpdate. A camera flagged since last frame wins
     // one that arrives flagged (duplicate) loses to the camera already active.
     class ActiveCameraSystem final : public ISystem
     {
