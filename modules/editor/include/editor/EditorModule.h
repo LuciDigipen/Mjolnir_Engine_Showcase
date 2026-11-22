@@ -29,6 +29,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mir
@@ -65,6 +66,8 @@ namespace mir
         std::future<std::string> ImportTerrainMaterial(const std::filesystem::path &path);
         bool LayoutEnabled() const { return mEnableLayout; }
         bool HasUnsavedMaterialDrafts() const;
+        // material drafts first, then every extension's, in registration order
+        std::vector<std::string> UnsavedDraftNames() const;
 
         // The runtime World, or null when Play ends. Each call starts a fresh Play history.
         void SetPlayWorld(World *world);
@@ -87,6 +90,7 @@ namespace mir
         // what the menus, toolbar and panels asked for this frame
         void ApplyActions(const EditorActions &actions);
         void OpenInExternalIde(const std::string &relativePath);
+        void OpenAssetInIde(std::string_view assetRelativePath);
         void OpenPrefabAsset(const std::string &relativePath);
 
         // Save Prefab on a Prefab tab
@@ -122,6 +126,7 @@ namespace mir
         PrefabModule &mPrefab;
         const AssetResolver &mResolver;
         GameProject mProject;
+        std::string mBrowserAssetsRoot;
         AssetsModule *mAssets = nullptr;
         bool mEnableLayout;
         float mFrameDt = 0.0f;

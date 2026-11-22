@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace mir
@@ -49,6 +50,12 @@ namespace mir
             std::vector<FieldBuffer> mValues; // one per mOps->mFields, in order
         };
 
+        // An asset-path combo's candidates, rebuilt when its list appears
+        struct AssetPathList
+        {
+            std::vector<std::string> mPaths;
+        };
+
         // The sound event picker's banks, read again each time its list opens
         struct SoundBankList
         {
@@ -63,6 +70,7 @@ namespace mir
 
         Clipboard mClipboard;
         SoundBankList mSoundBanks;
+        AssetPathList mAssetPaths;
         bool mEditing = false;
         char mFilter[128] = {};
     };

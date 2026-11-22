@@ -7,6 +7,8 @@
  *
  */
 #include <editor/EditorExtension.h>
+
+#include <editor/ContentBrowserPaths.h>
 #include <editor/history/History.h>
 
 #include <algorithm>
@@ -73,6 +75,59 @@ namespace mir
         {
             const std::span<const char *const> windows = entry.mExtension->WindowNames();
             names.insert(names.end(), windows.begin(), windows.end());
+        }
+        return names;
+    }
+
+    std::vector<std::string> EditorExtensions::ContentBrowserCreateItems() const
+    {
+        std::vector<std::string> items;
+        for (const Entry &entry : mEntries)
+        {
+            for (const char *const item : entry.mExtension->ContentBrowserCreateItems())
+                if (item != nullptr)
+                    items.emplace_back(item);
+        }
+        return items;
+    }
+
+    void EditorExtensions::CreateContentBrowserItem(std::string_view item, std::string_view assetsRoot,
+        std::string_view folder) const
+    {
+        const std::optional<std::string> assetsFolder = AssetsRelativeFolder(assetsRoot, folder);
+        for (const Entry &entry : mEntries)
+        {
+            for (const char *const candidate : entry.mExtension->ContentBrowserCreateItems())
+            {
+                if (candidate == nullptr || item != candidate)
+                    continue;
+                entry.mExtension->OnContentBrowserCreateItem(candidate, assetsFolder
+                    ? std::optional<std::string_view>(*assetsFolder) : std::nullopt);
+                return;
+            }
+        }
+    }
+
+    bool EditorExtensions::OpenContentBrowserFile(std::string_view assetsRoot,
+        std::string_view browserRelativePath) const
+    {
+        const std::optional<std::string> assetsRelative = AssetsRelativeFolder(assetsRoot, browserRelativePath);
+        if (!assetsRelative)
+            return false;
+        for (const Entry &entry : mEntries)
+            if (entry.mExtension->OpenContentBrowserFile(*assetsRelative))
+                return true;
+        return false;
+    }
+
+    std::vector<std::string> EditorExtensions::UnsavedDraftNames() const
+    {
+        std::vector<std::string> names;
+        for (const Entry &entry : mEntries)
+        {
+            for (const char *const name : entry.mExtension->UnsavedDraftNames())
+                if (name != nullptr && name[0] != '\0')
+                    names.emplace_back(name);
         }
         return names;
     }

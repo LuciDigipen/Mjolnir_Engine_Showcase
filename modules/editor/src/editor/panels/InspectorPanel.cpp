@@ -14,6 +14,7 @@
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/components/Name.h>
 #include <core/math/WorldReal.h>
+#include <editor/AssetPathField.h>
 #include <editor/EditorWidgets.h>
 #include <editor/EntityBaseline.h>
 #include <editor/EntityDragPayload.h>
@@ -37,6 +38,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -52,6 +54,7 @@ namespace mir
         using FieldBuffer = InspectorPanel::FieldBuffer;
         using Clipboard = InspectorPanel::Clipboard;
         using SoundBankList = InspectorPanel::SoundBankList;
+        using AssetPathList = InspectorPanel::AssetPathList;
 
         
         struct Edits
@@ -280,6 +283,49 @@ namespace mir
                             changed = true;
                         }
                     }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+
+        bool DrawAssetPathWidget(const FieldDesc &field, void *bytes, std::string_view sourceAssetsRoot,
+            AssetPathList &list)
+        {
+            char *value = static_cast<char *>(bytes);
+            const std::string current(value, strnlen(value, kFieldStringCapacity));
+            const std::filesystem::path root(sourceAssetsRoot);
+
+            const bool missing = !current.empty() && !AssetPathExists(root, current);
+            std::string preview = current.empty() ? "None" : current;
+            if (missing)
+                preview += "  (missing)";
+
+            bool changed = false;
+            if (ImGui::BeginCombo(kValueId, preview.c_str()))
+            {
+                if (ImGui::IsWindowAppearing())
+                    list.mPaths = AssetPathCandidates(root, field.mAssetSuffix);
+
+                const auto pick = [&](std::string_view path)
+                    {
+                        if (path == current)
+                            return;
+                        std::memset(value, 0, kFieldStringCapacity);
+                        std::memcpy(value, path.data(), path.size());
+                        changed = true;
+                    };
+
+                if (ImGui::Selectable("None", current.empty()))
+                    pick({});
+                for (const std::string &path : list.mPaths)
+                {
+                    const bool fits = AssetPathFitsField(path);
+                    if (ImGui::Selectable(path.c_str(), path == current,
+                            fits ? 0 : ImGuiSelectableFlags_Disabled))
+                        pick(path);
+                    if (!fits)
+                        ImGui::SetItemTooltip("Longer than a field holds (%u characters)", kFieldStringCapacity - 1);
+                }
                 ImGui::EndCombo();
             }
             return changed;
@@ -518,8 +564,8 @@ namespace mir
         }
 
         void DrawComponent(World &world, const ComponentOps &ops, Entity entity, const AssetImportView &assets,
-            SoundBankList &soundBanks, std::string_view filter, Clipboard &clipboard, Edits &edits,
-            Entity &selectAfterDraw)
+            std::string_view sourceAssetsRoot, SoundBankList &soundBanks, std::string_view filter, Clipboard &clipboard,
+            Edits &edits, Entity &selectAfterDraw, AssetPathList &assetPaths)
         {
             if (!ComponentVisible(ops, filter))
                 return;
@@ -601,6 +647,9 @@ namespace mir
                             edited = field.mAssetKind == AssetKind::SoundEvent
                                 ? DrawSoundEventWidget(buffer.mBytes, bank, soundBanks)
                                 : DrawAssetRefWidget(field, buffer.mBytes, assets);
+                            break;
+                        case FieldWidget::AssetPath:
+                            edited = DrawAssetPathWidget(field, buffer.mBytes, sourceAssetsRoot, assetPaths);
                             break;
                         case FieldWidget::Default:
                             edited = field.mClamped
@@ -764,7 +813,8 @@ namespace mir
             if (!ops->Has(world, entity))
                 continue;
 
-            DrawComponent(world, *ops, entity, assets, mSoundBanks, mFilter, mClipboard, edits, selectAfterDraw);
+            DrawComponent(world, *ops, entity, assets, assets.mWatchedRoot, mSoundBanks, mFilter, mClipboard, edits,
+                selectAfterDraw, mAssetPaths);
         }
 
         DrawRemovedComponents(entity, edits);

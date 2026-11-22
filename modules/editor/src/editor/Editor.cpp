@@ -643,7 +643,7 @@ namespace mir
         ImGui::EndMenu();
     }
 
-    void Editor::DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved)
+    void Editor::DrawOpenProjectConfirm(EditorActions &actions, std::string_view draftsWarning)
     {
         constexpr const char *kPopupId = "Open Project##Confirm";
 
@@ -662,8 +662,8 @@ namespace mir
         ImGui::Text("Open \"%s\"?", mPendingProject.mName.c_str());
         ImGui::TextDisabled("The editor restarts with this game.");
         ImGui::TextDisabled("Unsaved changes to the current scene will be lost.");
-        if (materialDraftsUnsaved)
-            ImGui::TextDisabled("Unsaved material drafts will be discarded, never saved automatically.");
+        if (!draftsWarning.empty())
+            ImGui::TextDisabled("%s", std::string(draftsWarning).c_str());
         ImGui::Spacing();
 
         if (ImGui::Button("Open"))
@@ -1034,10 +1034,23 @@ namespace mir
         ImDrawList *overlay)
     {
         const VkRect2D viewport = mSceneViewportRect;
-        return EditorExtensionContext{ mode, document, world,
+        EditorExtensionContext context{ mode, document, world,
             PixelRect{ .x = viewport.offset.x, .y = viewport.offset.y, .width = viewport.extent.width,
                 .height = viewport.extent.height },
             mCamera, mWindow->RawInput(), WantsCaptureMouse(), overlay, ActiveHistory() };
+        context.mInspectorDockId = mInspectorDockId;
+        context.mOpenAssetInIde = mOpenAssetInIde;
+        return context;
+    }
+
+    void Editor::CreateContentBrowserItem(std::string_view item, std::string_view browserFolder)
+    {
+        mExtensions.CreateContentBrowserItem(item, mSourceAssetsRoot, browserFolder);
+    }
+
+    bool Editor::OpenContentBrowserFile(std::string_view browserRelativePath)
+    {
+        return mExtensions.OpenContentBrowserFile(mSourceAssetsRoot, browserRelativePath);
     }
 
     void Editor::FocusSelection(const EngineModeState &mode, World &world)
@@ -1278,7 +1291,7 @@ namespace mir
     }
 
     void Editor::DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects,
-        bool materialDraftsUnsaved)
+        std::string_view draftsWarning)
     {
         constexpr const char *kPopupId = "New Project";
 
@@ -1298,8 +1311,8 @@ namespace mir
 
         ImGui::InputTextWithHint("Name", "Project name...", mNewProjectName, sizeof(mNewProjectName));
         ImGui::Checkbox("Ray Tracing", &mNewProjectRayTracing);
-        if (materialDraftsUnsaved)
-            ImGui::TextDisabled("Unsaved material drafts will be discarded, never saved automatically.");
+        if (!draftsWarning.empty())
+            ImGui::TextDisabled("%s", std::string(draftsWarning).c_str());
         ImGui::Spacing();
 
         const std::string_view name(mNewProjectName);
@@ -1336,7 +1349,7 @@ namespace mir
         std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &activeWorld,
         World &sceneWorld, const EditorDocuments &documents, const AssetImportView &assetImport,
         const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser, bool materialPanelVisible,
-        bool materialDraftsUnsaved, const BuildJobView &build, float dt)
+        std::string_view draftsWarning, const BuildJobView &build, float dt)
     {
         EditorActions actions;
         // Last frame's panel state, so a hidden layout keeps the overlay as set.
@@ -1485,6 +1498,11 @@ namespace mir
                 }
             }
             ImGui::End();
+
+            mInspectorDockId = 0;
+            if (const ImGuiWindow *inspector = ImGui::FindWindowByName("Inspector");
+                inspector != nullptr && inspector->DockNode != nullptr)
+                mInspectorDockId = inspector->DockNode->ID;
 
             if (ImGui::Begin("Output"))
                 mLogPanel.Draw();
@@ -1672,8 +1690,8 @@ namespace mir
                 }
                 ImGui::EndPopup();
             }
-            DrawOpenProjectConfirm(actions, materialDraftsUnsaved);
-            DrawNewProjectModal(actions, projects, materialDraftsUnsaved);
+            DrawOpenProjectConfirm(actions, draftsWarning);
+            DrawNewProjectModal(actions, projects, draftsWarning);
 
             if (mShowStyleEditor)
             {
@@ -1804,6 +1822,7 @@ namespace mir
         else
         {
             mSceneViewportRect = VkRect2D{};
+            mInspectorDockId = 0;
         }
 
         const bool snapTransitionRequested =

@@ -248,9 +248,6 @@ namespace mir
         bool AwaitSceneResources();
         void DrawLoadingOverlay();
 
-        // True when the editor has material drafts that are not accepted yet.
-        bool HasUnsavedMaterialDrafts() const;
-
         // One guard for OS close, Alt+F4, the custom title bar and Request::Quit.
         bool ConfirmEditorExit();
 

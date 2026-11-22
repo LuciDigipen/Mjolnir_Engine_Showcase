@@ -10,7 +10,9 @@
 
 #include "ParticleEditorPanel.h"
 
+#include <editor/ContentBrowserPaths.h>
 #include <editor/CreateGameProject.h>
+#include <editor/EditorDrafts.h>
 #include <editor/IdeSettings.h>
 
 #include "MaterialEditor.h"
@@ -185,7 +187,9 @@ namespace mir
         AsyncAssetService *assetService, const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs,
         bool enableLayout, std::shared_ptr<ModelLibrary> models)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
-          mProject(project), mAssets(&assets),
+          mProject(project), mBrowserAssetsRoot(BrowserAssetsRoot(project.mDir, project.mAssetIdRoot).value_or(
+              std::string{})),
+          mAssets(&assets),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
           mThumbnails(assetService, renderer.Renderer(), &jobs),
           mPrefabAuthoring(context.world, prefab.Coordinator(), mProject.mRootDir, prefab.SourceDir()),
@@ -212,6 +216,8 @@ namespace mir
         }
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
+        mEditor.SetSourceAssetsRoot(mBrowserAssetsRoot);
+        mEditor.SetOpenAssetInIde([this](std::string_view assetRelativePath) { OpenAssetInIde(assetRelativePath); });
         mEditor.SetBuildGame(BuildGame{ ProjectRoot(), mProject.mRootDir.lexically_normal(), mProject.mName,
             mProject.mProjectSettingsPath, ExecutableDir() / kGameBuildInfoFileName, mProject.mSoundBankDir });
         mBuildTool = BuildToolPath();
@@ -311,7 +317,7 @@ namespace mir
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
                     mRenderer.Renderer(), MakeContentBrowserView(), mShowMaterialEditor,
-                    mMaterialEditor->HasUnsavedDrafts(), MakeBuildJobView(), mFrameDt);
+                    DiscardDraftsWarning(UnsavedDraftNames()), MakeBuildJobView(), mFrameDt);
                 mThumbnails.EndFrame();
                 if (const std::string particlePath = mEditor.TakeParticleOpenRequest();
                     !particlePath.empty() && IsEditing(mWorld))
@@ -453,6 +459,14 @@ namespace mir
         return mMaterialEditor != nullptr && mMaterialEditor->HasUnsavedDrafts();
     }
 
+    std::vector<std::string> EditorModule::UnsavedDraftNames() const
+    {
+        std::vector<std::string> names = mEditor.UnsavedDraftNames();
+        if (HasUnsavedMaterialDrafts())
+            names.insert(names.begin(), "material drafts");
+        return names;
+    }
+
     void EditorModule::FeedViewport()
     {
         RenderSystem &rendering = mRenderer.Rendering();
@@ -535,9 +549,31 @@ namespace mir
         if (assetActionAccepted)
             mImport.Handle(actions.mAssetImport);
 
-        if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenInIde)
+        if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenFile)
         {
-            OpenInExternalIde(actions.mContentBrowser.mTargetPath);
+            const std::string &path = actions.mContentBrowser.mTargetPath;
+            if (!mEditor.OpenContentBrowserFile(path))
+            {
+                switch (ClassifyContentBrowserFile(path))
+                {
+                case ContentBrowserOpenTarget::ParticleSystem:
+                    if (IsEditing(mWorld) && path.starts_with("assets/"))
+                    {
+                        mParticleEditor->OpenSystem(path.substr(7), mWorld);
+                        mEditor.ParticleEditorVisible() = true;
+                    }
+                    break;
+                case ContentBrowserOpenTarget::Prefab:
+                    if (IsEditing(mWorld))
+                        OpenPrefabAsset(path);
+                    break;
+                case ContentBrowserOpenTarget::Ide:
+                    OpenInExternalIde(path);
+                    break;
+                case ContentBrowserOpenTarget::None:
+                    break;
+                }
+            }
         }
         else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::NewParticleSystem)
         {
@@ -547,19 +583,10 @@ namespace mir
             mParticleEditor->PrepareNewSystem(assetFolder);
             mEditor.ParticleEditorVisible() = true;
         }
-        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenParticleSystem)
+        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::NewExtensionItem)
         {
-            const auto &path = actions.mContentBrowser.mTargetPath;
-            if (IsEditing(mWorld) && path.starts_with("assets/"))
-            {
-                mParticleEditor->OpenSystem(path.substr(7), mWorld);
-                mEditor.ParticleEditorVisible() = true;
-            }
-        }
-        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenPrefab)
-        {
-            if (IsEditing(mWorld))
-                OpenPrefabAsset(actions.mContentBrowser.mTargetPath);
+            mEditor.CreateContentBrowserItem(actions.mContentBrowser.mItemLabel,
+                actions.mContentBrowser.mTargetPath);
         }
         else
         {
@@ -795,6 +822,7 @@ namespace mir
     ContentBrowserView EditorModule::MakeContentBrowserView()
     {
         ContentBrowserView view = mContentBrowser.View();
+        view.mExtensionCreateItems = mEditor.ContentBrowserCreateItems();
         view.mPreview = [this](const std::string &path) -> ContentBrowserPreview
             {
                 const auto logical = mContentBrowser.AssetLogicalPath(path);
@@ -898,6 +926,11 @@ namespace mir
             MIR_LOG_ERROR("Content browser: could not open '{}'", relativePath);
             mContentBrowser.Reject(relativePath, "could not open this Prefab");
         }
+    }
+
+    void EditorModule::OpenAssetInIde(std::string_view assetRelativePath)
+    {
+        OpenInExternalIde(BrowserPathForAsset(mBrowserAssetsRoot, assetRelativePath));
     }
 
     void EditorModule::OpenInExternalIde(const std::string &relativePath)

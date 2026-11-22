@@ -43,7 +43,9 @@
 
 #include <glm/vec3.hpp>
 
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -164,13 +166,24 @@ namespace mir
             World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
             const AssetImportView &assetImport, const VulkanRenderer &renderer,
             const ContentBrowserView &contentBrowser, bool materialPanelVisible,
-            bool materialDraftsUnsaved, const BuildJobView &build, float dt);
+            std::string_view draftsWarning, const BuildJobView &build, float dt);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
         // The registration lives until it dies; extensions run in registration order.
         Registration AddExtension(IEditorExtension &extension) { return mExtensions.Add(extension); }
         size_t ContentThumbnailCapacity() const { return mPreferences.contentThumbnailCapacity; }
+
+        // relative to the game directory, as Content Browser paths are
+        void SetSourceAssetsRoot(std::string assetsRoot) { mSourceAssetsRoot = std::move(assetsRoot); }
+        // empty leaves extensions with no way to ask for an IDE
+        void SetOpenAssetInIde(std::function<void(std::string_view)> open) { mOpenAssetInIde = std::move(open); }
+
+        std::vector<std::string> ContentBrowserCreateItems() const { return mExtensions.ContentBrowserCreateItems(); }
+        void CreateContentBrowserItem(std::string_view item, std::string_view browserFolder);
+        // true once an extension took the game-relative file
+        bool OpenContentBrowserFile(std::string_view browserRelativePath);
+        std::vector<std::string> UnsavedDraftNames() const { return mExtensions.UnsavedDraftNames(); }
 
         const std::string &ContentBrowserSelection() const { return mContentBrowserPanel.SelectedPath(); }
 
@@ -256,7 +269,7 @@ namespace mir
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
-        void DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved);
+        void DrawOpenProjectConfirm(EditorActions &actions, std::string_view draftsWarning);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             DocumentId document);
         EditorExtensionContext MakeExtensionContext(const EngineModeState &mode, World &world, DocumentId document,
@@ -275,7 +288,7 @@ namespace mir
         void DrawViewPie(std::optional<ViewPieItem> hovered);
         void DrawDebugViewMenu(const EngineModeState &mode);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects,
-            bool materialDraftsUnsaved);
+            std::string_view draftsWarning);
         void DrawEditMenu();
         // Retries a pending snap outside any panel's Draw; it only reads the World until an edit is ready.
         void PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt);
@@ -344,6 +357,9 @@ namespace mir
         PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
         EditorExtensions mExtensions;
+        std::string mSourceAssetsRoot;
+        std::uint32_t mInspectorDockId = 0;
+        std::function<void(std::string_view)> mOpenAssetInIde;
         EditorCamera mCamera;
         std::map<DocumentId, EditorCamera> mDocumentCameras;
         DocumentId mCameraDocument = kSceneDocument;

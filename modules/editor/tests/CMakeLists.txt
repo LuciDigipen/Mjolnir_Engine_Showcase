@@ -2,6 +2,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 engine_add_module_tests(editor
     ActiveCameraEdit.tests.cpp
+    AssetPathField.tests.cpp
     Authoring.tests.cpp
     AuthoredEdit.tests.cpp
     BackgroundImage.tests.cpp

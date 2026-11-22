@@ -39,6 +39,12 @@ namespace
     namespace fs = std::filesystem;
 
 #if defined(_WIN32)
+    // a test launches a non-executable image on purpose; Windows would otherwise show a modal error dialog
+    struct SilencedLaunchErrors
+    {
+        SilencedLaunchErrors() { SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX); }
+    } gSilencedLaunchErrors;
+
     // Stops what a test left running from dir, such as the game Build and Run started, so its sandbox can go
     struct StopRunningFrom
     {
