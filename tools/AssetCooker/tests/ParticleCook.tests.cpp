@@ -404,11 +404,26 @@ TEST_CASE("A partial cook keeps the names and edges of assets it does not recook
 {
     CookFixture fixture;
     REQUIRE(fixture.Cook() == 0);
-    const auto before = mir::ReadBytes(fixture.out / mir::kAssetManifestFileName);
+    const auto before = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(before);
 
     const auto unrelated = fixture.source / "notes.txt";
     std::ofstream(unrelated) << "not an asset";
     REQUIRE(fixture.Cook(unrelated) == 0);
-    CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == before);
+    const auto after = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(after);
+    CHECK(after->Count() == before->Count() + 1);
+    for (const auto &entry : before->Entries())
+    {
+        const auto *kept = after->Find(entry.id);
+        REQUIRE(kept);
+        CHECK(kept->typeTag == entry.typeTag);
+        CHECK(after->LogicalPathOf(*kept) == before->LogicalPathOf(entry));
+        CHECK(after->PathOf(*kept) == before->PathOf(entry));
+        const auto oldDependencies = before->Dependencies(entry);
+        const auto newDependencies = after->Dependencies(*kept);
+        CHECK(std::vector<mir::AssetId>(oldDependencies.begin(), oldDependencies.end()) ==
+              std::vector<mir::AssetId>(newDependencies.begin(), newDependencies.end()));
+    }
+    CHECK(after->FindByPath("assets/notes.txt") != nullptr);
 }

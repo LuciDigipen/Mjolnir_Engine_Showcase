@@ -320,7 +320,16 @@ namespace mir
             mParticlesGpu, mRenderer.Rendering(), mWorldState.gameUI),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
+    #if MIR_WITH_EDITOR
+        mFlightDebug(Context(), mImGui, SourceAssetsRoot(mProject),
+            [this](const std::filesystem::path &saved)
+            {
+                if (!mEditor.Import().QueueChanged(saved))
+                    MIR_LOG_ERROR("Flight Debug: saved '{}', but it is outside the source assets root", saved.string());
+            }),
+    #else
         mFlightDebug(Context(), mImGui, SourceAssetsRoot(mProject)),
+    #endif
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
         mWorldState.gameShell.SetControlsOptions(&mControlsOptions);

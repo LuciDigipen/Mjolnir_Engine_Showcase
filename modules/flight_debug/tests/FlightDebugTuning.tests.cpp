@@ -286,6 +286,38 @@ TEST_CASE("The read-only rows report the curve and table sizes", "[flight_debug]
     CHECK(FindRow(rows, "Nodes").value == "1 entries");
 }
 
+TEST_CASE("Saving reports the file it wrote once, and nothing when it fails", "[flight_debug][save]")
+{
+    const std::filesystem::path root = MakeTempRoot("callback");
+    const std::filesystem::path target = root / std::filesystem::path(kPath);
+    std::filesystem::create_directories(target.parent_path());
+
+    int saved = 0;
+    std::filesystem::path savedPath;
+    const mir::SavedSourceCallback onSaved = [&](const std::filesystem::path &path)
+    {
+        ++saved;
+        savedPath = path;
+    };
+    std::string error;
+    REQUIRE(mir::SaveAircraftConfigToSource(ParseConfig(), root, kPath, error, onSaved));
+    CHECK(saved == 1);
+    CHECK(savedPath == std::filesystem::absolute(target));
+
+    saved = 0;
+    CHECK_FALSE(mir::SaveAircraftConfigToSource(ParseConfig(), std::filesystem::path{}, kPath, error, onSaved));
+    CHECK(saved == 0);
+
+    mir::AircraftConfig invalid = ParseConfig();
+    REQUIRE_FALSE(invalid.gear.empty());
+    invalid.gear[0].restLength = -0.1f;
+    CHECK_FALSE(mir::SaveAircraftConfigToSource(invalid, root, kPath, error, onSaved));
+    CHECK(saved == 0);
+
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+}
+
 TEST_CASE("Saving refuses a config the parser rejects and keeps the source file", "[flight_debug][save]")
 {
     const std::filesystem::path root = MakeTempRoot("invalid");

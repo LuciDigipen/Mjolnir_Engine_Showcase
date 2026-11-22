@@ -22,6 +22,11 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <set>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 using namespace mir;
 namespace fs = std::filesystem;
@@ -983,4 +988,259 @@ TEST_CASE("Removing the old record after a rename that kept the .meta keeps the 
     const auto after = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(after);
     CHECK(test::PathId(*after, "assets/renamed.gltf") == id);
+}
+
+TEST_CASE("A partial cook publishes a listed raw file with the full cook's identity", "[cooker][raw][incremental]")
+{
+    const auto root = fs::current_path() /
+                      ("raw-cook-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto source = root / "assets";
+    const auto out = root / "cooked";
+    const auto result = out / "result.json";
+    fs::create_directories(source / "aircraft");
+    fs::create_directories(source / "scripts");
+    fs::create_directories(source / "data");
+    fs::create_directories(source / "materials");
+    const auto plane = source / "aircraft" / "plane.aircraft.json";
+    const auto pilot = source / "scripts" / "pilot.lua";
+    const auto notes = source / "data" / "notes.txt";
+    const auto terrain = source / "materials" / "sand.terrainmaterial.json";
+    REQUIRE(WriteText(plane, R"({"mass":1})"));
+    REQUIRE(WriteText(pilot, "return 1\n"));
+    REQUIRE(WriteText(notes, "notes\n"));
+    REQUIRE(WriteText(terrain, R"({"version":1})"));
+
+    const std::vector<std::string> full{"--source-dir", source.string(), "--id-root", "assets", "--out", out.string(),
+                                        "--result", result.string()};
+    auto cook = [&](std::initializer_list<std::filesystem::path> changed) {
+        std::vector<std::string> args = full;
+        for (const auto &path : changed)
+            args.insert(args.end(), {"--changed", path.string()});
+        REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
+        std::ifstream input(result);
+        return Json::parse(input);
+    };
+    struct Snapshot
+    {
+        AssetId id;
+        uint32_t tag = 0;
+        uint32_t version = 0;
+        std::string logical;
+        std::string file;
+        std::string bytes;
+    };
+    auto snapshot = [&](const AssetManifest &manifest, const char *logical) {
+        const AssetManifestEntry *entry = manifest.FindByPath(logical);
+        REQUIRE(entry != nullptr);
+        const auto bytes = ReadBytes(out / manifest.PathOf(*entry));
+        REQUIRE(bytes);
+        const auto blob = ParseAssetBlob(*bytes);
+        REQUIRE(blob);
+        return Snapshot{ entry->id, entry->typeTag, entry->contentVersion, std::string(manifest.LogicalPathOf(*entry)),
+                         std::string(manifest.PathOf(*entry)), std::string(AsStringView(*blob)) };
+    };
+
+    REQUIRE(cook({}).value("assetsChanged", false));
+    auto manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 4);
+    const Snapshot planeBefore = snapshot(*manifest, "assets/aircraft/plane.aircraft.json");
+    const Snapshot notesBefore = snapshot(*manifest, "assets/data/notes.txt");
+
+    REQUIRE(WriteText(plane, R"({"mass":2})"));
+    REQUIRE(WriteText(pilot, "return 2\n"));
+    REQUIRE(WriteText(notes, "notes edited\n"));
+    REQUIRE(WriteText(terrain, R"({"version":2})"));
+    const Json edited = cook({plane, pilot, terrain});
+    CHECK(edited.value("assetsChanged", false));
+    CHECK(edited.value("status", "") == "succeeded");
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 4);
+    const Snapshot planeAfter = snapshot(*manifest, "assets/aircraft/plane.aircraft.json");
+    CHECK(planeAfter.id == planeBefore.id);
+    CHECK(planeAfter.tag == planeBefore.tag);
+    CHECK(planeAfter.tag == kRawAssetTypeTag);
+    CHECK(planeAfter.version == kRawAssetContentVersion);
+    CHECK(planeAfter.logical == planeBefore.logical);
+    CHECK(planeAfter.bytes == R"({"mass":2})");
+    CHECK(snapshot(*manifest, "assets/scripts/pilot.lua").bytes == "return 2\n");
+    const Snapshot terrainAfter = snapshot(*manifest, "assets/materials/sand.terrainmaterial.json");
+    CHECK(terrainAfter.tag == kRawAssetTypeTag);
+    CHECK(terrainAfter.version == kRawAssetContentVersion);
+    CHECK(terrainAfter.bytes == R"({"version":2})");
+    const Snapshot notesAfter = snapshot(*manifest, "assets/data/notes.txt");
+    CHECK(notesAfter.id == notesBefore.id);
+    CHECK(notesAfter.file == notesBefore.file);
+    CHECK(notesAfter.bytes == "notes\n");
+
+    const auto wing = source / "data" / "wing.aircraft.json";
+    REQUIRE(WriteText(wing, R"({"mass":3})"));
+    CHECK(cook({wing}).value("assetsChanged", false));
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    const Snapshot partialWing = snapshot(*manifest, "assets/data/wing.aircraft.json");
+    REQUIRE(cook({}).value("assetsChanged", false));
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    const Snapshot fullWing = snapshot(*manifest, "assets/data/wing.aircraft.json");
+    CHECK(fullWing.id == partialWing.id);
+    CHECK(fullWing.logical == partialWing.logical);
+    CHECK(fullWing.bytes == partialWing.bytes);
+
+    const Json unchanged = cook({plane});
+    CHECK_FALSE(unchanged.value("assetsChanged", true));
+    CHECK(unchanged.value("status", "") == "unchanged");
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(snapshot(*manifest, "assets/aircraft/plane.aircraft.json").bytes == R"({"mass":2})");
+
+    std::error_code error;
+    fs::remove_all(root, error);
+}
+
+TEST_CASE("A partial cook leaves excluded kinds to other paths and skips missing ones", "[cooker][raw][incremental]")
+{
+    const auto root = fs::current_path() /
+                      ("raw-excluded-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto source = root / "assets";
+    const auto out = root / "cooked";
+    const auto result = out / "result.json";
+    fs::create_directories(source / "data");
+    const auto keep = source / "data" / "keep.txt";
+    REQUIRE(WriteText(keep, "keep\n"));
+    const std::vector<std::string> full{"--source-dir", source.string(), "--id-root", "assets", "--out", out.string(),
+                                        "--result", result.string()};
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    auto manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 1);
+    const auto *kept = manifest->FindByPath("assets/data/keep.txt");
+    REQUIRE(kept);
+    const std::string keepBlob = std::string(manifest->PathOf(*kept));
+    const auto keepBytes = ReadBytes(out / keepBlob);
+    REQUIRE(keepBytes);
+
+    fs::create_directories(source / "audio");
+    fs::create_directories(source / "terrain/releases/5ada0b9d43f41166");
+    fs::create_directories(source / "ui");
+    const std::vector<std::filesystem::path> skipped{
+        source / "model.gltf",
+        source / "surface.material.json",
+        source / "shader.slang",
+        source / "audio/sound.bnk",
+        source / "audio/sound.wem",
+        source / "audio/sound.json",
+        source / "data/plane.prefab",
+        source / "terrain/hills.terrain.json",
+        source / "terrain/releases/5ada0b9d43f41166/current.tpack",
+        source / "ui/broken.png",
+        source / "data/keep.txt.import.json",
+    };
+    for (const auto &path : skipped)
+        REQUIRE(WriteText(path, "not a real source asset"));
+    const auto outside = root / "outside.lua";
+    REQUIRE(WriteText(outside, "return 0\n"));
+
+    std::vector<std::string> partial = full;
+    for (const auto &path : skipped)
+        partial.insert(partial.end(), {"--changed", path.string()});
+    for (const auto &path : { outside, source / "gone.lua" })
+        partial.insert(partial.end(), {"--changed", path.string()});
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
+    const Json unchanged = Json::parse(std::ifstream(result));
+    CHECK_FALSE(unchanged.value("assetsChanged", true));
+    CHECK(unchanged.value("status", "") == "unchanged");
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 1);
+    const auto *stillKept = manifest->FindByPath("assets/data/keep.txt");
+    REQUIRE(stillKept);
+    CHECK(std::string(manifest->PathOf(*stillKept)) == keepBlob);
+    CHECK(ReadBytes(out / keepBlob) == keepBytes);
+
+    std::error_code error;
+    fs::remove_all(root, error);
+}
+
+TEST_CASE("A partial cook fails when a listed raw file cannot be read", "[cooker][raw][incremental]")
+{
+#ifdef _WIN32
+    const auto root = fs::current_path() /
+                      ("raw-locked-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto source = root / "assets";
+    const auto out = root / "cooked";
+    const auto result = out / "result.json";
+    fs::create_directories(source / "data");
+    REQUIRE(WriteText(source / "data" / "keep.txt", "keep\n"));
+    const std::vector<std::string> full{"--source-dir", source.string(), "--id-root", "assets", "--out", out.string(),
+                                        "--result", result.string()};
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    const auto manifestBefore = ReadBytes(out / kAssetManifestFileName);
+    REQUIRE(manifestBefore);
+
+    const auto locked = source / "data" / "locked.aircraft.json";
+    REQUIRE(WriteText(locked, R"({"mass":1})"));
+    const HANDLE handle =
+        CreateFileW(locked.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(handle != INVALID_HANDLE_VALUE);
+    std::vector<std::string> partial = full;
+    partial.insert(partial.end(), {"--changed", locked.string()});
+    const int exitCode = LaunchProcess(GLTF_COOKER_EXE, partial, true).value_or(-1);
+    CloseHandle(handle);
+    CHECK(exitCode != 0);
+    CHECK(ReadBytes(out / kAssetManifestFileName) == manifestBefore);
+
+    std::error_code error;
+    fs::remove_all(root, error);
+#else
+    SUCCEED();
+#endif
+}
+
+TEST_CASE("A particle change also publishes the listed raw file without doubling the graph", "[cooker][raw][particles]")
+{
+    const auto root = fs::current_path() /
+                      ("raw-particle-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto source = root / "assets";
+    const auto out = root / "cooked";
+    const auto result = out / "result.json";
+    fs::create_directories(source / "data");
+    fs::copy_file(fs::path(GLTF_FIXTURE_DIR) / "checker.png", source / "checker.png");
+    fs::copy_file(fs::path(PARTICLE_FIXTURE_DIR) / "exhaust.particle.json", source / "exhaust.particle.json");
+    fs::copy_file(fs::path(PARTICLE_FIXTURE_DIR) / "exhaust.emitter.json", source / "exhaust.emitter.json");
+    const auto keep = source / "data" / "keep.txt";
+    REQUIRE(WriteText(keep, "keep\n"));
+    const std::vector<std::string> full{"--source-dir", source.string(), "--id-root", "assets", "--out", out.string(),
+                                        "--result", result.string()};
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    auto manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    const auto graphCount = manifest->Count();
+
+    REQUIRE(WriteText(source / "exhaust.emitter.json",
+        R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":120,"capacity":256,"texture":"checker.png"})"));
+    REQUIRE(WriteText(keep, "keep edited\n"));
+    std::vector<std::string> partial = full;
+    partial.insert(partial.end(),
+        { "--changed", (source / "exhaust.emitter.json").string(), "--changed", keep.string() });
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
+    const Json changed = Json::parse(std::ifstream(result));
+    CHECK(changed.value("assetsChanged", false));
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == graphCount);
+    const auto *kept = manifest->FindByPath("assets/data/keep.txt");
+    REQUIRE(kept);
+    const auto bytes = ReadBytes(out / manifest->PathOf(*kept));
+    REQUIRE(bytes);
+    const auto blob = ParseAssetBlob(*bytes);
+    REQUIRE(blob);
+    CHECK(AsStringView(*blob) == "keep edited\n");
+
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
+    CHECK_FALSE(Json::parse(std::ifstream(result)).value("assetsChanged", true));
+
+    std::error_code error;
+    fs::remove_all(root, error);
 }

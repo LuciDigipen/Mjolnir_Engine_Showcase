@@ -11,6 +11,7 @@
 #include <core/Registration.h>
 #include <core/ecs/Entity.h>
 #include <core/ecs/ModuleContext.h>
+#include <flight_debug/FlightDebugSaving.h>
 
 #include <string>
 #include <vector>
@@ -24,7 +25,8 @@ namespace mir
     {
     public:
         // The source assets root is where Save writes; a non-editor build passes it empty.
-        FlightDebugModule(ModuleContext context, ImGuiModule &imgui, std::string sourceAssetsRoot = {});
+        FlightDebugModule(ModuleContext context, ImGuiModule &imgui, std::string sourceAssetsRoot = {},
+            SavedSourceCallback onSavedSource = {});
         ~FlightDebugModule();
 
         FlightDebugModule(const FlightDebugModule &) = delete;
@@ -39,6 +41,7 @@ namespace mir
         World *mAuthoringWorld;
         World *mActiveWorld;
         std::string mSourceAssetsRoot;
+        SavedSourceCallback mOnSavedSource;
         std::string mSaveError;
         std::vector<std::string> mOverwrittenEdits;
         bool mPlayWorldActive = false;

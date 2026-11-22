@@ -17,7 +17,7 @@
 namespace mir
 {
     bool SaveAircraftConfigToSource(const AircraftConfig &config, const std::filesystem::path &sourceAssetsRoot,
-        std::string_view configPath, std::string &error)
+        std::string_view configPath, std::string &error, const SavedSourceCallback &onSaved)
     {
         if (sourceAssetsRoot.empty() || configPath.empty())
         {
@@ -42,6 +42,8 @@ namespace mir
         }
 
         error.clear();
+        if (onSaved)
+            onSaved(std::filesystem::absolute(target));
         return true;
     }
 }

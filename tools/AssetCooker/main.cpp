@@ -362,6 +362,59 @@ namespace
         }
         return std::nullopt;
     }
+    std::optional<std::pair<const SourceRoot *, std::filesystem::path>> ResolveSourceFile(const Options &options,
+        const std::filesystem::path &path)
+    {
+        std::error_code error;
+        const auto file = std::filesystem::weakly_canonical(path, error);
+        if (error)
+            return std::nullopt;
+        for (const auto &root : options.roots)
+        {
+            const auto rootPath = std::filesystem::weakly_canonical(root.physical, error);
+            if (error)
+                continue;
+            const auto relative = file.lexically_relative(rootPath);
+            if (!relative.empty() && !relative.is_absolute() && *relative.begin() != "..")
+                return std::pair{ &root, file };
+        }
+        return std::nullopt;
+    }
+
+    // What the cook does with one file under a source root; only Raw is published as its own bytes.
+    enum class SourceFileKind
+    {
+        Excluded,
+        Prefab,
+        ParticleEmitter,
+        ParticleEffect,
+        Image,
+        Raw,
+    };
+
+    SourceFileKind ClassifySourceFile(const SourceRoot &root, const std::filesystem::path &path)
+    {
+        const std::string ext = LowerExtension(path), filename = path.filename().string();
+        // a bank's Wwise metadata is read loose, beside the bank
+        std::filesystem::path bank = path;
+        const bool bankMetadata = ext == ".json" && std::filesystem::exists(bank.replace_extension(".bnk"));
+        if (ext == ".gltf" || ext == ".glb" || IsMaterialPath(path) || ext == ".slang" || ext == ".bnk" ||
+            ext == ".wem" || bankMetadata || mir::IsAssetToolingFile(path))
+            return SourceFileKind::Excluded;
+        // TerrainTool owns recipes and releases.
+        if (mir::IsTerrainFileExcludedFromCook(LogicalPath(root, path)))
+            return SourceFileKind::Excluded;
+        if (ext == ".prefab")
+            return SourceFileKind::Prefab;
+        if (filename.ends_with(".emitter.json"))
+            return SourceFileKind::ParticleEmitter;
+        if (filename.ends_with(".particle.json"))
+            return SourceFileKind::ParticleEffect;
+        if (mir::cook::IsImagePath(path))
+            return SourceFileKind::Image;
+        return SourceFileKind::Raw;
+    }
+
     Json LoadJson(const std::filesystem::path &path, Json fallback)
     {
         if (!std::filesystem::exists(path))
@@ -804,6 +857,15 @@ namespace
                 outputs[id.value] = output;
                 return output;
             };
+        const auto emitRaw = [&](const SourceRoot &root, const std::filesystem::path &path)
+            {
+                const auto bytes = mir::ReadBytes(path);
+                if (!bytes)
+                    throw std::runtime_error("cannot read " + path.string());
+                emit(ids.Meta(path).guid,
+                    mir::BuildAssetBlob(mir::kRawAssetTypeTag, mir::kRawAssetContentVersion, *bytes),
+                    LogicalPath(root, path));
+            };
 
             // a file a particle source names, by the guid in its .meta
         const mir::AssetIdOfPath particleIdOf = [&ids](std::string_view logical) { return ids.IdAt(logical); };
@@ -1187,30 +1249,19 @@ namespace
                 std::sort(files.begin(), files.end());
                 for (const auto &path : files)
                 {
-                    const std::string ext = LowerExtension(path), filename = path.filename().string();
-                    // a bank's Wwise metadata is read loose, beside the bank
-                    const bool bankMetadata =
-                        ext == ".json" &&
-                        std::filesystem::exists(std::filesystem::path(path).replace_extension(".bnk"));
-                    if (ext == ".gltf" || ext == ".glb" || IsMaterialPath(path) || ext == ".slang" || ext == ".bnk" ||
-                        ext == ".wem" || bankMetadata || mir::IsAssetToolingFile(path))
-                        continue;
-                    // TerrainTool owns recipes and releases.
-                    const std::string logical = LogicalPath(root, path);
-                    if (mir::IsTerrainFileExcludedFromCook(logical))
-                        continue;
-                    if (ext == ".prefab")
+                    switch (ClassifySourceFile(root, path))
                     {
-                        cookPrefab(logical, path);
+                    case SourceFileKind::Excluded:
                         continue;
-                    }
-                    if (filename.ends_with(".emitter.json"))
-                    {
+                    case SourceFileKind::Prefab:
+                        cookPrefab(LogicalPath(root, path), path);
+                        continue;
+                    case SourceFileKind::ParticleEmitter:
                         cookParticleEmitter(root, path);
                         continue;
-                    }
-                    if (filename.ends_with(".particle.json"))
+                    case SourceFileKind::ParticleEffect:
                     {
+                        const std::string logical = LogicalPath(root, path);
                         const auto effectBytes = mir::ReadBytes(path);
                         if (!effectBytes)
                             throw std::runtime_error("cannot read " + path.string());
@@ -1224,16 +1275,19 @@ namespace
                         emit(ids.Meta(path).guid, mir::BuildParticleEffectAsset(*effect.mEffect), logical);
                         continue;
                     }
-                    auto bytes = mir::ReadBytes(path);
-                    if (!bytes)
-                        throw std::runtime_error("cannot read " + path.string());
-                    // any other image is a texture of its own, decoded here so
-                    // runtime never parses an image format
-                    const std::string canonicalPath = std::filesystem::weakly_canonical(path).generic_string();
-                    if (mir::cook::IsImagePath(path) && materialSourceImages.contains(canonicalPath))
-                        continue;
-                    if (mir::cook::IsImagePath(path) && !modelImages.contains(canonicalPath))
+                    case SourceFileKind::Image:
                     {
+                        const std::string logical = LogicalPath(root, path);
+                        // any other image is a texture of its own, decoded here so
+                        // runtime never parses an image format
+                        const std::string canonicalPath = std::filesystem::weakly_canonical(path).generic_string();
+                        if (materialSourceImages.contains(canonicalPath))
+                            continue;
+                        if (modelImages.contains(canonicalPath))
+                            break;
+                        const auto bytes = mir::ReadBytes(path);
+                        if (!bytes)
+                            throw std::runtime_error("cannot read " + path.string());
                         std::vector<std::byte> texture;
                         try
                         {
@@ -1246,9 +1300,28 @@ namespace
                         emit(ids.Meta(path).guid, texture, logical);
                         continue;
                     }
-                    emit(ids.Meta(path).guid,
-                        mir::BuildAssetBlob(mir::kRawAssetTypeTag, mir::kRawAssetContentVersion, *bytes), logical);
+                    case SourceFileKind::Raw:
+                        break;
+                    }
+                    emitRaw(root, path);
                 }
+            }
+        }
+        else
+        {
+            // A particle change recooks its graph above; anything else publishes only the listed files.
+            std::set<std::string> visited;
+            for (const auto &changedPath : options.changed)
+            {
+                std::error_code error;
+                const auto file = std::filesystem::weakly_canonical(changedPath, error);
+                if (error || !std::filesystem::is_regular_file(file, error) || error ||
+                    !visited.insert(file.generic_string()).second)
+                    continue;
+                const auto resolved = ResolveSourceFile(options, file);
+                if (!resolved || ClassifySourceFile(*resolved->first, resolved->second) != SourceFileKind::Raw)
+                    continue;
+                emitRaw(*resolved->first, resolved->second);
             }
         }
         for (auto &[source, state] : importerStates)

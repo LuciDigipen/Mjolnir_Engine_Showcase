@@ -57,6 +57,7 @@ target_sources(engine_editor PRIVATE
     src/editor/PrefabAuthoringAdapter.cpp
     src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp
+    src/editor/RawImportQueue.cpp
     src/editor/ShaderHotReload.cpp
     src/editor/SnapToTerrain.cpp
     src/editor/TextureThumbnailDecoder.cpp
