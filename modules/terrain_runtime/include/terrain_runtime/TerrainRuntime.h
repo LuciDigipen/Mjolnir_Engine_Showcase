@@ -48,6 +48,7 @@ namespace mir
     class PhysicsWorld;
     class TerrainGroundBridge;
     class SurfaceMaterialLibrary;
+    struct SurfaceMaterialUse;
     class VulkanRenderer;
     class World;
 
@@ -174,6 +175,7 @@ namespace mir
         std::vector<InstanceResources> Build(TerrainWorld &next);
         // Binding edits never trigger Apply; this only refreshes render-side materials.
         void SyncBindings(const TerrainSceneSpec &spec);
+        void PublishMaterialUses(std::span<const SurfaceMaterialUse> uses);
         void SyncSpecMaterials(const TerrainSceneSpec &spec);
         void ResolveBinding(InstanceResources &instance);
         void SyncMaterialSlots(InstanceResources &instance, const TerrainInstanceState &state);
@@ -208,6 +210,8 @@ namespace mir
         World *mWorld = nullptr;
         VulkanRenderer *mRenderer = nullptr;
         SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
+        // 0 while this runtime uses no material: an idle owner would hold back every retired handle.
+        uint64_t mMaterialUseOwner = 0;
         const AssetResolver *mResolver = nullptr;
         std::string mAssetIdRoot;
         std::filesystem::path mReleasesRoot;

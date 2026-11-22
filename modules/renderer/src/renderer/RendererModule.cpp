@@ -111,10 +111,14 @@ namespace mir
                 if (frame.sceneSwapped) return;
                 mMeshes->ReleaseResources();
                 mSurfaceMaterials.SetActiveMaterials({});
+                mRenderer.ResetHistory();
+            });
+        mSceneUnloaded = context.scheduler.AddStage(Stage::SceneUnloaded, [this](SystemContext &frame)
+            {
+                if (frame.sceneSwapped) return;
                 // Independent Prefab Worlds keep their shared handles and preview values.
                 if (mSurfaceMaterials.ActiveMaterials().empty())
                     mSurfaceMaterials.Reset();
-                mRenderer.ResetHistory();
             });
 
         // a cut: the history of the scene before says nothing about this one
@@ -164,6 +168,7 @@ namespace mir
         mFrameBegin.Reset();
         mPlayBegin.Reset();
         mSceneLoad.Reset();
+        mSceneUnloaded.Reset();
         mSceneUnload.Reset();
         mHooks.Reset();
         // The scheduler outlives this module, so the resolver must stop

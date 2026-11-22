@@ -205,6 +205,8 @@ namespace mir
             std::erase(gates->mGates, static_cast<PhysicsStepGate *>(this));
         if (mCollision)
             mCollision->Clear();
+        if (mSurfaceMaterials)
+            mSurfaceMaterials->RemoveMaterialUseOwner(mMaterialUseOwner);
     }
 
     void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
@@ -372,7 +374,8 @@ namespace mir
                 ResolveBinding(mResources[i]);
                 SyncMaterialSlots(mResources[i], instances[i]);
             }
-            mSurfaceMaterials->AcknowledgeGeneration(0, mSurfaceMaterials->Generation());
+            if (mMaterialUseOwner != 0)
+                mSurfaceMaterials->AcknowledgeGeneration(mMaterialUseOwner, mSurfaceMaterials->Generation());
         }
         if (mMeshes)
             mMeshes->Install();
@@ -527,6 +530,7 @@ namespace mir
         mStagedProblems.clear();
         mGuards.clear();
         mResources.clear();
+        PublishMaterialUses({});
         mWorld->Resource<TerrainWorld>() = TerrainWorld{};
         if (mGround)
             mGround->Invalidate();
@@ -728,7 +732,22 @@ namespace mir
         for (const InstanceResources &resources : mResources)
             if (!resources.materialLogicalPath.empty() && !resources.materialAsset.IsNull())
                 uses.push_back({resources.materialLogicalPath, resources.materialAsset, "terrain"});
-        mSurfaceMaterials->SetActiveMaterials(uses);
+        PublishMaterialUses(uses);
+    }
+
+    void TerrainRuntime::PublishMaterialUses(std::span<const SurfaceMaterialUse> uses)
+    {
+        if (!mSurfaceMaterials)
+            return;
+        if (uses.empty())
+        {
+            mSurfaceMaterials->RemoveMaterialUseOwner(mMaterialUseOwner);
+            mMaterialUseOwner = 0;
+            return;
+        }
+        if (mMaterialUseOwner == 0)
+            mMaterialUseOwner = mSurfaceMaterials->AddMaterialUseOwner();
+        mSurfaceMaterials->SetMaterialUses(mMaterialUseOwner, uses);
     }
 
     void TerrainRuntime::ResolveBinding(InstanceResources &instance)

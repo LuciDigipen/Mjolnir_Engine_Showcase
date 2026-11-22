@@ -110,8 +110,9 @@ entity types and post effects, the `ViewDrawSources` resource,
 `App` shares into every World (see [app.md](app.md#project-resources)), so the
 module loads neither. It takes the window as an `ISurfaceProvider`, so
 `renderer` still never links `window`. Its stage functions free the scene's GPU
-resources at `SceneUnload` and reset the temporal history at `SceneLoad` and
-`PlayBegin`; a Stop keeps every cache.
+resources at `SceneUnload`, reset the surface material library at `SceneUnloaded`
+when no World still uses a material, and reset the temporal history at `SceneLoad`
+and `PlayBegin`; a Stop keeps every cache.
 
 ### Project settings and how they apply
 

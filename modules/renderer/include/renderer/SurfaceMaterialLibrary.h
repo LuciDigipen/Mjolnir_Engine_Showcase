@@ -161,13 +161,13 @@ namespace mir
         bool ValidateRecordForPublication(std::string_view frontend, const MaterialLayout &layout,
             std::span<const std::byte> bytes, std::string &error) const;
         void SetActiveMaterials(std::span<const SurfaceMaterialUse> uses);
-        // Mesh consumers keep their own active set; the merged set is what a
-        // reload stages, so terrain and mesh owners cannot overwrite each other.
+        // Mesh and terrain consumers keep their own active set; the merged set is what a
+        // reload stages, so owners cannot overwrite each other.
         uint64_t AddMaterialUseOwner();
         void SetMaterialUses(uint64_t owner, std::span<const SurfaceMaterialUse> uses);
         void RemoveMaterialUseOwner(uint64_t owner);
         // A consumer calls this after every handle it cached from the previous generation has been rebound.
-        // Owner 0 is the terrain set; retired handles and their texture claims outlive it until every owner
+        // Owner 0 is the SetActiveMaterials set; retired handles and their texture claims outlive it until every owner
         // acknowledges the generation that replaced them.
         void AcknowledgeGeneration(uint64_t owner, uint64_t generation);
         // The merged set every owner contributed, in a stable order.
@@ -313,7 +313,7 @@ namespace mir
         std::vector<SurfaceMaterialUse> mActive;
         bool mUsagePublished = false;
         std::unordered_set<std::string> mActiveKeys;
-        // The terrain channel and every mesh owner; the union is mActive.
+        // The SetActiveMaterials channel and every owner; the union is mActive.
         std::vector<SurfaceMaterialUse> mTerrainUses;
         uint64_t mTerrainAck = 0;
         std::map<uint64_t, std::vector<SurfaceMaterialUse>> mUseOwners;
