@@ -41,7 +41,8 @@ namespace mir
     MIR_ASSERT_COMPONENT(Aircraft);
 
     inline constexpr FieldDesc kAircraftFields[] = {
-        { .mName = "config", .mKind = FieldKind::String, .mOffset = offsetof(Aircraft, config) },
+        { .mName = "config", .mKind = FieldKind::String, .mOffset = offsetof(Aircraft, config),
+         .mWidget = FieldWidget::AssetPath, .mAssetSuffix = ".aircraft.json" },
         { .mName = "tier", .mKind = FieldKind::Int, .mOffset = offsetof(Aircraft, tier),
          .mWidget = FieldWidget::Enum, .mEnumNames = kAerodynamicTierNames },
         { .mName = "playerInput", .mKind = FieldKind::Bool, .mOffset = offsetof(Aircraft, playerInput) },

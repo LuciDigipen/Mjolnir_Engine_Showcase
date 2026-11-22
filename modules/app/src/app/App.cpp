@@ -311,6 +311,7 @@ namespace mir
         mTerrainEditor(Context(), mEditor, mProject,
             [this](AssetId asset, std::shared_ptr<const TerrainOverlay> overlay)
             { return mTerrain.Runtime().SetTerrainOverlay(asset, std::move(overlay)); }),
+        mFlightEditor(Context(), mEditor),
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO

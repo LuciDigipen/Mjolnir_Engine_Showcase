@@ -44,8 +44,9 @@ lower cell index per axis and the six base coefficients; the out-of-table row ca
 config's own L2 with the default grids and marks the path edited, so the normal Save writes it back.
 
 `FlightDebugModule` takes the source assets root from `App` and passes it to `SaveAircraftConfigToSource`, which
-rewrites `<root>/<config path>` through `WriteTextAtomic` and clears the dirty flag on success. A non-editor
-build gets an empty root, so the Save button stays disabled.
+rewrites `<root>/<config path>` through `WriteTextAtomic` and clears the dirty flag on success. In an editor
+build `App` also passes a callback that queues the written file for import, so the next Apply or Stop picks the
+save up. A non-editor build gets an empty root, so the Save button stays disabled.
 
 ## API
 

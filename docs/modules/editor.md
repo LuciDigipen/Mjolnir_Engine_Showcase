@@ -237,7 +237,7 @@ EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &
                          World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
                          const AssetImportView &assetImport, const VulkanRenderer &renderer,
                          const ContentBrowserView &contentBrowser, bool materialPanelVisible,
-                         bool materialDraftsUnsaved, float dt);
+                         std::string_view draftsWarning, const BuildJobView &build, float dt);
 
 VkRect2D SceneViewportRect() const;
 bool IsInitialized() const;
@@ -261,7 +261,8 @@ EditorCamera &SceneCamera();
 | `MakeDocumentEntityCommand` | `editor/history/DocumentNodeCommands.h` | Create, delete and reparent nodes of the active Prefab document as one command each |
 | `MakeSetFieldsEditCommand`, `MakeAddComponentEditCommand`, `MakeRemoveComponentEditCommand`, `MakeCreatePrefabCommand`, `MakeRevertAuthoredCommand`, `MakeApplyAuthoredCommand` | `editor/history/AuthoredEdit.h` | Routes an Inspector, gizmo or Hierarchy edit to a Prefab document when the entity is an instance member |
 | `ContentBrowserView`, `ContentBrowserEntryView` | `editor/panels/ContentBrowserPanel.h` | The open project's content root as a flat list of files/directories, plus `mLastRenamedFrom`/`mLastRenamedTo` for one tick when a same-tick remove+add looks like a rename |
-| `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName}`: `CreateFolder`, `Rename`, `Delete`, `OpenInIde` or `OpenPrefab`, for `App` to carry out (see [app.md](app.md)) |
+| `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName, mItemLabel}`: `CreateFolder`, `Rename`, `Delete`, `OpenFile`, `NewParticleSystem` or `NewExtensionItem`. `EditorModule` offers an `OpenFile` under the assets root to the extensions first, then falls back to the particle editor, the Prefab tab or the IDE (see [app.md](app.md)) |
+| `IEditorExtension` asset hooks, `AssetsRelativeFolder`, `BrowserAssetsRoot` | `editor/EditorExtension.h`, `editor/ContentBrowserPaths.h` | An extension adds Content Browser create buttons, opens files under the assets root before the browser does, names its unsaved drafts for the exit and project prompts, and gets `mInspectorDockId` and `mOpenAssetInIde` in its context. Paths reach it relative to the real assets root, converted from the browser's game-relative form |
 | `kPrefabContentPayload` | `editor/panels/ContentBrowserPanel.h` | The drag payload a Prefab row carries into the Hierarchy or the scene viewport |
 | `IEditorAudio`, `EditorAudioLevels`, `EditorAudioChannel`, `EditorSoundBank` | `editor/EditorAudio.h` | What the editor reads and changes of the game's audio: the live volumes, the project's defaults and each SoundBank's events. `App` implements it with the audio module and sets it on `EditorModule::SetAudio`, so the editor never links `audio` |
 | `IdeSettings`, `DetectDefaultIde` | `editor/IdeSettings.h` | The `project_settings.json` "ide.path" string (empty: auto-detect VS Code), edited from `ProjectSettingsPanel`'s External Tools section |
@@ -415,6 +416,12 @@ current value, greyed out via `ImGui::BeginDisabled`. (A 3D transform gizmo
 does exist, drawn over the viewport by `DrawViewportGizmo` via ImGuizmo - it's
 a separate, `Selection`-driven overlay, not part of `InspectorPanel`'s
 field-table drawing described here.)
+
+A `FieldWidget::AssetPath` String field, such as `Aircraft::config`, is a combo
+of the files under the source assets root whose name ends in `mAssetSuffix`,
+scanned when the list opens. It keeps a stored value it cannot find and marks
+it missing, disables paths that do not fit the field, and writes through the
+same field command as any other edit.
 
 A `FieldWidget::AssetRef` field with `AssetKind::SoundEvent`, the `Soundtrack`'s
 and the `AudioEmitter`'s `eventName`, is a combo of the game's SoundBanks with
