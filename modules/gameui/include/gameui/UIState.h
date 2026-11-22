@@ -12,6 +12,7 @@
 
 #include "UIId.h"
 #include "UINavInput.h"
+#include "UITransform.h"
 #include "UITypes.h"
 
 #include <array>
@@ -94,9 +95,11 @@ namespace mir
 
         void EndFrame();
 
-        UIInteraction Interact(UIId id, const UIRect &rect, const UIRect &clip, const UIWidgetOptions &options = {});
+        // rect is where the widget is drawn, before transform, clip is in the area's units, as the draw list keeps it
+        UIInteraction Interact(UIId id, const UIRect &rect, const UIRect &clip, const UIWidgetOptions &options = {},
+                               const UITransform &transform = {});
 
-        bool HitTest(const UIRect &rect, const UIRect &clip) const;
+        bool HitTest(const UIRect &rect, const UIRect &clip, const UITransform &transform = {}) const;
 
         UIId FollowLink(UIId from, UINavDirection direction) const;
 
@@ -113,6 +116,9 @@ namespace mir
         bool PointerWithheld() const { return mPointerWithheld; }
         float PointerX() const { return mPointerX; }
         float PointerY() const { return mPointerY; }
+        // the pointer back through transform, where a widget drawn under it would see it. Empty when the
+        // transform flattens everything
+        std::optional<UIPoint> LocalPointer(const UITransform &transform) const;
         bool PointerMoved() const { return mPointerMoved; }
 
         size_t Collisions() const { return mCollisions; }
@@ -161,7 +167,7 @@ namespace mir
 
         bool mActiveSeen = false;
 
-        //this frame's widgets by id; the first declaration of a colliding id wins
+        //this frame's widgets by id, the first declaration of a colliding id wins
         std::unordered_map<uint64_t, Declared> mDeclared;
         UIId mFirstFocusable;
         size_t mCollisions = 0;

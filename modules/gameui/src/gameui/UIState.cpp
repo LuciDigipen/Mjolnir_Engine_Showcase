@@ -80,7 +80,8 @@ namespace mir
         }
     }
 
-    UIInteraction UIState::Interact(UIId id, const UIRect &rect, const UIRect &clip, const UIWidgetOptions &options)
+    UIInteraction UIState::Interact(UIId id, const UIRect &rect, const UIRect &clip, const UIWidgetOptions &options,
+                                    const UITransform &transform)
     {
         MIR_ASSERT(!id.IsNull(), "UIState::Interact with the null UIId");
         if (id.IsNull())
@@ -100,7 +101,7 @@ namespace mir
         if (focusable && mFirstFocusable.IsNull())
             mFirstFocusable = id;
 
-        const bool over = !options.mHidden && HitTest(rect, clip);
+        const bool over = !options.mHidden && HitTest(rect, clip, transform);
 
 
         const bool reachable = mActive.IsNull() ? !mDown || mPressed : mActive == id;
@@ -168,8 +169,23 @@ namespace mir
         return it != mDeclared.end() && it->second.mFocusable;
     }
 
-    bool UIState::HitTest(const UIRect &rect, const UIRect &clip) const
+    // the pointer goes back through the transform to the rect, the clip and bounds are already the area's
+    bool UIState::HitTest(const UIRect &rect, const UIRect &clip, const UITransform &transform) const
     {
-        return !mPointerWithheld && Contains(Intersect(Intersect(rect, clip), mBounds), mPointerX, mPointerY);
+        if (mPointerWithheld || !Contains(Intersect(clip, mBounds), mPointerX, mPointerY))
+            return false;
+        const std::optional<UIPoint> local = LocalPointer(transform);
+        return local && Contains(rect, local->x, local->y);
+    }
+
+    std::optional<UIPoint> UIState::LocalPointer(const UITransform &transform) const
+    {
+        const UIPoint pointer{mPointerX, mPointerY};
+        if (transform.IsIdentity())
+            return pointer;
+        const std::optional<UITransform> inverse = transform.Inverse();
+        if (!inverse)
+            return std::nullopt;
+        return inverse->Apply(pointer);
     }
 } // namespace mir

@@ -397,3 +397,41 @@ TEST_CASE("A button pressed while the pointer is withheld presses nothing when i
     CHECK(state.Active() == kButtonId);
     CHECK(Frame(state, Up(150, 120)).mClicked);
 }
+
+TEST_CASE("A widget under a transform is hit where it is drawn, not where its rect would be", "[gameui][transform]")
+{
+    // turned a quarter about its centre, the button spans 175 to 225 across and 25 to 225 down
+    const UITransform turned = UITransform::Rotate(1.5707964f, {200, 125});
+    const auto frame = [&](const UIPointer &pointer)
+    {
+        UIState state;
+        for (int i = 0; i < 2; ++i)
+        {
+            state.BeginFrame(kArea, pointer);
+            state.Interact(kButtonId, kButton, UIRect{0, 0, kArea.width, kArea.height}, {}, turned);
+            state.EndFrame();
+        }
+        return state.Hot() == kButtonId;
+    };
+
+    CHECK(frame(Up(200, 60)));
+    CHECK(frame(Up(200, 200)));
+    CHECK_FALSE(frame(Up(120, 120)));
+    CHECK_FALSE(frame(Up(280, 120)));
+
+    // a clip is in the area's units, whatever the transform
+    UIState state;
+    state.BeginFrame(kArea, Up(200, 60));
+    state.Interact(kButtonId, kButton, UIRect{0, 100, 800, 500}, {}, turned);
+    state.EndFrame();
+    CHECK(state.Hot().IsNull());
+
+    // flattened to a line, it is hit nowhere
+    CHECK_FALSE([&] {
+        UIState flat;
+        flat.BeginFrame(kArea, Up(150, 120));
+        flat.Interact(kButtonId, kButton, UIRect{0, 0, 800, 600}, {}, UITransform::Scale(0, 1));
+        flat.EndFrame();
+        return flat.Hot() == kButtonId;
+    }());
+}

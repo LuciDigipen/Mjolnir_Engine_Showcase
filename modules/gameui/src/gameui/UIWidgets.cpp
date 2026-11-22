@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace mir
 {
@@ -236,8 +237,9 @@ namespace mir
         if (enabled && range > 0.0f && (result.mHeld || result.mAdjust != 0))
         {
             float next = value;
-            if (result.mHeld && rect.width > 0.0f)
-                next = min + range * Clamp01((ui.State().PointerX() - rect.x) / rect.width);
+            const std::optional<UIPoint> pointer = ui.LocalPointer();
+            if (result.mHeld && rect.width > 0.0f && pointer)
+                next = min + range * Clamp01((pointer->x - rect.x) / rect.width);
             if (result.mAdjust != 0)
                 next = value + static_cast<float>(result.mAdjust) * (step > 0.0f ? step : range / 20.0f);
 

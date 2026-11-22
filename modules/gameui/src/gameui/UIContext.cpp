@@ -63,6 +63,8 @@ namespace mir
                    mDrawList.ClipDepth());
         MIR_ASSERT(mDrawList.OpacityDepth() == 0, "UIContext::EndFrame with {} PushOpacity unpopped",
                    mDrawList.OpacityDepth());
+        MIR_ASSERT(mDrawList.TransformDepth() == 0, "UIContext::EndFrame with {} PushTransform unpopped",
+                   mDrawList.TransformDepth());
 
         if (mInFrame && !mArea.IsEmpty() && mBackend != nullptr)
             mBackend->Submit(mArea, mScale, mDrawList, mTextures, mFonts);
@@ -102,11 +104,12 @@ namespace mir
     {
         MIR_ASSERT(mInFrame, "UIContext::Interact outside BeginFrame/EndFrame");
 
+        const UITransform &transform = mDrawList.CurrentTransform();
         if (!mWidgetsDisabled)
-            return mState.Interact(id, rect, mDrawList.CurrentClip(), options);
+            return mState.Interact(id, rect, mDrawList.CurrentClip(), options, transform);
         UIWidgetOptions disabled = options;
         disabled.mDisabled = true;
-        return mState.Interact(id, rect, mDrawList.CurrentClip(), disabled);
+        return mState.Interact(id, rect, mDrawList.CurrentClip(), disabled, transform);
     }
 
     bool UIContext::SetFocus(UIId id)

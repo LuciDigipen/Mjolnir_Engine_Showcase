@@ -29,6 +29,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cfloat>
 #include <cstddef>
@@ -36,7 +37,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -536,5 +539,208 @@ TEST_CASE("Text under a pixel tall draws and measures at one pixel, as ImGui kee
     ui.Style().mFont = font;
     Label(ui, UIId("tiny_font"), UIRect{100, 200, 300, 40}, text);
     ui.EndFrame();
+    ImGui::Render();
+}
+
+namespace
+{
+    constexpr UIRect kScreen{0, 0, 800, 600};
+
+    struct VertexBounds
+    {
+        ImVec2 mMin{FLT_MAX, FLT_MAX};
+        ImVec2 mMax{-FLT_MAX, -FLT_MAX};
+        ImVec2 mUVMin{FLT_MAX, FLT_MAX};
+        ImVec2 mUVMax{-FLT_MAX, -FLT_MAX};
+    };
+
+    VertexBounds BoundsOf(const ImDrawList &drawn, int first, int last)
+    {
+        VertexBounds bounds;
+        for (int i = first; i < last; ++i)
+        {
+            const ImDrawVert &vertex = drawn.VtxBuffer[i];
+            bounds.mMin = ImVec2(std::min(bounds.mMin.x, vertex.pos.x), std::min(bounds.mMin.y, vertex.pos.y));
+            bounds.mMax = ImVec2(std::max(bounds.mMax.x, vertex.pos.x), std::max(bounds.mMax.y, vertex.pos.y));
+            bounds.mUVMin = ImVec2(std::min(bounds.mUVMin.x, vertex.uv.x), std::min(bounds.mUVMin.y, vertex.uv.y));
+            bounds.mUVMax = ImVec2(std::max(bounds.mUVMax.x, vertex.uv.x), std::max(bounds.mUVMax.y, vertex.uv.y));
+        }
+        return bounds;
+    }
+
+    // what one list adds to the background list, from where it was
+    struct Submitted
+    {
+        int mFirst = 0;
+        int mLast = 0;
+    };
+
+    Submitted SubmitList(ImGuiUIBackend &backend, const UIDrawList &list, const UIFonts &fonts)
+    {
+        static UITextures textures;
+        ImDrawList &drawn = *ImGui::GetBackgroundDrawList();
+        const int first = drawn.VtxBuffer.Size;
+        backend.Submit(kScreen, 1.0f, list, textures, fonts);
+        return Submitted{first, drawn.VtxBuffer.Size};
+    }
+} // namespace
+
+TEST_CASE("A transform moves the vertices a command drew, and a gradient colours them where they were drawn",
+          "[gameui][transform]")
+{
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+
+    UIDrawList list;
+    list.Reset(kScreen.width, kScreen.height);
+    list.PushTransform(UITransform::Translate(400, 0) * UITransform::Rotate(std::numbers::pi_v<float> * 0.5f));
+    list.Rect({0, 0, 100, 10}, kUIWhite);
+    list.PopTransform();
+    const Submitted turned = SubmitList(backend, list, fonts);
+    REQUIRE(turned.mLast - turned.mFirst == 4);
+
+    // a quarter turn about the origin, then 400 across: 390 to 400 across and 0 to 100 down
+    const ImDrawList &drawn = *ImGui::GetBackgroundDrawList();
+    const VertexBounds bounds = BoundsOf(drawn, turned.mFirst, turned.mLast);
+    CHECK(bounds.mMin.x == Catch::Approx(390.0f).margin(1e-3));
+    CHECK(bounds.mMax.x == Catch::Approx(400.0f).margin(1e-3));
+    CHECK(bounds.mMin.y == Catch::Approx(0.0f).margin(1e-3));
+    CHECK(bounds.mMax.y == Catch::Approx(100.0f).margin(1e-3));
+
+    list.Reset(kScreen.width, kScreen.height);
+    const UIGradient gradient{.mFrom = {0, 0}, .mTo = {100, 0}, .mFromColor = {1, 0, 0, 1}, .mToColor = {0, 0, 1, 1}};
+    list.Rect({0, 100, 100, 10}, kUIWhite, 0.0f, gradient);
+    const Submitted shaded = SubmitList(backend, list, fonts);
+    REQUIRE(shaded.mLast - shaded.mFirst == 4);
+    for (int i = shaded.mFirst; i < shaded.mLast; ++i)
+    {
+        const ImDrawVert &vertex = drawn.VtxBuffer[i];
+        const ImVec4 color = ImGui::ColorConvertU32ToFloat4(vertex.col);
+        CHECK(color.x == Catch::Approx(vertex.pos.x < 50.0f ? 1.0f : 0.0f).margin(0.01));
+        CHECK(color.z == Catch::Approx(vertex.pos.x < 50.0f ? 0.0f : 1.0f).margin(0.01));
+        CHECK(color.w == Catch::Approx(1.0f).margin(0.01));
+    }
+    ImGui::Render();
+}
+
+TEST_CASE("Scaled text is drawn at the size it ends up, so its glyphs stay sharp", "[gameui][transform]")
+{
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+
+    // the glyph at both sizes first, so the atlas does not grow while the quads are compared
+    ImFont *font = ImGui::GetFont();
+    font->CalcTextSizeA(16.0f, FLT_MAX, 0.0f, "W");
+    font->CalcTextSizeA(32.0f, FLT_MAX, 0.0f, "W");
+
+    const auto glyph = [&](float size, const UITransform &transform)
+    {
+        UIDrawList list;
+        list.Reset(kScreen.width, kScreen.height);
+        list.PushTransform(transform);
+        list.Text(100, 100, "W", kUIWhite, size);
+        list.PopTransform();
+        const Submitted text = SubmitList(backend, list, fonts);
+        REQUIRE(text.mLast - text.mFirst == 4);
+        return BoundsOf(*ImGui::GetBackgroundDrawList(), text.mFirst, text.mLast);
+    };
+
+    const VertexBounds small = glyph(16.0f, {});
+    const VertexBounds large = glyph(32.0f, {});
+    const VertexBounds scaled = glyph(16.0f, UITransform::Scale(2, 2, {100, 100}));
+
+    const float smallTexels = small.mUVMax.y - small.mUVMin.y;
+    const float largeTexels = large.mUVMax.y - large.mUVMin.y;
+    const float scaledTexels = scaled.mUVMax.y - scaled.mUVMin.y;
+    CHECK(scaledTexels == Catch::Approx(largeTexels).epsilon(0.1));
+    CHECK(scaledTexels > smallTexels * 1.5f);
+
+    // and lands where the 32 unit glyph does
+    CHECK(scaled.mMin.x == Catch::Approx(large.mMin.x).margin(0.5));
+    CHECK(scaled.mMax.y == Catch::Approx(large.mMax.y).margin(0.5));
+    ImGui::Render();
+}
+
+TEST_CASE("Text a transform moves into view is drawn though it starts outside the clip", "[gameui][transform]")
+{
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+
+    UIDrawList list;
+    list.Reset(kScreen.width, kScreen.height);
+    list.PushTransform(UITransform::Translate(300, 0));
+    list.Text(-200, 50, "Heading", kUIWhite, 16.0f);
+    list.PopTransform();
+    const Submitted text = SubmitList(backend, list, fonts);
+    REQUIRE(text.mLast - text.mFirst >= 4 * 7);
+    CHECK(BoundsOf(*ImGui::GetBackgroundDrawList(), text.mFirst, text.mLast).mMin.x >= 99.0f);
+    ImGui::Render();
+}
+
+TEST_CASE("A short arc or pie still draws", "[gameui][shapes]")
+{
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+
+    // 5 degrees from 0 falls between ImGui's own arc samples
+    constexpr float kSweep = 5.0f * std::numbers::pi_v<float> / 180.0f;
+    const std::function<void(UIDrawList &)> shapes[] = {
+        [&](UIDrawList &list) { list.Arc({100, 100}, 20, 0.0f, kSweep, kUIWhite, UIStroke{.mWidth = 2}); },
+        [&](UIDrawList &list) { list.Arc({100, 100}, 20, kSweep, 0.0f, kUIWhite, UIStroke{.mWidth = 2}); },
+        [&](UIDrawList &list) { list.Pie({100, 100}, 20, 0.0f, kSweep, kUIWhite); },
+    };
+    for (const auto &shape : shapes)
+    {
+        UIDrawList list;
+        list.Reset(kScreen.width, kScreen.height);
+        shape(list);
+        REQUIRE(list.Commands().size() == 1);
+        const Submitted drawn = SubmitList(backend, list, fonts);
+        CHECK(drawn.mLast - drawn.mFirst >= 3);
+    }
+    ImGui::Render();
+}
+
+TEST_CASE("Every shape draws through ImGui", "[gameui][shapes]")
+{
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+
+    // an arrow, which is not convex
+    const UIPoint arrow[] = {{0, 10}, {30, 10}, {30, 0}, {50, 20}, {30, 40}, {30, 30}, {0, 30}};
+    const std::function<void(UIDrawList &)> shapes[] = {
+        [&](UIDrawList &list) { list.Line({10, 10}, {90, 40}, kUIWhite, UIStroke{.mWidth = 3}); },
+        [&](UIDrawList &list) { list.Polyline(arrow, kUIWhite, UIStroke{.mWidth = 2}, true); },
+        [&](UIDrawList &list) { list.Polygon(arrow, kUIWhite); },
+        [&](UIDrawList &list) { list.FillCircle({100, 100}, 20, kUIWhite); },
+        [&](UIDrawList &list) { list.StrokeCircle({100, 100}, 20, kUIWhite, UIStroke{.mWidth = 2}); },
+        [&](UIDrawList &list) { list.Arc({100, 100}, 30, 0.0f, 2.0f, kUIWhite, UIStroke{.mWidth = 4}); },
+        [&](UIDrawList &list) { list.Pie({100, 100}, 30, -1.0f, 3.0f, kUIWhite); },
+        [&](UIDrawList &list) { list.StrokeRect({10, 10, 80, 40}, kUIWhite, UIStroke{.mWidth = 2}, 6.0f); },
+        [&](UIDrawList &list) {
+            list.StrokeCircle({100, 100}, 20, kUIWhite, UIStroke{.mWidth = 2, .mDash = 6, .mGap = 4});
+        },
+    };
+    for (const auto &shape : shapes)
+    {
+        UIDrawList list;
+        list.Reset(kScreen.width, kScreen.height);
+        list.PushTransform(UITransform::Rotate(0.3f, {100, 100}));
+        shape(list);
+        list.PopTransform();
+        REQUIRE_FALSE(list.Commands().empty());
+        const Submitted drawn = SubmitList(backend, list, fonts);
+        CHECK(drawn.mLast - drawn.mFirst >= 3);
+    }
     ImGui::Render();
 }

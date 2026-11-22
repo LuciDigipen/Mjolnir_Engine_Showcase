@@ -34,7 +34,9 @@ Status messages and the visit count appear in the engine log/console.
 `assets/scripts/ui_demo.lua`, on the `LuaUI` entity in `default`, draws game UI
 from Lua: a panel in the bottom-left corner that fades in, counts clicks, shows
 a toggle, a slider and a bar, and pauses and resumes the game with
-`world:pause()` and `world:resume()`. Its text is in Turret Road Bold,
+`world:pause()` and `world:resume()`. A dial beside it, drawn with `ui:arc`,
+`ui:circle`, `ui:line` and `ui:polygon` and turned with `ui:with_rotation`,
+eases its needle after the slider. Its text is in Turret Road Bold,
 `assets/fonts/TurretRoad-Bold.ttf`, loaded with `ui:font`; the font is under the
 SIL Open Font License, in `TurretRoad-OFL.txt`. It lives in `default` only, so
 it goes when **N** swaps that scene out.

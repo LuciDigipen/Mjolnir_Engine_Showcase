@@ -22,7 +22,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <exception>
+#include <format>
+#include <iterator>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -420,4 +423,107 @@ return T
     CHECK(f.host.ErrorCount() == 3);
     CHECK(f.ui.Style().mFont == before.mFont);
     CHECK(f.ui.Style().mTextAlign == before.mTextAlign);
+}
+
+TEST_CASE("Shape calls draw under with_rotation, with_transform and with_offset, and a moved button is clicked where it is drawn",
+          "[gameui][script][shapes]")
+{
+    Fixture f;
+    const Entity entity = f.Spawn("ui_shapes", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    ui:with_rotation(90, 100, 100, function()
+        ui:line(100, 100, 150, 100, { width = 2, color = { 1, 0, 0 } })
+    end)
+    ui:lines({ 0, 0, 10, 0, 10, 10 }, { closed = true })
+    ui:polygon({ 0, 0, 10, 0, 5, 8 }, { gradient = { from = { 0, 0 }, to = { x = 10, y = 0 }, to_color = { 0, 0, 1, 1 } } })
+    ui:circle(50, 50, 10)
+    ui:circle(50, 50, 10, { width = 2 })
+    ui:arc(50, 50, 20, 0, 90, { width = 3 })
+    ui:pie(50, 50, 20, -90, 0)
+    ui:rect({ x = 0, y = 0, w = 40, h = 20 }, { color = { 0, 0, 0, 0.5 }, rounding = 4 })
+    ui:rect({ x = 0, y = 0, w = 40, h = 20 }, { dash = { length = 5, gap = 5 } })
+    ui:with_transform({ offset = { 10, 0 }, scale = 2 }, function()
+        ui:circle(0, 0, 5)
+    end)
+    ui:with_offset(200, 0, function()
+        if ui:button("moved", { x = 100, y = 100, w = 120, h = 40 }, "Moved").clicked then
+            world:set(entity, "UIBindingsProbe", "clicked", true)
+        end
+    end)
+end
+return T
+)LUA");
+
+    f.Click(350, 120);
+    CHECK(f.host.ErrorCount() == 0);
+    CHECK(ReadProbe<bool>(f.world, entity, "clicked"));
+
+    const UIDrawList &list = f.ui.DrawList();
+    const auto commands = list.Commands();
+    REQUIRE(commands.size() >= 21);
+
+    CHECK(commands[0].mKind == UIDrawCommandKind::Polyline);
+    CHECK(commands[0].mThickness == 2.0f);
+    const UIPoint end = list.TransformOf(commands[0]).Apply(list.PointsOf(commands[0])[1]);
+    CHECK(end.x == Catch::Approx(100.0f).margin(1e-3));
+    CHECK(end.y == Catch::Approx(150.0f).margin(1e-3));
+
+    CHECK(commands[1].mClosed);
+    CHECK(list.TransformOf(commands[1]).IsIdentity());
+    CHECK(commands[2].mKind == UIDrawCommandKind::Polygon);
+    REQUIRE(list.GradientOf(commands[2]) != nullptr);
+    CHECK(list.GradientOf(commands[2])->mToColor == UIColor{ 0, 0, 1, 1 });
+    CHECK(list.GradientOf(commands[2])->mFromColor == kUIWhite);
+    CHECK(commands[3].mKind == UIDrawCommandKind::Circle);
+    CHECK(commands[3].mThickness == 0.0f);
+    CHECK(commands[4].mThickness == 2.0f);
+    CHECK(commands[5].mKind == UIDrawCommandKind::Arc);
+    CHECK(commands[5].mAngleTo == Catch::Approx(std::numbers::pi_v<float> * 0.5f));
+    CHECK(commands[6].mKind == UIDrawCommandKind::Arc);
+    CHECK(commands[6].mThickness == 0.0f);
+    CHECK(commands[6].mAngleFrom == Catch::Approx(-std::numbers::pi_v<float> * 0.5f));
+    CHECK(commands[7].mKind == UIDrawCommandKind::Rect);
+    CHECK(commands[7].mRounding == 4.0f);
+    CHECK(commands[7].mColor.a == Catch::Approx(0.5f));
+
+    // 120 round, a dash every 10
+    for (size_t i = 8; i < 20; ++i)
+        CHECK(commands[i].mKind == UIDrawCommandKind::Polyline);
+    CHECK(commands[20].mKind == UIDrawCommandKind::Circle);
+    CHECK(list.TransformOf(commands[20]) == UITransform::Translate(10, 0) * UITransform::Scale(2, 2));
+}
+
+TEST_CASE("A bad shape or transform argument fails the OnUI, and a failure inside with_transform leaves it balanced",
+          "[gameui][script][shapes]")
+{
+    Fixture f;
+    constexpr std::string_view kBodies[] = {
+        "ui:lines({ 0, 0, 10 })",
+        "ui:polygon({ 0, 0, 10, 0 })",
+        "ui:polygon({ 0, 0, 10, 0, 5, 5 }, { width = 2 })",
+        "ui:rect({ x = 0, y = 0, w = 10, h = 10 }, { gradient = { from = { 0, 0 }, to = { 0, 0 } } })",
+        "ui:line(0, 0, 10, 0, { dash = { 0, 2 } })",
+        "ui:circle(0, 0, -1)",
+        "ui:with_rotation(90, function() end, 5)",
+        "ui:with_transform({ spin = 90 }, function() end)",
+        "ui:with_transform({ rotate = 45 }, function() ui:with_offset(5, 5, function() error('boom') end) end)",
+    };
+    int index = 0;
+    for (const std::string_view body : kBodies)
+        f.Spawn(std::format("ui_bad_shape_{}", index++), std::format(R"LUA(
+local T = {{}}
+function T.NewInstanceData() return {{}} end
+function T.OnUI(self, world, entity, ui, dt)
+    {}
+end
+return T
+)LUA", body));
+
+    f.ui.BeginFrame(kArea, f.world.Resource<InputState>(), f.world.Resource<InputMap>(), f.pointer);
+    DrawScriptScreens(f.host, f.world, f.frame, f.ui, 0.0f);
+    CHECK(f.ui.DrawList().TransformDepth() == 0);
+    f.ui.EndFrame();
+    CHECK(f.host.ErrorCount() == std::size(kBodies));
 }

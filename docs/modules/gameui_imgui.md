@@ -36,6 +36,21 @@ and measured at its size in pixels rounded as ImGui rounds it, which asserts at
 0, so both keep the size between 1 and ImGui's largest, as `PushFont` does: a
 0.25 unit label is drawn and measured one pixel tall.
 
+Shapes are ImGui's own: `AddPolyline`, `AddConcavePolyFilled`, `AddCircle`,
+`AddCircleFilled`, `PathArcTo` stroked or filled from the centre with at least
+one segment, so a short arc keeps both ends, and
+`AddRect`, widths times the scale. Gradients and transforms are applied after a
+command is drawn, to the vertices it wrote: a gradient multiplies each vertex's
+colour by where it lies along the gradient, and a transform moves each vertex
+from where it was drawn to where it goes, so everything, sprites and text too,
+turns and scales the same way, and nothing draws through a pipeline of its own.
+Text under a transform is drawn at the size it ends up, the font size times the
+transform's area scale, and shrunk back about its origin before the transform
+is applied, so a scaled label is baked at its real size rather than stretched.
+ImGui culls text against the clip as it writes it; text under a transform is
+written with no culling, through `ImFont::RenderText`, because only the moved
+vertices can be tested against the clip, which the GPU then does.
+
 ## API
 
 | Type | Header | Role |
@@ -67,13 +82,22 @@ loads `fonts/Inter.ttf` from the source tree as a game font: into the atlas and
 out with its `UIFonts`, measured with its own widths, drawn by a label, loaded
 through an `AssetCache` once per id, and kept past its context's end. A damaged
 copy, its tables renamed, and a cut-off copy are refused with the atlas
-untouched, and text under a pixel draws and measures at one pixel.
+untouched, and text under a pixel draws and measures at one pixel. A turned
+rect's vertices land where the transform says, a gradient colours a rect red to
+blue along it, a glyph scaled by two is baked at twice its size and lands where
+the larger glyph does, text moved into view from outside the clip draws, and
+every shape kind writes vertices under a turn.
 
 ## Backlog
 
 None yet.
 
 ## Changed
+
+*2026-11-21* — **Shapes, gradients and transforms.** Was: rects, images and
+text, axis-aligned. Now: the new shape commands through ImGui's own calls, and
+gradients and transforms applied to the vertices each command wrote. Because:
+gameui shapes and transforms.
 
 *2026-11-21* — **Fonts.** Was: text always drew in `ImGui::GetFont()`. Now:
 `MakeFont` adds a game font to ImGui's atlas, and text and measuring use the

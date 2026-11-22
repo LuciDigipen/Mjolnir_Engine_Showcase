@@ -1,8 +1,8 @@
 /**
  * @file UITypes.h
  * @author Quy Dong Ta
- * @brief Value types shared by the game UI: a rect, a color, a sprite, a font
- *        and a style.
+ * @brief Value types shared by the game UI: a rect, a point, a color, a
+ *        sprite, a font and a style.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -48,6 +48,14 @@ namespace mir
         float height = 0.0f;
 
         constexpr bool operator==(const UISize &) const = default;
+    };
+
+    struct UIPoint
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+
+        constexpr bool operator==(const UIPoint &) const = default;
     };
     struct UIColor
     {
