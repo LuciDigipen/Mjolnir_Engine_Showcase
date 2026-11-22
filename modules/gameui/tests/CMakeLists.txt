@@ -9,6 +9,7 @@
     UINavInput.tests.cpp
     UIState.tests.cpp
     UITextures.tests.cpp
+    UITransform.tests.cpp
     UIWidgets.tests.cpp
 )
 

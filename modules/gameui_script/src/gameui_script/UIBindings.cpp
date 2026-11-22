@@ -24,6 +24,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <string_view>
 #include <tuple>
@@ -460,6 +461,202 @@ namespace mir
             return value == sol::lua_nil ? 0.0f : ReadFloat(value, call, argument);
         }
 
+        constexpr float kRadiansPerDegree = std::numbers::pi_v<float> / 180.0f;
+
+        // the most points one shape call takes
+        constexpr std::size_t kMostPoints = 4096;
+
+        float ReadAngle(const sol::object &value, std::string_view call, std::string_view argument)
+        {
+            return ReadFloat(value, call, argument) * kRadiansPerDegree;
+        }
+
+        // { x, y } by position or by name
+        UIPoint ReadXY(const sol::object &value, std::string_view call, std::string_view argument)
+        {
+            if (value.get_type() != sol::type::table)
+                Fail(call, std::format("{} must be a table {{ x, y }}", argument));
+            const sol::table table = value.as<sol::table>();
+            const bool positional = table[1].get<sol::object>() != sol::lua_nil;
+            return UIPoint{ ReadFloat(positional ? table[1].get<sol::object>() : table["x"].get<sol::object>(), call,
+                                std::format("{}.x", argument)),
+                ReadFloat(positional ? table[2].get<sol::object>() : table["y"].get<sol::object>(), call,
+                    std::format("{}.y", argument)) };
+        }
+
+        // { x1, y1, x2, y2, ... }
+        std::vector<UIPoint> ReadPoints(const sol::object &value, std::string_view call, std::size_t fewest)
+        {
+            if (value.get_type() != sol::type::table)
+                Fail(call, "points must be a table { x1, y1, x2, y2, ... }");
+            const sol::table table = value.as<sol::table>();
+            const std::size_t numbers = table.size();
+            if (numbers % 2 != 0)
+                Fail(call, "points must be x, y pairs: { x1, y1, x2, y2, ... }");
+            if (numbers / 2 < fewest)
+                Fail(call, std::format("needs at least {} points", fewest));
+            if (numbers / 2 > kMostPoints)
+                Fail(call, std::format("takes at most {} points", kMostPoints));
+
+            std::vector<UIPoint> points;
+            points.reserve(numbers / 2);
+            for (std::size_t i = 1; i < numbers; i += 2)
+                points.push_back(UIPoint{ ReadFloat(table[i].get<sol::object>(), call, "points"),
+                    ReadFloat(table[i + 1].get<sol::object>(), call, "points") });
+            return points;
+        }
+
+        // fails with the valid keys when the table has another
+        void CheckKeys(const sol::table &table, std::string_view call, std::string_view what,
+            std::initializer_list<std::string_view> keys)
+        {
+            for (const auto &[keyObject, entry] : table)
+            {
+                const std::string_view key =
+                    keyObject.get_type() == sol::type::string ? keyObject.as<std::string_view>() : std::string_view{};
+                bool known = false;
+                for (const std::string_view name : keys)
+                    known = known || key == name;
+                if (known)
+                    continue;
+
+                std::string valid;
+                for (const std::string_view name : keys)
+                    valid += std::format("{}{}", valid.empty() ? "" : ", ", name);
+                Fail(call, std::format("unknown {}; valid ones are {}", what, valid));
+            }
+        }
+
+        // { length, gap, offset } by position or by name; the gap defaults to the length
+        void ReadDash(const sol::object &value, std::string_view call, UIStroke &stroke)
+        {
+            if (value.get_type() != sol::type::table)
+                Fail(call, "options.dash must be a table { length, gap, offset }");
+            const sol::table table = value.as<sol::table>();
+            const bool positional = table[1].get<sol::object>() != sol::lua_nil;
+            if (!positional)
+                CheckKeys(table, call, "dash key", { "length", "gap", "offset" });
+            const auto part = [&](const char *name, int position)
+            { return positional ? table[position].get<sol::object>() : table[name].get<sol::object>(); };
+
+            stroke.mDash = ReadSize(part("length", 1), call, "options.dash.length");
+            const sol::object gap = part("gap", 2);
+            stroke.mGap = gap == sol::lua_nil ? stroke.mDash : ReadSize(gap, call, "options.dash.gap");
+            stroke.mDashOffset = ReadOptionalFloat(part("offset", 3), call, "options.dash.offset");
+        }
+
+        // { from = { x, y }, to = { x, y }, from_color, to_color }, each colour white unless given
+        UIGradient ReadGradient(const sol::object &value, std::string_view call)
+        {
+            if (value.get_type() != sol::type::table)
+                Fail(call, "options.gradient must be a table { from, to, from_color, to_color }");
+            const sol::table table = value.as<sol::table>();
+            CheckKeys(table, call, "gradient key", { "from", "to", "from_color", "to_color" });
+
+            UIGradient gradient{ .mFrom = ReadXY(table["from"].get<sol::object>(), call, "options.gradient.from"),
+                .mTo = ReadXY(table["to"].get<sol::object>(), call, "options.gradient.to") };
+            if (gradient.mFrom == gradient.mTo)
+                Fail(call, "options.gradient.from and options.gradient.to must be different points");
+            const sol::object fromColor = table["from_color"].get<sol::object>();
+            const sol::object toColor = table["to_color"].get<sol::object>();
+            if (fromColor != sol::lua_nil)
+                gradient.mFromColor = ReadColor(fromColor, call, "options.gradient.from_color");
+            if (toColor != sol::lua_nil)
+                gradient.mToColor = ReadColor(toColor, call, "options.gradient.to_color");
+            return gradient;
+        }
+
+        struct ShapeOptions
+        {
+            UIColor mColor = kUIWhite;
+            UIStroke mStroke;
+            // a width or a dash outlines a shape that would otherwise be filled
+            bool mStroked = false;
+            bool mClosed = false;
+            float mRounding = 0.0f;
+            UIGradient mGradient;
+        };
+
+        ShapeOptions ReadShapeOptions(const sol::object &value, std::string_view call,
+            std::initializer_list<std::string_view> keys)
+        {
+            ShapeOptions options;
+            if (value == sol::lua_nil)
+                return options;
+            if (value.get_type() != sol::type::table)
+                Fail(call, "options must be a table");
+            const sol::table table = value.as<sol::table>();
+            CheckKeys(table, call, "option", keys);
+
+            for (const auto &[keyObject, entry] : table)
+            {
+                const std::string_view key = keyObject.as<std::string_view>();
+                if (key == "color")
+                    options.mColor = ReadColor(entry, call, "options.color");
+                else if (key == "width")
+                {
+                    options.mStroke.mWidth = ReadSize(entry, call, "options.width");
+                    options.mStroked = true;
+                }
+                else if (key == "dash")
+                {
+                    ReadDash(entry, call, options.mStroke);
+                    options.mStroked = true;
+                }
+                else if (key == "gradient")
+                    options.mGradient = ReadGradient(entry, call);
+                else if (key == "closed")
+                    options.mClosed = ReadBool(entry, call, "options.closed");
+                else if (key == "rounding")
+                {
+                    options.mRounding = ReadFloat(entry, call, "options.rounding");
+                    if (options.mRounding < 0.0f)
+                        Fail(call, "options.rounding must be 0 or more");
+                }
+            }
+            return options;
+        }
+
+        // { offset = { x, y }, rotate = degrees, scale = s or { x, y }, pivot = { x, y } }: scaled, then turned,
+        // both about the pivot, then moved
+        UITransform ReadTransform(const sol::object &value, std::string_view call)
+        {
+            if (value.get_type() != sol::type::table)
+                Fail(call, "transform must be a table { offset, rotate, scale, pivot }");
+            const sol::table table = value.as<sol::table>();
+            CheckKeys(table, call, "transform key", { "offset", "rotate", "scale", "pivot" });
+
+            const sol::object offsetValue = table["offset"].get<sol::object>();
+            const sol::object rotateValue = table["rotate"].get<sol::object>();
+            const sol::object scaleValue = table["scale"].get<sol::object>();
+            const sol::object pivotValue = table["pivot"].get<sol::object>();
+
+            const UIPoint pivot = pivotValue == sol::lua_nil ? UIPoint{} : ReadXY(pivotValue, call, "transform.pivot");
+            UIPoint scale{ 1.0f, 1.0f };
+            if (scaleValue.get_type() == sol::type::number)
+            {
+                const float uniform = ReadFloat(scaleValue, call, "transform.scale");
+                scale = UIPoint{ uniform, uniform };
+            }
+            else if (scaleValue != sol::lua_nil)
+                scale = ReadXY(scaleValue, call, "transform.scale");
+            const float angle = rotateValue == sol::lua_nil ? 0.0f : ReadAngle(rotateValue, call, "transform.rotate");
+            const UIPoint offset =
+                offsetValue == sol::lua_nil ? UIPoint{} : ReadXY(offsetValue, call, "transform.offset");
+
+            return UITransform::Translate(offset.x, offset.y) * UITransform::Rotate(angle, pivot) *
+                   UITransform::Scale(scale.x, scale.y, pivot);
+        }
+
+        void DrawTransformed(UIScriptFrame &self, std::string_view call, const UITransform &transform,
+            const sol::object &fn)
+        {
+            UIDrawList &draw = Use(self, call).DrawList();
+            const sol::protected_function body = ReadFunction(fn, call);
+            draw.PushTransform(transform);
+            CallScoped(body, call, [&] { draw.PopTransform(); });
+        }
+
         struct LuaStack
         {
             UIStack mStack;
@@ -611,6 +808,99 @@ namespace mir
             draw.PushClip(clip);
             CallScoped(body, "with_clip", [&] { draw.PopClip(); });
         };
+        ui["with_offset"] = [](UIScriptFrame &self, const sol::object &x, const sol::object &y, const sol::object &fn)
+        {
+            DrawTransformed(self, "with_offset",
+                UITransform::Translate(ReadFloat(x, "with_offset", "x"), ReadFloat(y, "with_offset", "y")), fn);
+        };
+        // (degrees, fn) about the origin, or (degrees, px, py, fn) about a pivot
+        ui["with_rotation"] = [](UIScriptFrame &self, const sol::object &degrees, const sol::object &x,
+                                  const sol::object &y, const sol::object &fn)
+        {
+            const float angle = ReadAngle(degrees, "with_rotation", "degrees");
+            if (x.get_type() == sol::type::function)
+            {
+                if (y != sol::lua_nil || fn != sol::lua_nil)
+                    Fail("with_rotation", "takes (degrees, fn) or (degrees, px, py, fn)");
+                DrawTransformed(self, "with_rotation", UITransform::Rotate(angle), x);
+                return;
+            }
+            const UIPoint pivot{ ReadFloat(x, "with_rotation", "px"), ReadFloat(y, "with_rotation", "py") };
+            DrawTransformed(self, "with_rotation", UITransform::Rotate(angle, pivot), fn);
+        };
+        ui["with_transform"] = [](UIScriptFrame &self, const sol::object &transform, const sol::object &fn)
+        { DrawTransformed(self, "with_transform", ReadTransform(transform, "with_transform"), fn); };
+
+        // shapes: drawn under the clip, opacity and transform like the widgets, and never taking the pointer
+        ui["line"] = [](UIScriptFrame &self, const sol::object &x1, const sol::object &y1, const sol::object &x2,
+                         const sol::object &y2, const sol::object &opts)
+        {
+            UIDrawList &draw = Use(self, "line").DrawList();
+            const UIPoint from{ ReadFloat(x1, "line", "x1"), ReadFloat(y1, "line", "y1") };
+            const UIPoint to{ ReadFloat(x2, "line", "x2"), ReadFloat(y2, "line", "y2") };
+            const ShapeOptions options = ReadShapeOptions(opts, "line", { "color", "width", "dash", "gradient" });
+            draw.Line(from, to, options.mColor, options.mStroke, options.mGradient);
+        };
+        ui["lines"] = [](UIScriptFrame &self, const sol::object &points, const sol::object &opts)
+        {
+            UIDrawList &draw = Use(self, "lines").DrawList();
+            const std::vector<UIPoint> path = ReadPoints(points, "lines", 2);
+            const ShapeOptions options =
+                ReadShapeOptions(opts, "lines", { "color", "width", "dash", "gradient", "closed" });
+            draw.Polyline(path, options.mColor, options.mStroke, options.mClosed, options.mGradient);
+        };
+        ui["polygon"] = [](UIScriptFrame &self, const sol::object &points, const sol::object &opts)
+        {
+            UIDrawList &draw = Use(self, "polygon").DrawList();
+            const std::vector<UIPoint> shape = ReadPoints(points, "polygon", 3);
+            const ShapeOptions options = ReadShapeOptions(opts, "polygon", { "color", "gradient" });
+            draw.Polygon(shape, options.mColor, options.mGradient);
+        };
+        ui["circle"] = [](UIScriptFrame &self, const sol::object &x, const sol::object &y, const sol::object &radius,
+                           const sol::object &opts)
+        {
+            UIDrawList &draw = Use(self, "circle").DrawList();
+            const UIPoint center{ ReadFloat(x, "circle", "x"), ReadFloat(y, "circle", "y") };
+            const float r = ReadSize(radius, "circle", "radius");
+            const ShapeOptions options = ReadShapeOptions(opts, "circle", { "color", "width", "dash", "gradient" });
+            if (options.mStroked)
+                draw.StrokeCircle(center, r, options.mColor, options.mStroke, options.mGradient);
+            else
+                draw.FillCircle(center, r, options.mColor, options.mGradient);
+        };
+        ui["arc"] = [](UIScriptFrame &self, const sol::object &x, const sol::object &y, const sol::object &radius,
+                        const sol::object &from, const sol::object &to, const sol::object &opts)
+        {
+            UIDrawList &draw = Use(self, "arc").DrawList();
+            const UIPoint center{ ReadFloat(x, "arc", "x"), ReadFloat(y, "arc", "y") };
+            const float r = ReadSize(radius, "arc", "radius");
+            const float start = ReadAngle(from, "arc", "from");
+            const float end = ReadAngle(to, "arc", "to");
+            const ShapeOptions options = ReadShapeOptions(opts, "arc", { "color", "width", "dash", "gradient" });
+            draw.Arc(center, r, start, end, options.mColor, options.mStroke, options.mGradient);
+        };
+        ui["pie"] = [](UIScriptFrame &self, const sol::object &x, const sol::object &y, const sol::object &radius,
+                        const sol::object &from, const sol::object &to, const sol::object &opts)
+        {
+            UIDrawList &draw = Use(self, "pie").DrawList();
+            const UIPoint center{ ReadFloat(x, "pie", "x"), ReadFloat(y, "pie", "y") };
+            const float r = ReadSize(radius, "pie", "radius");
+            const float start = ReadAngle(from, "pie", "from");
+            const float end = ReadAngle(to, "pie", "to");
+            const ShapeOptions options = ReadShapeOptions(opts, "pie", { "color", "gradient" });
+            draw.Pie(center, r, start, end, options.mColor, options.mGradient);
+        };
+        ui["rect"] = [](UIScriptFrame &self, const sol::object &rect, const sol::object &opts)
+        {
+            UIDrawList &draw = Use(self, "rect").DrawList();
+            const UIRect area = ReadRect(rect, "rect");
+            const ShapeOptions options =
+                ReadShapeOptions(opts, "rect", { "color", "width", "dash", "gradient", "rounding" });
+            if (options.mStroked)
+                draw.StrokeRect(area, options.mColor, options.mStroke, options.mRounding, options.mGradient);
+            else
+                draw.Rect(area, options.mColor, options.mRounding, options.mGradient);
+        };
 
         // the frame
         ui["hold_input"] = [](UIScriptFrame &self) { Use(self, "hold_input").HoldInput(); };
@@ -679,11 +969,14 @@ namespace mir
             frame->mOwner = instance.mEntity;
             const std::size_t clips = draw.ClipDepth();
             const std::size_t fades = draw.OpacityDepth();
+            const std::size_t transforms = draw.TransformDepth();
             CallScriptCallback(host, world, instance.mEntity, instance.mRef, "OnUI", args);
             while (draw.ClipDepth() > clips)
                 draw.PopClip();
             while (draw.OpacityDepth() > fades)
                 draw.PopOpacity();
+            while (draw.TransformDepth() > transforms)
+                draw.PopTransform();
         }
         frame->mUI = nullptr;
         frame->mOwner = kNullEntity;

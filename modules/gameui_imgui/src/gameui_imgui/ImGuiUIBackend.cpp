@@ -3,7 +3,8 @@
  * @author Quy Dong Ta
  * @brief Replays a UIDrawList into ImGui's background draw list, and keeps
  *        the game UI's textures as ImGui 1.92 user textures and its fonts in
- *        ImGui's atlas. The only file the game UI has that includes ImGui.
+ *        ImGui's atlas. Gradients and transforms are applied to the vertices
+ *        each command wrote. The only file the game UI has that includes ImGui.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -42,9 +43,11 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <algorithm>
 #include <cfloat>
 #include <climits>
 #include <cstring>
+#include <vector>
 
 namespace mir
 {
@@ -101,6 +104,55 @@ namespace mir
         ImVec2 Max(const UIRect &rect, const UIRect &area, float scale)
         {
             return ImVec2(area.x + rect.Right() * scale, area.y + rect.Bottom() * scale);
+        }
+
+        ImVec2 ToScreen(UIPoint point, const UIRect &area, float scale)
+        {
+            return ImVec2(area.x + point.x * scale, area.y + point.y * scale);
+        }
+
+        UIPoint ToLocal(const ImVec2 &position, const UIRect &area, float scale)
+        {
+            return UIPoint{(position.x - area.x) / scale, (position.y - area.y) / scale};
+        }
+
+        // multiplies the colour of the vertices from first on by the gradient, read where each was drawn
+        void Shade(ImDrawList &list, int first, const UIRect &area, float scale, const UIGradient &gradient)
+        {
+            const float dx = gradient.mTo.x - gradient.mFrom.x;
+            const float dy = gradient.mTo.y - gradient.mFrom.y;
+            const float length = dx * dx + dy * dy;
+            const UIColor &from = gradient.mFromColor;
+            const UIColor &to = gradient.mToColor;
+            for (int i = first; i < list.VtxBuffer.Size; ++i)
+            {
+                ImDrawVert &vertex = list.VtxBuffer[i];
+                const UIPoint local = ToLocal(vertex.pos, area, scale);
+                const float along = ((local.x - gradient.mFrom.x) * dx + (local.y - gradient.mFrom.y) * dy) / length;
+                const float t = std::clamp(along, 0.0f, 1.0f);
+                ImVec4 color = ImGui::ColorConvertU32ToFloat4(vertex.col);
+                color.x *= from.r + (to.r - from.r) * t;
+                color.y *= from.g + (to.g - from.g) * t;
+                color.z *= from.b + (to.b - from.b) * t;
+                color.w *= from.a + (to.a - from.a) * t;
+                vertex.col = ImGui::ColorConvertFloat4ToU32(color);
+            }
+        }
+
+        // puts the vertices from first on through the transform, after shrinking text drawn textScale times too
+        // big back about its origin
+        void Move(ImDrawList &list, int first, const UIRect &area, float scale, const UITransform &transform,
+                  UIPoint origin, float textScale)
+        {
+            for (int i = first; i < list.VtxBuffer.Size; ++i)
+            {
+                ImDrawVert &vertex = list.VtxBuffer[i];
+                UIPoint local = ToLocal(vertex.pos, area, scale);
+                if (textScale != 1.0f)
+                    local = UIPoint{origin.x + (local.x - origin.x) / textScale,
+                                    origin.y + (local.y - origin.y) / textScale};
+                vertex.pos = ToScreen(transform.Apply(local), area, scale);
+            }
         }
 
         // once ImGui has shut down its renderer backend freed the GPU side, so only
@@ -186,16 +238,28 @@ namespace mir
                                 const UIFonts &fonts)
     {
         ImDrawList *drawList = ImGui::GetBackgroundDrawList();
+        std::vector<ImVec2> points;
 
         for (const UIDrawCommand &command : list.Commands())
         {
             drawList->PushClipRect(Min(command.mClip, area, scale), Max(command.mClip, area, scale), false);
+            const int firstVertex = drawList->VtxBuffer.Size;
+            const UITransform &transform = list.TransformOf(command);
+            const ImU32 color = ToImColor(command.mColor);
+            const ImVec2 center = ToScreen(UIPoint{command.mRect.x, command.mRect.y}, area, scale);
+            const float radius = command.mRect.width * scale;
+            float textScale = 1.0f;
 
             switch (command.mKind)
             {
             case UIDrawCommandKind::Rect:
-                drawList->AddRectFilled(Min(command.mRect, area, scale), Max(command.mRect, area, scale),
-                                        ToImColor(command.mColor), command.mRounding * scale);
+                drawList->AddRectFilled(Min(command.mRect, area, scale), Max(command.mRect, area, scale), color,
+                                        command.mRounding * scale);
+                break;
+
+            case UIDrawCommandKind::RectOutline:
+                drawList->AddRect(Min(command.mRect, area, scale), Max(command.mRect, area, scale), color,
+                                  command.mRounding * scale, 0, command.mThickness * scale);
                 break;
 
             case UIDrawCommandKind::Texture:
@@ -204,28 +268,82 @@ namespace mir
                 if (texture == nullptr)
                 {
                     // a null texture, or one from another UIContext
-                    drawList->AddRectFilled(Min(command.mRect, area, scale), Max(command.mRect, area, scale),
-                                            ToImColor(command.mColor));
+                    drawList->AddRectFilled(Min(command.mRect, area, scale), Max(command.mRect, area, scale), color);
                     break;
                 }
 
                 const UIRect &uv = command.mUV;
                 drawList->AddImage(texture->mData.GetTexRef(), Min(command.mRect, area, scale),
                                    Max(command.mRect, area, scale), ImVec2(uv.x, uv.y), ImVec2(uv.Right(), uv.Bottom()),
-                                   ToImColor(command.mColor));
+                                   color);
                 break;
             }
 
             case UIDrawCommandKind::Text:
             {
                 const std::string_view text = list.TextOf(command);
-                const float fontSize =
-                    PixelSize((command.mFontSize > 0.0f ? command.mFontSize : ImGui::GetFontSize()) * scale);
-                drawList->AddText(FontOf(fonts.Find(command.mFont)), fontSize, Min(command.mRect, area, scale),
-                                  ToImColor(command.mColor), text.data(), text.data() + text.size());
+                ImFont *font = FontOf(fonts.Find(command.mFont));
+                const float baseSize = command.mFontSize > 0.0f ? command.mFontSize : ImGui::GetFontSize();
+                if (transform.IsIdentity())
+                {
+                    drawList->AddText(font, PixelSize(baseSize * scale), center, color, text.data(),
+                                      text.data() + text.size());
+                    break;
+                }
+
+                // drawn at the size it ends up and shrunk back by Move, so a scaled label stays sharp. Culled by
+                // nothing here: the clip only knows where it lands once moved
+                textScale = std::max(transform.AreaScale(), 0.01f);
+                if ((color & IM_COL32_A_MASK) != 0)
+                    font->RenderText(drawList, PixelSize(baseSize * scale * textScale), center, color,
+                                     ImVec4(-FLT_MAX, -FLT_MAX, FLT_MAX, FLT_MAX), text.data(),
+                                     text.data() + text.size());
                 break;
             }
+
+            case UIDrawCommandKind::Polyline:
+            case UIDrawCommandKind::Polygon:
+            {
+                points.clear();
+                for (const UIPoint &point : list.PointsOf(command))
+                    points.push_back(ToScreen(point, area, scale));
+                const int count = static_cast<int>(points.size());
+                if (command.mKind == UIDrawCommandKind::Polygon)
+                    drawList->AddConcavePolyFilled(points.data(), count, color);
+                else
+                    drawList->AddPolyline(points.data(), count, color,
+                                          command.mClosed ? ImDrawFlags_Closed : ImDrawFlags_None,
+                                          command.mThickness * scale);
+                break;
             }
+
+            case UIDrawCommandKind::Circle:
+                if (command.mThickness > 0.0f)
+                    drawList->AddCircle(center, radius, color, 0, command.mThickness * scale);
+                else
+                    drawList->AddCircleFilled(center, radius, color);
+                break;
+
+            case UIDrawCommandKind::Arc:
+                if (command.mThickness > 0.0f)
+                {
+                    drawList->PathArcTo(center, radius, command.mAngleFrom, command.mAngleTo);
+                    drawList->PathStroke(color, ImDrawFlags_None, command.mThickness * scale);
+                }
+                else
+                {
+                    drawList->PathLineTo(center);
+                    drawList->PathArcTo(center, radius, command.mAngleFrom, command.mAngleTo);
+                    drawList->PathFillConcave(color);
+                }
+                break;
+            }
+
+            if (const UIGradient *gradient = list.GradientOf(command))
+                Shade(*drawList, firstVertex, area, scale, *gradient);
+            if (!transform.IsIdentity())
+                Move(*drawList, firstVertex, area, scale, transform, UIPoint{command.mRect.x, command.mRect.y},
+                     textScale);
 
             drawList->PopClipRect();
         }

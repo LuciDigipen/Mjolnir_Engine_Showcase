@@ -1,8 +1,8 @@
 /**
  * @file UIDrawList.tests.cpp
  * @author Quy Dong Ta
- * @brief Tests for gameui/UIDrawList: recording, the clip stack, culling and
- *        nine-slice sprites.
+ * @brief Tests for gameui/UIDrawList: recording, the clip stack, culling,
+ *        nine-slice sprites, shapes, dashes, gradients and the transform stack.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstddef>
+#include <numbers>
 #include <vector>
 
 using namespace mir;
@@ -32,6 +33,24 @@ namespace
         list.Reset(areaSize, areaSize);
         list.Sprite(rect, sprite);
         return {list.Commands().begin(), list.Commands().end()};
+    }
+
+    constexpr float kTurn = 2.0f * std::numbers::pi_v<float>;
+
+    void CheckPoint(UIPoint actual, UIPoint expected)
+    {
+        CHECK(actual.x == Catch::Approx(expected.x).margin(1e-4));
+        CHECK(actual.y == Catch::Approx(expected.y).margin(1e-4));
+    }
+
+    // each Polyline's points, in order
+    std::vector<std::vector<UIPoint>> Lines(const UIDrawList &list)
+    {
+        std::vector<std::vector<UIPoint>> lines;
+        for (const UIDrawCommand &command : list.Commands())
+            if (command.mKind == UIDrawCommandKind::Polyline)
+                lines.emplace_back(list.PointsOf(command).begin(), list.PointsOf(command).end());
+        return lines;
     }
 
     void CheckRect(const UIRect &actual, const UIRect &expected)
@@ -332,4 +351,195 @@ TEST_CASE("PushOpacity clamps to 0 and 1, and Reset drops a push left open", "[g
     list.Reset(100, 100);
     CHECK(list.OpacityDepth() == 0);
     CHECK(list.CurrentOpacity() == 1.0f);
+}
+
+TEST_CASE("Shapes record their points, width and angles, and a shape with nothing to draw records nothing", "[gameui][shapes]")
+{
+    UIDrawList list;
+    list.Reset(200, 200);
+    list.Line({10, 10}, {50, 10}, kUIWhite, UIStroke{.mWidth = 3});
+    const UIPoint triangle[] = {{0, 0}, {40, 0}, {20, 30}};
+    list.Polygon(triangle, kUIWhite);
+    list.Polyline(triangle, kUIWhite, {}, true);
+    list.StrokeCircle({100, 100}, 20, kUIWhite, UIStroke{.mWidth = 2});
+    list.FillCircle({100, 100}, 20, kUIWhite);
+    list.Arc({100, 100}, 30, 0.0f, 1.0f, kUIWhite, UIStroke{.mWidth = 4});
+    list.Pie({100, 100}, 30, 0.5f, 2.0f, kUIWhite);
+    list.StrokeRect({10, 10, 50, 20}, kUIWhite, UIStroke{.mWidth = 2}, 4);
+
+    const auto commands = list.Commands();
+    REQUIRE(commands.size() == 8);
+    CHECK(commands[0].mKind == UIDrawCommandKind::Polyline);
+    CHECK(commands[0].mThickness == 3.0f);
+    CHECK_FALSE(commands[0].mClosed);
+    REQUIRE(list.PointsOf(commands[0]).size() == 2);
+    CheckPoint(list.PointsOf(commands[0])[1], {50, 10});
+    CHECK(commands[1].mKind == UIDrawCommandKind::Polygon);
+    CHECK(list.PointsOf(commands[1]).size() == 3);
+    CHECK(commands[2].mClosed);
+    CHECK(commands[3].mKind == UIDrawCommandKind::Circle);
+    CHECK(commands[3].mThickness == 2.0f);
+    CHECK(commands[3].mRect.width == 20.0f);
+    CHECK(commands[4].mThickness == 0.0f);
+    CHECK(commands[5].mKind == UIDrawCommandKind::Arc);
+    CHECK(commands[5].mAngleTo == 1.0f);
+    CHECK(commands[6].mKind == UIDrawCommandKind::Arc);
+    CHECK(commands[6].mThickness == 0.0f);
+    CHECK(commands[6].mAngleFrom == 0.5f);
+    CHECK(commands[7].mKind == UIDrawCommandKind::RectOutline);
+    CHECK(commands[7].mRounding == 4.0f);
+    CHECK(list.PointsOf(commands[7]).empty());
+
+    // too few points, no radius, no width, no sweep
+    list.Reset(200, 200);
+    list.Polyline(std::span(triangle, 1), kUIWhite);
+    list.Polygon(std::span(triangle, 2), kUIWhite);
+    list.FillCircle({10, 10}, 0, kUIWhite);
+    list.Line({0, 0}, {10, 10}, kUIWhite, UIStroke{.mWidth = 0});
+    list.Arc({10, 10}, 5, 1.0f, 1.0f, kUIWhite);
+    list.StrokeRect({0, 0, 0, 10}, kUIWhite);
+    CHECK(list.Commands().empty());
+}
+
+TEST_CASE("A full turn is a circle, as an arc or a pie", "[gameui][shapes]")
+{
+    UIDrawList list;
+    list.Reset(200, 200);
+    list.Arc({50, 50}, 10, 0.0f, kTurn, kUIWhite, UIStroke{.mWidth = 2});
+    list.Pie({50, 50}, 10, 1.0f, 1.0f - kTurn, kUIWhite);
+    REQUIRE(list.Commands().size() == 2);
+    CHECK(list.Commands()[0].mKind == UIDrawCommandKind::Circle);
+    CHECK(list.Commands()[0].mThickness == 2.0f);
+    CHECK(list.Commands()[1].mKind == UIDrawCommandKind::Circle);
+    CHECK(list.Commands()[1].mThickness == 0.0f);
+}
+
+TEST_CASE("A dashed stroke is recorded as one line a dash, moved along by its offset", "[gameui][shapes]")
+{
+    UIDrawList list;
+    list.Reset(200, 200);
+    list.Line({0, 0}, {10, 0}, kUIWhite, UIStroke{.mWidth = 1, .mDash = 2, .mGap = 3});
+    std::vector<std::vector<UIPoint>> dashes = Lines(list);
+    REQUIRE(dashes.size() == 2);
+    CheckPoint(dashes[0].front(), {0, 0});
+    CheckPoint(dashes[0].back(), {2, 0});
+    CheckPoint(dashes[1].front(), {5, 0});
+    CheckPoint(dashes[1].back(), {7, 0});
+
+    // a dash already 1 along: 0 to 1, 4 to 6 and 9 to the end
+    list.Reset(200, 200);
+    list.Line({0, 0}, {10, 0}, kUIWhite, UIStroke{.mWidth = 1, .mDash = 2, .mGap = 3, .mDashOffset = 1});
+    dashes = Lines(list);
+    REQUIRE(dashes.size() == 3);
+    CheckPoint(dashes[0].back(), {1, 0});
+    CheckPoint(dashes[1].front(), {4, 0});
+    CheckPoint(dashes[2].front(), {9, 0});
+    CheckPoint(dashes[2].back(), {10, 0});
+
+    // round a 10 unit square, a dash a side, and one that turns a corner keeps it
+    list.Reset(200, 200);
+    list.StrokeRect({0, 0, 10, 10}, kUIWhite, UIStroke{.mWidth = 1, .mDash = 5, .mGap = 5});
+    CHECK(Lines(list).size() == 4);
+    list.Reset(200, 200);
+    list.StrokeRect({0, 0, 10, 10}, kUIWhite, UIStroke{.mWidth = 1, .mDash = 5, .mGap = 5, .mDashOffset = 2});
+    dashes = Lines(list);
+    REQUIRE(dashes.size() == 5);
+    CHECK(dashes[0].size() == 2);
+    REQUIRE(dashes[1].size() == 3);
+    CheckPoint(dashes[1][1], {10, 0});
+
+    // dashed circles and arcs
+    list.Reset(200, 200);
+    list.StrokeCircle({100, 100}, 20, kUIWhite, UIStroke{.mWidth = 1, .mDash = 4, .mGap = 4});
+    CHECK(Lines(list).size() > 10);
+    list.Reset(200, 200);
+    list.Arc({100, 100}, 20, 0.0f, kTurn * 0.25f, kUIWhite, UIStroke{.mWidth = 1, .mDash = 4, .mGap = 4});
+    CHECK(Lines(list).size() == 4);
+
+    // too fine to see, drawn solid
+    list.Reset(200, 200);
+    list.Line({0, 0}, {100, 0}, kUIWhite, UIStroke{.mWidth = 1, .mDash = 0.001f, .mGap = 0.001f});
+    dashes = Lines(list);
+    REQUIRE(dashes.size() == 1);
+    CHECK(dashes[0].size() == 2);
+}
+
+TEST_CASE("What is drawn keeps the transform it was drawn under, and pushes nest inside one another", "[gameui][transform]")
+{
+    UIDrawList list;
+    list.Reset(200, 200);
+    const UITransform move = UITransform::Translate(10, 0);
+    const UITransform turn = UITransform::Rotate(kTurn * 0.25f, {50, 50});
+
+    list.PushTransform(move);
+    list.PushTransform(turn);
+    CHECK(list.TransformDepth() == 2);
+    list.Rect({40, 40, 20, 20}, kUIWhite);
+    list.PopTransform();
+    list.Text(5, 5, "moved", kUIWhite);
+    list.PopTransform();
+    list.Line({0, 0}, {10, 10}, kUIWhite);
+    CHECK(list.TransformDepth() == 0);
+
+    const auto commands = list.Commands();
+    REQUIRE(commands.size() == 3);
+    CHECK(list.TransformOf(commands[0]) == move * turn);
+    CHECK(list.TransformOf(commands[1]) == move);
+    CHECK(list.TransformOf(commands[2]).IsIdentity());
+
+    list.PushTransform(move);
+    list.Reset(200, 200);
+    CHECK(list.TransformDepth() == 0);
+    CHECK(list.CurrentTransform().IsIdentity());
+}
+
+TEST_CASE("Culling and clips go through the transform", "[gameui][transform]")
+{
+    UIDrawList list;
+    list.Reset(100, 100);
+    list.Rect({200, 0, 10, 10}, kUIWhite);
+    CHECK(list.Commands().empty());
+
+    // moved into the area, it is kept
+    list.PushTransform(UITransform::Translate(-150, 0));
+    list.Rect({200, 0, 10, 10}, kUIWhite);
+    list.FillCircle({200, 50}, 5, kUIWhite);
+    list.PopTransform();
+    CHECK(list.Commands().size() == 2);
+
+    // a clip pushed under a transform is its bounds in the area
+    list.PushTransform(UITransform::Translate(50, 50));
+    list.PushClip({0, 0, 10, 10});
+    CheckRect(list.CurrentClip(), {50, 50, 10, 10});
+    list.PopClip();
+    list.PushTransform(UITransform::Rotate(kTurn * 0.125f, {5, 5}));
+    list.PushClip({0, 0, 10, 10});
+    CHECK(list.CurrentClip().width > 10.0f);
+    list.PopClip();
+    list.PopTransform();
+    list.PopTransform();
+}
+
+TEST_CASE("A gradient is kept with its shape, and opacity fades the shape's colour", "[gameui][shapes]")
+{
+    UIDrawList list;
+    list.Reset(200, 200);
+    const UIGradient gradient{.mFrom = {0, 0}, .mTo = {100, 0}, .mFromColor = {1, 0, 0, 1}, .mToColor = {0, 0, 1, 1}};
+    list.PushOpacity(0.5f);
+    list.Rect({0, 0, 100, 10}, kUIWhite, 0.0f, gradient);
+    list.Line({0, 20}, {100, 20}, kUIWhite, UIStroke{.mWidth = 2, .mDash = 10, .mGap = 10}, gradient);
+    list.FillCircle({50, 50}, 10, UIColor{1, 1, 1, 1});
+    list.PopOpacity();
+
+    const auto commands = list.Commands();
+    REQUIRE(commands.size() == 7);
+    REQUIRE(list.GradientOf(commands[0]) != nullptr);
+    CHECK(*list.GradientOf(commands[0]) == gradient);
+    CHECK(commands[0].mColor.a == Catch::Approx(0.5f));
+    // each dash takes the gradient, still read along the whole line
+    for (size_t i = 1; i < 6; ++i)
+        CHECK(*list.GradientOf(commands[i]) == gradient);
+    CHECK(list.GradientOf(commands[6]) == nullptr);
+    CHECK(commands[6].mColor.a == Catch::Approx(0.5f));
+    CHECK_FALSE(UIGradient{}.IsSet());
 }

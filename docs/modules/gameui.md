@@ -270,6 +270,36 @@ unusable later, and it then draws in the default font. A font that does not
 load is reported once. A font has no size: one font draws at every size a style
 or widget asks for.
 
+### Shapes and transforms
+
+Besides rects, sprites and text, `UIDrawList` draws lines, polylines, filled
+polygons (concave ones too), circles filled or outlined, arcs, pie slices and
+outlined rects. Angles are radians, 0 to the right and clockwise, the way y
+grows down. A `UIStroke` gives a line its width, and dashes when both its
+`mDash` and `mGap` are above 0: the draw list cuts the line, arc or outline into
+one open `Polyline` a dash, so the backend never knows about dashes, and
+`mDashOffset` moves them along it. Dashes too fine to see, more than 4096 on one
+stroke, draw as a solid line. A `UIGradient` multiplies a shape's colour from
+one colour at one point to another at another, flat past either end; it is
+read where each vertex was drawn, before any transform, so each dash of a
+dashed line takes its part of one gradient.
+
+`PushTransform` and `PopTransform` move, turn and scale everything drawn
+between them, widgets included, with nested pushes inside the outer ones. Each
+command keeps the transform it was drawn under; the backend draws the command
+as if there were none and then puts its vertices through it. A transform is a
+2D affine `UITransform`: `Translate`, `Rotate` about a pivot, `Scale` about a
+pivot, and `outer * inner` to combine them.
+
+The clip stays in the area's own units and axis-aligned. A rect pushed under a
+transform clips to its transformed bounds, which is the rect itself for a move
+or a scale and the box round it for a turn; culling uses the transformed bounds
+the same way. The hit test puts the pointer back through the inverse of the
+widget's transform and tests it against the widget's own rect, so a turned or
+moved button is pressed where it is drawn; the clip and the area are tested
+with the pointer as it is. A transform that flattens everything onto a line has
+no inverse, and nothing under it is hit.
+
 ### Layout
 
 `gameui/UILayout.h` turns one rect into others. `Inset` takes edges in,
@@ -319,8 +349,9 @@ wrap or grid, and no measuring pass.
 
 | Type | Header | Role |
 |---|---|---|
-| `UIRect`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIFont`, `UITextAlign`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice; a font is a handle into `UIFonts`, 0 the backend's own |
-| `UIDrawList` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`, `PushClip`/`PopClip`, `PushOpacity`/`PopOpacity`, recorded as `UIDrawCommand`s; `Sprite` nine-slices into `Texture`s |
+| `UIRect`, `UIPoint`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIFont`, `UITextAlign`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice; a font is a handle into `UIFonts`, 0 the backend's own |
+| `UITransform` | `gameui/UITransform.h` | A 2D affine transform: `Translate`, `Rotate` and `Scale` about a pivot, `*` to combine, `Apply`, `Inverse`, `Bounds` of a rect |
+| `UIDrawList`, `UIStroke`, `UIGradient` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`; `Line`, `Polyline`, `StrokeRect`, `StrokeCircle`, `Arc`; `Polygon`, `FillCircle`, `Pie`; `PushClip`/`PopClip`, `PushOpacity`/`PopOpacity`, `PushTransform`/`PopTransform`; recorded as `UIDrawCommand`s, read back with `TextOf`, `PointsOf`, `TransformOf` and `GradientOf`; `Sprite` nine-slices into `Texture`s |
 | `UITextures` | `gameui/UITextures.h` | Cooked textures as ImGui user textures, handed out as sprites; `Load` from an `AssetCache`, `Add` from a `TextureAsset` |
 | `UIFonts` | `gameui/UIFonts.h` | Font files kept as bytes and made by the backend, handed out as `UIFont`s; `Load` from an `AssetCache`, `Add` from bytes |
 | `IUIBackend`, `UIBackendTexture`, `UIBackendFont` | `gameui/UIBackend.h` | What draws the UI: `CreateTexture`, `MakeFont`, `Submit`, `MeasureText` in a font |
@@ -336,8 +367,9 @@ wrap or grid, and no measuring pass.
 | `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures, the fonts and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
-top-left of the area. Each command stores its clip already intersected with
-every clip around it, so the backend never tracks a stack. A draw entirely
+top-left of the area, before any transform. Each command stores its clip already
+intersected with every clip around it, and the index of its transform, so the
+backend never tracks a stack. A draw entirely
 outside the clip is not recorded; text is not measured, so only an empty clip
 culls it.
 
@@ -411,6 +443,13 @@ UI is built, so its extent would clip the first frame of every resize.
 
 **Balance every `PushClip`.** `EndFrame` asserts on an unpopped clip, and
 `PopClip` asserts on popping the root.
+
+**Balance every `PushTransform`.** `EndFrame` asserts on one left open, as for
+clips and opacity.
+
+**A clip under a turn is a box.** Clips are axis-aligned in the area, so a
+rect pushed under a rotation clips to the box round it, never to the turned
+rect. Clip first and turn inside it, as a pitch ladder does inside its window.
 
 **Balance every `PushOpacity` too, and know it only fades.** It multiplies the
 alpha of every command recorded until its pop, nested pushes multiply, and
@@ -575,7 +614,14 @@ screen walked by gamepad, and a widget going from grey box to art, and back,
 by its style alone, with every part's sprite and the hovered and held
 fallbacks. `tests/UIDrawList.tests.cpp` also covers nine-slice: corners kept
 across sizes, pieces covering the rect exactly, corners shrinking by one factor,
-uneven and oversized slices, an atlas cell, and culling by piece.
+uneven and oversized slices, an atlas cell, and culling by piece, and every
+shape's points, width and angles, a full turn as a circle, dashes cut along a
+line, round a corner, by their offset and too fine to see, the transform kept by
+each command and nested, culling and clips through a transform, and gradients
+and opacity on shapes. `tests/UITransform.tests.cpp` covers moves, turns and
+scales about a pivot, composition order, the inverse and transformed bounds,
+and `tests/UIState.tests.cpp` a turned widget hit where it is drawn and missed
+where its rect would be.
 `tests/UITextures.tests.cpp` covers the pixels kept until a backend makes a
 texture, a wrong pixel count, and copies releasing themselves after the backend
 is gone. `tests/UIFonts.tests.cpp` covers which bytes are a whole font file, a
@@ -646,8 +692,38 @@ looks right is verified by running `--ui-demo`.
    sharp and cheap. A character a font lacks shows the backend's fallback
    glyph, with no second font to fall back to. No letter spacing, wrapping or
    rich text, and no unloading, as for textures.
+16. **Textured polygons.** A polygon filled with a texture, its UVs given per
+   point or mapped from a rect, would give a round minimap or a portrait in a
+   shaped frame. ImGui has no textured fill and keeps its triangulator to
+   itself, so it needs ear clipping of our own and vertices written into ImGui's
+   list by hand, about 2 to 3 days. ImGui only, and the cheapest way to a round
+   radar: no clipping needed.
+17. **Clipping to a shape.** Clips are axis-aligned boxes. Cutting each triangle
+   a command writes against a convex shape on the CPU, interpolating position,
+   UV and colour, would clip shapes, sprites and text to a turned rect or a
+   circle, about 3 to 5 days; the cut edges would not be antialiased. ImGui
+   only. Wait for a screen that textured polygons cannot serve.
+18. **Stencil clipping and signed-distance shapes.** Both need GPU work below
+   ImGui: pipelines with a stencil test, or shaders that draw shapes and text
+   from distance fields, bound through ImGui draw callbacks and built by the
+   renderer, 1 to 2 weeks each. The game UI draws through ImGui alone, so these
+   stay out unless a game's look depends on them: shaped clipping on the CPU,
+   glow sprites, ImGui's antialiased circles and the eight-copy outline cover
+   the same ground.
+19. **Smaller things from shapes.** A circle or arc gets its segment count from
+   its size before the transform, so one scaled up a lot shows its facets.
+   Gradients reach shapes only, not sprites or text, though the backend could
+   shade any command. One gradient is linear; a radial one is a few lines in
+   the backend's shading.
 
 ## Changed
+
+*2026-11-21* — **Shapes and transforms.** Was: the draw list had rects,
+textures and text only, all axis-aligned. Now: lines, polylines, polygons,
+circles, arcs, pies and outlined rects, dashed strokes, linear gradients, and a
+transform stack that moves, turns and scales anything drawn, widgets included,
+with the hit test following it. `UIState::Interact` and `HitTest` take the
+transform. Because: gauges, dials, compasses and pitch ladders.
 
 *2026-11-21* — **Fonts.** Was: all text was in the backend's one font, the
 editor's Inter. Now: `UIFonts` loads TrueType and OpenType files from the game's

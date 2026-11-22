@@ -73,6 +73,19 @@ ui:label("speed", rect, string.format("%d", speed), {
 })
 ```
 
+Shapes draw gauges, and the `with_*` calls turn and move what is inside them:
+
+```lua
+local cx, cy, r = 200, 300, 60
+ui:arc(cx, cy, r, 135, 405, { width = 6, color = { 1, 1, 1, 0.2 } })
+ui:arc(cx, cy, r, 135, 135 + 270 * speed / top, { width = 6, gradient = {
+    from = { cx - r, cy }, to = { cx + r, cy }, from_color = { 0.3, 0.9, 0.5, 1 }, to_color = { 1, 0.3, 0.2, 1 } } })
+ui:with_rotation(135 + 270 * speed / top, cx, cy, function()
+    ui:line(cx, cy, cx + r - 12, cy, { width = 3, color = { 1, 0.2, 0.2, 1 } })
+end)
+ui:circle(cx, cy, r + 6, { width = 1, dash = { 4, 4 } })
+```
+
 Fades and slides come from the `actions` bridge's named values:
 `ui:with_opacity(world:value("Hud.alpha", 1), function() ... end)`.
 `games/HelloWorld/assets/scripts/ui_demo.lua` is a working example.
@@ -106,6 +119,16 @@ Every call is a method, `ui:name(...)`. A widget call returns a result table
 | `sprite(path[, slice])` | sprite or `nil` | A texture from the game's assets, nine-sliced by `slice`; loaded once, and `nil` with one error if it does not load |
 | `font(path)` | font or `nil` | A `.ttf` or `.otf` from the game's assets, for the `font` option; loaded once, and `nil` with one error if it does not load. Unlike `ui`, a font can be kept in `self` |
 | `with_opacity(alpha, fn)`, `with_clip(rect, fn)` | nothing | Runs `fn` faded, or clipped to `rect` |
+| `with_offset(x, y, fn)` | nothing | Runs `fn` moved by `x`, `y` |
+| `with_rotation(degrees, fn)`, `with_rotation(degrees, px, py, fn)` | nothing | Runs `fn` turned clockwise about the origin or about `px`, `py` |
+| `with_transform(transform, fn)` | nothing | Runs `fn` scaled, then turned, both about `pivot`, then moved: `{ offset = { x, y }, rotate = degrees, scale = s or { x, y }, pivot = { x, y } }`, each optional |
+| `line(x1, y1, x2, y2[, options])` | nothing | A line |
+| `lines(points[, options])` | nothing | A line through `{ x1, y1, x2, y2, ... }`, round to the start with `closed = true` |
+| `polygon(points[, options])` | nothing | `points` filled, convex or not; at least three |
+| `circle(x, y, radius[, options])` | nothing | A filled circle, or its outline with `width` or `dash` |
+| `arc(x, y, radius, from, to[, options])` | nothing | Part of a circle's outline, from `from` to `to` degrees |
+| `pie(x, y, radius, from, to[, options])` | nothing | A filled slice, as for a cooldown |
+| `rect(rect[, options])` | nothing | A filled rect, or its outline with `width` or `dash` |
 | `hold_input()` | nothing | Gameplay reads every action at rest this frame, as an open menu wants |
 | `hide_cursor()` | nothing | The mouse cursor is hidden this frame |
 | `cancel_pressed()`, `pause_pressed()`, `focus_visible()` | bool | `UICancel` or `UIPause` this frame; whether the focus highlight shows |
@@ -133,6 +156,22 @@ widget's text only:
 
 A colour is `{ r, g, b, a }` by name or by position, a missing channel 1.
 
+Shapes take their own options, and an unknown one is an error that lists the
+valid ones for that call:
+
+| Option | Value | Calls |
+|---|---|---|
+| `color` | The shape's colour, white unless given | all |
+| `width` | Line width in UI units, more than 0, 1 unless given | `line`, `lines`, `circle`, `arc`, `rect` |
+| `dash` | `{ length, gap, offset }` by position or by name; the gap is the length unless given, and `offset` moves the dashes along | `line`, `lines`, `circle`, `arc`, `rect` |
+| `gradient` | `{ from = { x, y }, to = { x, y }, from_color, to_color }`, multiplying the colour, each end white unless given | all |
+| `closed` | `true` to join the last point to the first | `lines` |
+| `rounding` | Corner radius | `rect` |
+
+Angles are degrees, 0 to the right and clockwise, the way y grows down, for the
+shapes and `with_rotation` alike. A shape takes no pointer and has no name.
+Points are a flat list, at most 4096 to a call.
+
 ## Rules
 
 **A HUD's widgets are `pointer_only`.** In play the stick, the arrow keys and
@@ -142,8 +181,9 @@ it. A screen that holds the input, a menu, can be focusable.
 **`ui` is valid only inside the `OnUI` it was given to.** A script that keeps it
 and calls it later gets an error, not a crash.
 
-**Opacity and clip are scoped.** There is no push or pop in Lua, only
-`with_opacity` and `with_clip`, which pop whether `fn` returns or fails. After
+**Opacity, clip and transform are scoped.** There is no push or pop in Lua,
+only `with_opacity`, `with_clip`, `with_offset`, `with_rotation` and
+`with_transform`, which pop whether `fn` returns or fails. After
 each `OnUI` the bridge also pops anything left pushed, so a broken script never
 trips `EndFrame`'s balance asserts.
 
@@ -176,7 +216,13 @@ and a bad argument, an unknown option and a kept `ui` each failing cleanly.
 Text options: a label's font, size, colour, alignment, shadow and outline in its
 draw commands and gone from the next label and the style, `measure_text` with a
 size, `ui:font` `nil` for a font that does not load, and a bad `align`, a text
-option on a slider and a string for `font` each failing the `OnUI`.
+option on a slider and a string for `font` each failing the `OnUI`. Shapes:
+each call's commands, points, widths, angles in radians and gradient, under
+`with_rotation` and `with_transform`, and a button moved by `with_offset`
+clicked where it is drawn; an odd or short point list, an option a call does
+not take, a gradient with one point, a zero dash, a negative radius, a wrong
+`with_rotation` call and an unknown transform key each failing the `OnUI`, and
+an error inside nested `with_*` calls leaving the transforms balanced.
 `HelloWorld`'s default scene has the sample.
 
 ## Backlog
@@ -190,6 +236,12 @@ option on a slider and a string for `font` each failing the `OnUI`.
    through `audio_script` and `input_script`.
 
 ## Changed
+
+*2026-11-21* — **Shapes and transforms.** Was: a script drew only through
+widgets and panels, axis-aligned. Now: `line`, `lines`, `polygon`, `circle`,
+`arc`, `pie` and `rect`, with `width`, `dash` and `gradient`, and
+`with_offset`, `with_rotation` and `with_transform`, the pointer following the
+transform. Because: dials, compasses and HUD markings from Lua.
 
 *2026-11-21* — **Fonts and text options.** Was: text was in the shared style's
 font, size and colour only. Now: `ui:font` loads a game's font, and `label`,
