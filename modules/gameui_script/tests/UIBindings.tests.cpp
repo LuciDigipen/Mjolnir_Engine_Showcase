@@ -527,3 +527,84 @@ return T
     f.ui.EndFrame();
     CHECK(f.host.ErrorCount() == std::size(kBodies));
 }
+
+TEST_CASE("with_style styles the widgets inside it, nests, and ui:style reads the style back", "[gameui][script][style]")
+{
+    Fixture f;
+    const Entity entity = f.Spawn("ui_style", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    ui:with_style({ widget_color = { 1, 0, 0, 1 }, padding = 2 }, function()
+        ui:button("red", { x = 0, y = 0, w = 100, h = 30 }, "Red")
+        ui:with_style({ padding = 5, text_align = "right" }, function()
+            local style = ui:style()
+            world:set(entity, "UIBindingsProbe", "x", style.padding)
+            world:set(entity, "UIBindingsProbe", "y", style.widget_color[1])
+            world:set(entity, "UIBindingsProbe", "toggled", style.text_align == "right")
+            world:set(entity, "UIBindingsProbe", "clicked", style.font == false and style.panel_sprite == false)
+            ui:button("inner", { x = 0, y = 100, w = 100, h = 30 }, "Inner")
+        end)
+    end)
+    ui:button("plain", { x = 0, y = 200, w = 100, h = 30 }, "Plain")
+    world:set(entity, "UIBindingsProbe", "w", ui:style().padding)
+    -- what ui:style returns, with_style takes
+    ui:with_style(ui:style(), function() end)
+end
+return T
+)LUA");
+
+    f.Frame();
+    REQUIRE(f.host.ErrorCount() == 0);
+
+    const auto faceAt = [&](float y) -> std::optional<UIColor>
+    {
+        for (const UIDrawCommand &command : f.ui.DrawList().Commands())
+            if (command.mKind == UIDrawCommandKind::Rect && command.mRect.y == y)
+                return command.mColor;
+        return std::nullopt;
+    };
+    CHECK(faceAt(0.0f) == UIColor{ 1, 0, 0, 1 });
+    CHECK(faceAt(100.0f) == UIColor{ 1, 0, 0, 1 });
+    CHECK(faceAt(200.0f) == UIStyle{}.mWidgetColor);
+
+    CHECK(ReadProbe<float>(f.world, entity, "x") == 5.0f);
+    CHECK(ReadProbe<float>(f.world, entity, "y") == 1.0f);
+    CHECK(ReadProbe<bool>(f.world, entity, "toggled"));
+    CHECK(ReadProbe<bool>(f.world, entity, "clicked"));
+    CHECK(ReadProbe<float>(f.world, entity, "w") == UIStyle{}.mPadding);
+    CHECK(f.ui.StyleDepth() == 0);
+}
+
+TEST_CASE("A bad with_style fails the OnUI, and a failure inside nested with_style leaves the stack balanced",
+          "[gameui][script][style]")
+{
+    Fixture f;
+    constexpr std::string_view kBodies[] = {
+        "ui:with_style({ colour = { 1, 0, 0 } }, function() end)",
+        "ui:with_style({ padding = -1 }, function() end)",
+        "ui:with_style({ text_align = 'middle' }, function() end)",
+        "ui:with_style({ widget_sprite = 'ui/panel.png' }, function() end)",
+        "ui:with_style({ font = true }, function() end)",
+        "ui:with_style('red', function() end)",
+        "ui:with_style({ padding = 2 })",
+        "ui:with_style({ padding = 2 }, function() ui:with_style({ padding = 3 }, function() error('boom') end) end)",
+    };
+    int index = 0;
+    for (const std::string_view body : kBodies)
+        f.Spawn(std::format("ui_bad_style_{}", index++), std::format(R"LUA(
+local T = {{}}
+function T.NewInstanceData() return {{}} end
+function T.OnUI(self, world, entity, ui, dt)
+    {}
+end
+return T
+)LUA", body));
+
+    f.ui.BeginFrame(kArea, f.world.Resource<InputState>(), f.world.Resource<InputMap>(), f.pointer);
+    DrawScriptScreens(f.host, f.world, f.frame, f.ui, 0.0f);
+    CHECK(f.ui.StyleDepth() == 0);
+    CHECK(f.ui.Style().mPadding == UIStyle{}.mPadding);
+    f.ui.EndFrame();
+    CHECK(f.host.ErrorCount() == std::size(kBodies));
+}

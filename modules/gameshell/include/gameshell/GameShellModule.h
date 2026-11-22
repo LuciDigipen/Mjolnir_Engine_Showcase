@@ -1,7 +1,8 @@
 /**
  * @file GameShellModule.h
  * @author sumin.park
- * @brief Registers the HUD and pause menu, or the widget demo, as the game UI's screen.
+ * @brief Registers the HUD and pause menu, or the widget demo, as the game UI's screen, and loads the
+ *        game's UI style file as the game UI's base style.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -15,6 +16,8 @@
 #include <core/ecs/ModuleContext.h>
 #include <core/Registration.h>
 
+#include <string>
+
 namespace mir
 {
     class AssetResolver;
@@ -27,6 +30,8 @@ namespace mir
         bool mUIDemo = false;
         // game.json's "shell", a game drawing its own pause menu turns the shell's off
         GameShellParts mParts;
+        // game.json's "ui.style", an asset path; loaded as the game UI's base style, for every screen
+        std::string mStyle;
     };
 
     class GameShellModule
@@ -57,9 +62,6 @@ namespace mir
         GameShell mShell;
         UIDemoScreen mDemo;
         bool mDemoLoaded = false;
-        bool mDemoShown = false;
-        // the demo swaps the style's sprites; restored when the menus come back
-        UIStyle mShellStyle;
 
         // last: unregister before the shell and screens above are destroyed
         Registration mPlayBegin;

@@ -223,7 +223,8 @@ namespace mir
     {
         explicit RuntimeSession(App &app)
             : state(app.mProjectResources, app.mProject, app.mAssets, app.mResolver,
-                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mParts = ShellParts(app.mProject) }),
+                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mParts = ShellParts(app.mProject),
+                                   .mStyle = app.mProject.mUIStyle }),
             rendering(app.mRenderer.BindWorld(state.Context(),
                 RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
                                         .mEnableValidation = app.mDesc.mEnableValidation,
@@ -293,7 +294,8 @@ namespace mir
         mControls(LoadControlsSettings(UserSettingsPath(mProject))),
         mControlsOptions(mControls, UserSettingsPath(mProject)),
         mWorldState(mProjectResources, mProject, mAssets, mResolver,
-            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mParts = ShellParts(mProject) }),
+            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mParts = ShellParts(mProject),
+                               .mStyle = mProject.mUIStyle }),
         mWindow(MakeWindowDesc(mDesc)),
         mRenderer(Context(), mWindow.Get(),
             RendererModuleSettings{ .mAppName = mDesc.mAppName,

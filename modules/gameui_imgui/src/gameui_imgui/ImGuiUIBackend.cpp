@@ -48,6 +48,7 @@
 #include <climits>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 namespace mir
@@ -164,8 +165,27 @@ namespace mir
             }
         }
 
-        // once ImGui has shut down its renderer backend freed the GPU side, so only
-        // the memory is left; while it runs, only a copy never uploaded can go
+        // the renderer backend still holds a GPU copy
+        bool Uploaded(const ImTextureData &data)
+        {
+            return data.TexID != ImTextureID_Invalid || data.BackendUserData != nullptr;
+        }
+
+        void Unregister(BackendTexture &texture)
+        {
+            ImGui::UnregisterUserTexture(&texture.mData);
+            ImGui::GetPlatformIO().Textures.find_erase(&texture.mData);
+        }
+
+        // released while their context runs, until the renderer backend has destroyed the GPU copy
+        std::vector<std::unique_ptr<BackendTexture>> &Retiring()
+        {
+            static std::vector<std::unique_ptr<BackendTexture>> retiring;
+            return retiring;
+        }
+
+        // once ImGui has shut down its renderer backend freed the GPU side, so only the memory is left. While it
+        // runs, a copy never uploaded goes now, and an uploaded one is retired: a frame in flight may still draw it
         void Release(void *opaque)
         {
             auto *texture = static_cast<BackendTexture *>(opaque);
@@ -178,18 +198,31 @@ namespace mir
                 return;
             }
 
-            ImTextureData &data = texture->mData;
-            if (data.TexID != ImTextureID_Invalid || data.BackendUserData != nullptr)
+            if (Uploaded(texture->mData))
             {
-                MIR_LOG_ERROR("gameui: a UI texture outlived by its renderer backend is leaked; "
-                              "destroy the game UI after ImGui shuts down");
+                texture->mData.WantDestroyNextFrame = true;
+                Retiring().emplace_back(texture);
                 return;
             }
 
-            ImGui::UnregisterUserTexture(&data);
-            ImGui::GetPlatformIO().Textures.find_erase(&data);
+            Unregister(*texture);
             delete texture;
         }
+    }
+
+    // ImGui destroys a user texture's GPU copy but never drops it from its list, so that is left to this
+    std::size_t ImGuiUIBackend::RetireTextures()
+    {
+        ImGuiContext *context = ImGui::GetCurrentContext();
+        std::vector<std::unique_ptr<BackendTexture>> &retiring = Retiring();
+        std::erase_if(retiring, [&](const std::unique_ptr<BackendTexture> &texture)
+            {
+                if (context == nullptr || texture->mContext != context || Uploaded(texture->mData))
+                    return false;
+                Unregister(*texture);
+                return true;
+            });
+        return retiring.size();
     }
 
     UIBackendTexture ImGuiUIBackend::CreateTexture(uint32_t width, uint32_t height, std::span<const uint8_t> rgba)

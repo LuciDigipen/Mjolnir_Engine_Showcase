@@ -163,6 +163,24 @@ namespace mir
             flag("menu", project.mShellMenu);
         }
 
+        if (const auto ui = json->find("ui"); ui != json->end())
+        {
+            const auto wrongType = [&](const std::string &cause)
+            {
+                throw SetupError(ErrorCategory::ProjectData, "game.json has a key of the wrong type", manifestPath,
+                    cause, "Make ui an object such as { \"style\": \"ui/style.json\" } in " +
+                    manifestPath.string() + ".");
+            };
+            if (!ui->is_object())
+                wrongType("ui is not an object");
+            if (const auto style = ui->find("style"); style != ui->end())
+            {
+                if (!style->is_string())
+                    wrongType("ui.style is not a string");
+                project.mUIStyle = style->get<std::string>();
+            }
+        }
+
         project.mRootDir = root;
         project.mAssetsDir = (root / project.mAssetsRoot).lexically_normal();
         project.mSceneDir = (root / sceneDir).lexically_normal();

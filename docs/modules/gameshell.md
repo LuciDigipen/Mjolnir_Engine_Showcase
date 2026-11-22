@@ -87,8 +87,8 @@ Each device does the whole round trip alone:
 `GameShellModule` registers one `UIScreenLayer::Shell` screen with `GameUIModule`: the HUD and the
 pause menu, or `UIDemoScreen` while the `GameUIDemo` resource asks for it. `--ui-demo`
 sets it at startup and the editor's **Debug > Game UI Widget Demo** switches it
-at any time; the demo's art loads the first time it shows, and the style it
-swaps is put back when the menus return. The PlayBegin and PlayEnd stages call
+at any time; the demo's art loads the first time it shows, and it pushes its
+art as a style while it draws, so the menus never see it. The PlayBegin and PlayEnd stages call
 `GameShell::Reset`, which shuts the menu and zeroes the clock, so a Stop or Play
 while the demo shows leaves no stale menu behind. It turns a `GameShellAction`
 into requests on the `RequestQueue`: Pause, Resume, Restart as Stop then Play,
@@ -102,6 +102,34 @@ since its Pause button only opens the menu, and the shell leaves the cursor to
 the game. The game is then responsible for a pause menu: `world:pause()`,
 `world:resume()`, `world:restart()` and `world:quit()` do what this one does.
 
+### The style file
+
+`game.json`'s `"ui": { "style": "ui/style.json" }` names a file in the game's
+assets, cooked as raw bytes like any other `.json`. `GameShellModule` loads it
+when it is built and sets it as the game UI's base style, so the HUD, the pause
+menu and every Lua screen draw in it. A game that keeps the stock menu restyles
+it here, with no code.
+
+```json
+{
+  "font": "fonts/TurretRoad-Bold.ttf",
+  "widget_color": [0.13, 0.19, 0.27, 0.95],
+  "widget_rounding": 4,
+  "panel_sprite": { "path": "ui/panel.png", "slice": 8 }
+}
+```
+
+The keys are `UIStyleFields`' names, the ones `ui:with_style` takes. A colour
+is `[r, g, b]` or `[r, g, b, a]`, a number is a number, `text_align` is
+`"left"`, `"center"` or `"right"`, `font` is a font's path, and a sprite is a
+path or `{ "path", "slice" }` with the slice one number or
+`[left, top, right, bottom]`; `null` clears a font or sprite. A key the file
+leaves out keeps the engine's default. `ParseUIStyle` reads it over a base
+style, with the sprites and font loaded by the caller, so it is tested without
+assets. Each wrong key is logged once, naming the file, and keeps the default
+while the rest apply; a file that does not load or is not a JSON object leaves
+the default style whole.
+
 ## API
 
 | Type | Header | Role |
@@ -113,6 +141,8 @@ the game. The game is then responsible for a pause menu: `world:pause()`,
 | `IControlsOptions`, `LookDevice` | `gameshell/ControlsOptions.h` | What the Controls screen reads and changes: each device's inverted Y, and Restore defaults |
 | `GameShellModule::SetControlsOptions` | `gameshell/GameShellModule.h` | Gives the menu its Controls entry; null leaves it out |
 | `GameHud` | `gameshell/GameHud.h` | The clock and the pointer-only Pause button; true on the frame it is clicked |
+| `GameShellSettings::mStyle` | `gameshell/GameShellModule.h` | `game.json`'s `ui.style`, loaded as the game UI's base style |
+| `ParseUIStyle`, `UIStyleAssets` | `gameshell/UIStyleFile.h` | A style file's JSON over a base style, its sprites and font loaded through the caller's functions, and what was wrong |
 
 `src/gameshell/ShellPrompts.h` draws a prompt, a key cap or pad pill with the
 binding's label and then what it does, for both screens.
@@ -135,7 +165,7 @@ the input, so the press that closed it never reaches the game as well.
 
 ## State
 
-*As of 2026-11-05.* Its module draws it every frame unless the widget demo is on. It
+*As of 2026-11-21.* Its module draws it every frame unless the widget demo is on, in the game's style file if it names one. It
 works in the editor's scene viewport, in Play, and in a game build, which with
 `--no-editor`, or in a build without the editor at all, starts in Play.
 
@@ -153,6 +183,12 @@ dragging the sliders, ten steps from full to silent, the mutes, Restore
 defaults, and backing out a step at a time. With the menu turned off, neither
 Escape nor Start opens it, the HUD keeps only its clock and the cursor is left
 alone; with the HUD off, the menu still opens.
+`tests/UIStyleFile.tests.cpp` covers a style file's colours, numbers,
+alignment, font and sprites by path and with a slice over the base style,
+`null` clearing a sprite and the font, each wrong key reported and left at the
+base while the rest apply, and text that is not a JSON object.
+`MjolnirBuild`'s `GameBuild.tests.cpp` covers `game.json`'s `ui.style` and its
+wrong types.
 `smoke.game-mode` runs a game build for 120 frames on the GPU. Whether it looks
 right is checked by running a game: Play in the editor, or `--no-editor`.
 
@@ -161,7 +197,8 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
 1. ~~**Content from the game.**~~ Landed 2026-11-20: a game draws its own HUD
    and menus from Lua ([gameui_script.md](gameui_script.md)) and turns the
    shell's off in `game.json`. Restyling the shell's own menu from data, without
-   replacing it, is still open.
+   replacing it, landed 2026-11-21 as the style file. Left: reloading it while
+   the editor runs.
 2. **Settings.** Audio is the one options screen. Bindings and the safe-area
    inset would join it.
 3. **Confirm before Quit.** Quit and Restart act at once; a game with progress
@@ -172,6 +209,12 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
    before it opens. A game that binds those keys for itself sees them once.
 
 ## Changed
+
+*2026-11-21* — **The style file.** Was: the HUD and the pause menu drew in the
+engine's grey box, and the widget demo swapped the style's sprites in and put
+them back. Now: `game.json`'s `ui.style` names a file of style keys that becomes
+the game UI's base style, and the demo pushes its art. Because: a game that
+keeps the stock menu wants it to look like the game.
 
 *2026-11-20* — **The HUD and the menu can be turned off.** Was: every game had
 both, and Quit decided Stop or Quit itself through `mQuitStopsPlay`. Now:

@@ -36,10 +36,15 @@ from Lua: a panel in the bottom-left corner that fades in, counts clicks, shows
 a toggle, a slider and a bar, and pauses and resumes the game with
 `world:pause()` and `world:resume()`. A dial beside it, drawn with `ui:arc`,
 `ui:circle`, `ui:line` and `ui:polygon` and turned with `ui:with_rotation`,
-eases its needle after the slider. Its text is in Turret Road Bold,
-`assets/fonts/TurretRoad-Bold.ttf`, loaded with `ui:font`; the font is under the
-SIL Open Font License, in `TurretRoad-OFL.txt`. It lives in `default` only, so
-it goes when **N** swaps that scene out.
+eases its needle after the slider, and the Pause button is amber through
+`ui:with_style`. It lives in `default` only, so it goes when **N** swaps that
+scene out.
+
+`assets/ui/style.json`, named by `game.json`'s `"ui": { "style": ... }`, is the
+game UI's base style: Turret Road Bold, `assets/fonts/TurretRoad-Bold.ttf`, and
+blue-grey panels and buttons. The Lua panel and the engine's own HUD and pause
+menu both draw in it. The font is under the SIL Open Font License, in
+`TurretRoad-OFL.txt`.
 
 The controls are project input actions `SceneDemoNext` and `SceneDemoAdditive`
 in `project_settings.json`. Scene IDs and directories are registered in

@@ -1,7 +1,8 @@
 /**
  * @file GameUIModule.tests.cpp
  * @author sumin.park
- * @brief A suspended game UI runs no screen, and the game UI says when it has the pointer.
+ * @brief A suspended game UI runs no screen, the game UI says when it has the pointer, and a
+ *        Game screen's style stays out of the Shell layer.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -18,6 +19,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <vector>
 
 using namespace mir;
@@ -230,4 +232,35 @@ TEST_CASE("A Game screen cannot move focus while a Shell screen holds the input"
         CHECK_FALSE(gameTookFocus);
         CHECK(ui.Context().State().Focus() == kResume);
     }
+}
+
+TEST_CASE("A style a Game screen leaves pushed does not reach the Shell screens", "[gameui][module][style]")
+{
+    Rig rig;
+    GameUIModule ui(ModuleContext{ rig.world, rig.scheduler });
+    UIStyle base;
+    base.mPadding = 3.0f;
+    ui.Context().SetBaseStyle(base);
+
+    float gamePadding = 0.0f;
+    float shellPadding = 0.0f;
+    std::size_t shellDepth = 1;
+    const Registration game = ui.AddScreen(UIScreenLayer::Game, [&](UIContext &context, float)
+        {
+            UIStyle leaked = context.Style();
+            leaked.mPadding = 20.0f;
+            context.PushStyle(leaked);
+            gamePadding = context.Style().mPadding;
+        });
+    const Registration shell = ui.AddScreen(UIScreenLayer::Shell, [&](UIContext &context, float)
+        {
+            shellPadding = context.Style().mPadding;
+            shellDepth = context.StyleDepth();
+        });
+
+    ui.RunFrame(UIRect{ 0, 0, 640, 480 }, UIPointer{ 5, 5, false });
+    CHECK(gamePadding == 20.0f);
+    CHECK(shellPadding == 3.0f);
+    CHECK(shellDepth == 0);
+    CHECK(ui.Context().StyleDepth() == 0);
 }

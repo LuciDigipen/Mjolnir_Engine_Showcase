@@ -16,6 +16,7 @@ target_sources(engine_gameui PRIVATE
     src/gameui/UIFonts.cpp
     src/gameui/UINavInput.cpp
     src/gameui/UIState.cpp
+    src/gameui/UIStyleFields.cpp
     src/gameui/UITextures.cpp
     src/gameui/UITransform.cpp
     src/gameui/UIWidgets.cpp

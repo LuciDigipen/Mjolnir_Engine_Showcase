@@ -13,6 +13,7 @@
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 #include <gameui/UILayout.h>
+#include <gameui/UIStyleFields.h>
 #include <gameui/UIWidgets.h>
 #include <script/BindingApi.h>
 #include <script/components/ScriptRef.h>
@@ -28,7 +29,9 @@
 #include <optional>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace mir
@@ -175,16 +178,13 @@ namespace mir
             return size;
         }
 
-        UITextAlign ReadAlign(const sol::object &value, std::string_view call)
+        UITextAlign ReadAlign(const sol::object &value, std::string_view call,
+            std::string_view argument = "options.align")
         {
-            const std::string_view name = ReadText(value, call, "options.align");
-            if (name == "left")
-                return UITextAlign::Left;
-            if (name == "center")
-                return UITextAlign::Center;
-            if (name == "right")
-                return UITextAlign::Right;
-            Fail(call, std::format("unknown align '{}'; valid ones are left, center, right", name));
+            const std::string_view name = ReadText(value, call, argument);
+            if (const std::optional<UITextAlign> align = ParseUITextAlign(name))
+                return *align;
+            Fail(call, std::format("unknown {} '{}'; valid ones are left, center, right", argument, name));
         }
 
         // false turns off what the style has, true is black at the defaults, a table sets what it names
@@ -232,41 +232,114 @@ namespace mir
                     });
         }
 
-        // a widget's text options over the style while it draws, put back after, whatever happens
+        // a widget's text options pushed over the style while it draws, popped after, whatever happens
         class TextStyleScope
         {
         public:
-            TextStyleScope(UIContext &ui, const TextOptions &text) : mStyle(ui.Style()), mSaved(ui.Style())
+            TextStyleScope(UIContext &ui, const TextOptions &text) : mUI(ui)
             {
+                UIStyle style = ui.Style();
                 if (text.mFont)
-                    mStyle.mFont = *text.mFont;
+                    style.mFont = *text.mFont;
                 if (text.mSize)
-                    mStyle.mFontSize = *text.mSize;
+                    style.mFontSize = *text.mSize;
                 if (text.mColor)
-                    mStyle.mTextColor = *text.mColor;
+                    style.mTextColor = *text.mColor;
                 if (text.mAlign)
-                    mStyle.mTextAlign = *text.mAlign;
+                    style.mTextAlign = *text.mAlign;
                 if (text.mShadowColor)
                 {
-                    mStyle.mTextShadowColor = *text.mShadowColor;
-                    mStyle.mTextShadowX = text.mShadowX;
-                    mStyle.mTextShadowY = text.mShadowY;
+                    style.mTextShadowColor = *text.mShadowColor;
+                    style.mTextShadowX = text.mShadowX;
+                    style.mTextShadowY = text.mShadowY;
                 }
                 if (text.mOutlineColor)
                 {
-                    mStyle.mTextOutlineColor = *text.mOutlineColor;
-                    mStyle.mTextOutlineWidth = text.mOutlineWidth;
+                    style.mTextOutlineColor = *text.mOutlineColor;
+                    style.mTextOutlineWidth = text.mOutlineWidth;
                 }
+                ui.PushStyle(style);
             }
-            ~TextStyleScope() { mStyle = mSaved; }
+            ~TextStyleScope() { mUI.PopStyle(); }
 
             TextStyleScope(const TextStyleScope &) = delete;
             TextStyleScope &operator=(const TextStyleScope &) = delete;
 
         private:
-            UIStyle &mStyle;
-            UIStyle mSaved;
+            UIContext &mUI;
         };
+
+        // one with_style key onto style, false is no font or no sprite
+        void ReadStyleField(UIStyle &style, const UIStyleField &field, const sol::object &value)
+        {
+            constexpr std::string_view kCall = "with_style";
+            const std::string argument = std::format("style.{}", field.mName);
+            std::visit([&](auto member)
+                {
+                    auto &out = style.*member;
+                    using Field = std::remove_reference_t<decltype(out)>;
+                    const bool none = value.get_type() == sol::type::boolean && !value.as<bool>();
+                    if constexpr (std::is_same_v<Field, UIColor>)
+                        out = ReadColor(value, kCall, argument);
+                    else if constexpr (std::is_same_v<Field, float>)
+                    {
+                        const float number = ReadFloat(value, kCall, argument);
+                        if (!field.mSigned && number < 0.0f)
+                            Fail(kCall, std::format("{} must be 0 or more", argument));
+                        out = number;
+                    }
+                    else if constexpr (std::is_same_v<Field, UITextAlign>)
+                        out = ReadAlign(value, kCall, argument);
+                    else if constexpr (std::is_same_v<Field, UIFont>)
+                        out = none ? UIFont{} : ReadFont(value, kCall, argument);
+                    else
+                    {
+                        if (!none && !value.is<UISprite>())
+                            Fail(kCall, std::format("{} must be what ui:sprite returned, or false", argument));
+                        out = none ? UISprite{} : value.as<UISprite>();
+                    }
+                }, field.mMember);
+        }
+
+        UIStyle ReadStyle(const sol::object &value, const UIStyle &base)
+        {
+            if (value.get_type() != sol::type::table)
+                Fail("with_style", "style must be a table of style keys");
+            UIStyle style = base;
+            for (const auto &[key, entry] : value.as<sol::table>())
+            {
+                const std::string_view name = key.get_type() == sol::type::string ? key.as<std::string_view>() : "";
+                const UIStyleField *field = FindUIStyleField(name);
+                if (field == nullptr)
+                    Fail("with_style", std::format("unknown style key '{}'; valid ones are {}",
+                        key.get_type() == sol::type::string ? name : "(not a name)", UIStyleFieldNames()));
+                ReadStyleField(style, *field, entry);
+            }
+            return style;
+        }
+
+        // every field; no font or sprite is false, as with_style takes it
+        sol::table StyleToLua(sol::state_view lua, const UIStyle &style)
+        {
+            sol::table table = lua.create_table();
+            for (const UIStyleField &field : UIStyleFields())
+                std::visit([&](auto member)
+                    {
+                        const auto &value = style.*member;
+                        using Field = std::remove_cvref_t<decltype(value)>;
+                        if constexpr (std::is_same_v<Field, UIColor>)
+                            table[std::string(field.mName)] = lua.create_table_with(1, value.r, 2, value.g, 3, value.b, 4, value.a);
+                        else if constexpr (std::is_same_v<Field, float>)
+                            table[std::string(field.mName)] = value;
+                        else if constexpr (std::is_same_v<Field, UITextAlign>)
+                            table[std::string(field.mName)] = UITextAlignName(value);
+                        else if (value.IsValid())
+                            table[std::string(field.mName)] = value;
+                        else
+                            table[std::string(field.mName)] = false;
+                    }, field.mMember);
+            return table;
+        }
 
         UINavLinks ReadLinks(const UIScriptFrame &frame, const sol::object &value, std::string_view call)
         {
@@ -800,6 +873,16 @@ namespace mir
             draw.PushOpacity(value);
             CallScoped(body, "with_opacity", [&] { draw.PopOpacity(); });
         };
+        ui["with_style"] = [](UIScriptFrame &self, const sol::object &style, const sol::object &fn)
+        {
+            UIContext &context = Use(self, "with_style");
+            const UIStyle pushed = ReadStyle(style, context.Style());
+            const sol::protected_function body = ReadFunction(fn, "with_style");
+            context.PushStyle(pushed);
+            CallScoped(body, "with_style", [&] { context.PopStyle(); });
+        };
+        ui["style"] = [](UIScriptFrame &self, sol::this_state state)
+        { return StyleToLua(state, Use(self, "style").Style()); };
         ui["with_clip"] = [](UIScriptFrame &self, const sol::object &rect, const sol::object &fn)
         {
             UIDrawList &draw = Use(self, "with_clip").DrawList();
@@ -970,7 +1053,10 @@ namespace mir
             const std::size_t clips = draw.ClipDepth();
             const std::size_t fades = draw.OpacityDepth();
             const std::size_t transforms = draw.TransformDepth();
+            const std::size_t styles = ui.StyleDepth();
             CallScriptCallback(host, world, instance.mEntity, instance.mRef, "OnUI", args);
+            while (ui.StyleDepth() > styles)
+                ui.PopStyle();
             while (draw.ClipDepth() > clips)
                 draw.PopClip();
             while (draw.OpacityDepth() > fades)

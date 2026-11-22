@@ -139,7 +139,7 @@ namespace mir
         }
 
         const bool art = mToggled;
-        UIStyle &style = ui.Style();
+        UIStyle style = ui.Style();
         style.mPanelSprite = art ? mArt.mPanel : UISprite{};
         style.mWidgetSprite = art ? mArt.mButton : UISprite{};
         style.mWidgetHoveredSprite = art ? mArt.mButtonHovered : UISprite{};
@@ -147,6 +147,7 @@ namespace mir
         style.mTrackSprite = art ? mArt.mTrack : UISprite{};
         style.mFillSprite = art ? mArt.mFill : UISprite{};
         style.mFocusSprite = art ? mArt.mFocus : UISprite{};
+        ui.PushStyle(style);
 
         const UIDemoLayout layout = Layout(ui.SafeArea());
         Panel(ui, layout.mPanel);
@@ -183,5 +184,6 @@ namespace mir
 
         if (ui.CancelPressed())
             MIR_LOG_INFO("gameui demo: cancelled");
+        ui.PopStyle();
     }
 } // namespace mir

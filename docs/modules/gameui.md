@@ -228,10 +228,12 @@ sprite falls back to `mWidgetSprite`, not to its colour, so art with no hover
 frame stays art while hovered.
 
 ```cpp
-// UIDemoScreen::Load; the Button and Toggle calls in Draw do not change
+// the Button calls do not change
 UISprite button = ui.Textures().Load(*assets, resolver.ResolveFull("assets/ui/button.png"));
 button.mSlice = UIEdges{8, 8, 8, 8};
-ui.Style().mWidgetSprite = button;
+UIStyle style = ui.BaseStyle();
+style.mWidgetSprite = button;
+ui.SetBaseStyle(style);
 ```
 
 A `UISprite` holds a `UITexture`, the texture's size, the source rect in
@@ -269,6 +271,34 @@ cannot make is not added either, so `Add` and `Load` give the default font, and
 unusable later, and it then draws in the default font. A font that does not
 load is reported once. A font has no size: one font draws at every size a style
 or widget asks for.
+
+### Style
+
+`UIContext` keeps a stack of styles. `Style()` is the top, which every widget
+reads when it draws, so a widget never changes for styling. With nothing pushed
+the top is the base style, `BaseStyle()`, set with `SetBaseStyle`. `PushStyle`
+puts a whole style on top until the matching `PopStyle`; to change a few fields,
+copy `Style()`, change them and push the copy, so nested pushes build on the
+outer one.
+
+```cpp
+UIStyle danger = ui.Style();
+danger.mWidgetColor = UIColor{0.6f, 0.1f, 0.1f, 1.0f};
+ui.PushStyle(danger);
+Button(ui, UIId("quit"), rect, "Quit");
+ui.PopStyle();
+```
+
+A game's base style comes from its style file, which
+[gameshell.md](gameshell.md) loads, and Lua pushes with `ui:with_style`
+([gameui_script.md](gameui_script.md)). Both read `UIStyleFields()`, every
+`UIStyle` field by a snake_case name (`text_color`, `widget_hovered_color`,
+`font_size`, `panel_sprite`...) and a member pointer, so neither keeps its own
+list of keys and an unknown key's error can list them all. gameui itself still
+reads no JSON and knows no Lua.
+
+`GameUIModule` pops whatever a Game screen left pushed before the Shell layer
+draws, so the HUD and pause menu always draw in the base style.
 
 ### Shapes and transforms
 
@@ -350,6 +380,7 @@ wrap or grid, and no measuring pass.
 | Type | Header | Role |
 |---|---|---|
 | `UIRect`, `UIPoint`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIFont`, `UITextAlign`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice; a font is a handle into `UIFonts`, 0 the backend's own |
+| `UIStyleField`, `UIStyleFields`, `FindUIStyleField`, `UIStyleFieldNames`, `ParseUITextAlign`, `UITextAlignName` | `gameui/UIStyleFields.h` | Every `UIStyle` field by name and member, signed only for a shadow's offset; alignment by name |
 | `UITransform` | `gameui/UITransform.h` | A 2D affine transform: `Translate`, `Rotate` and `Scale` about a pivot, `*` to combine, `Apply`, `Inverse`, `Bounds` of a rect |
 | `UIDrawList`, `UIStroke`, `UIGradient` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`; `Line`, `Polyline`, `StrokeRect`, `StrokeCircle`, `Arc`; `Polygon`, `FillCircle`, `Pie`; `PushClip`/`PopClip`, `PushOpacity`/`PopOpacity`, `PushTransform`/`PopTransform`; recorded as `UIDrawCommand`s, read back with `TextOf`, `PointsOf`, `TransformOf` and `GradientOf`; `Sprite` nine-slices into `Texture`s |
 | `UITextures` | `gameui/UITextures.h` | Cooked textures as ImGui user textures, handed out as sprites; `Load` from an `AssetCache`, `Add` from a `TextureAsset` |
@@ -364,7 +395,7 @@ wrap or grid, and no measuring pass.
 | `GameUIModule`, `UIScreenLayer` | `gameui/GameUIModule.h` | The context and the screens by layer; `RunFrame`, `SetSuspended`, `ShellHeldInput` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
 | `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `LocalPointer`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures, the fonts and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `LocalPointer`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`, `Style`, `BaseStyle`/`SetBaseStyle`, `PushStyle`/`PopStyle`/`StyleDepth`; owns the draw list, the state, the style stack, the textures, the fonts and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area, before any transform. Each command stores its clip already
@@ -521,6 +552,12 @@ put the art at every call site, and reskinning a game would mean editing every
 screen. `Image` alone takes one, because its picture is its content rather than
 its look.
 
+**Push a style for a part of a screen; change the base only to change the
+game.** A change made through `Style()` with nothing pushed changes the base
+style, and every later frame and the shell with it. Balance every `PushStyle`:
+`EndFrame` asserts on one left open, and a reference from `Style()` may not
+survive a push.
+
 **gameui reads no file.** Textures arrive through `AssetCache` as cooked
 `TextureAsset`s. An image decoder at runtime would be a second image path beside
 the cooker's, with its own failures, in every game build.
@@ -528,10 +565,13 @@ the cooker's, with its own failures, in every game build.
 **Destroy the game UI after ImGui shuts down.** An ImGui texture's GPU side
 belongs to ImGui's Vulkan backend, which frees a registered texture only while
 rendering or in its own shutdown. A copy released after the context frees only
-CPU memory. One released while the context lives unregisters a texture the
-backend never uploaded, and leaks one it did, with an error. `App` therefore
-declares `GameUIModule` and `GameShellModule` before `ImGuiModule`; the
-`ui-demo` smoke run fails on that error.
+CPU memory. One released while the context lives, as a Play session's is when
+Play stops, unregisters a texture the backend never uploaded at once, and
+retires one it did: ImGui destroys the GPU copy once no frame in flight uses
+it, and `ImGuiUIBackend::RetireTextures` then frees it (see
+[gameui_imgui.md](gameui_imgui.md)). The authoring world's game UI lives as
+long as the app, so `App` still declares `GameUIModule` and `GameShellModule`
+before `ImGuiModule`.
 
 **Lay a screen out in `SafeArea()`, never in `Bounds()` or by constant.** The
 safe area is the one place the display's and the player's insets reach a
@@ -633,6 +673,10 @@ texture, a wrong pixel count, and copies releasing themselves after the backend
 is gone. `tests/UIFonts.tests.cpp` covers which bytes are a whole font file, a
 font made once a backend is installed and released with the table, and one the
 backend cannot make, and
+`tests/UIStyle.tests.cpp` covers style pushes nesting over the base, a button
+drawn in the pushed style and in the base once popped, and every style field's
+name finding it, and `tests/GameUIModule.tests.cpp` a style a Game screen left
+pushed kept from the Shell layer.
 `tests/UIWidgets.tests.cpp` covers text in the style's font and size, the shadow
 and outline passes and their fading, alignment, and measuring in a font. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
 helper, a row inside a column inside an anchored region, and the demo's
@@ -723,6 +767,12 @@ looks right is verified by running `--ui-demo`.
    the backend's shading.
 
 ## Changed
+
+*2026-11-21* — **A style stack.** Was: one `UIStyle` that screens changed in
+place and put back by hand, as the shell did around the widget demo. Now:
+`PushStyle`/`PopStyle` over a base style, `UIStyleFields` naming every field,
+and the Game layer's pushes popped before the Shell layer. Because: a game's
+style file and `ui:with_style` in Lua.
 
 *2026-11-21* — **Shapes and transforms.** Was: the draw list had rects,
 textures and text only, all axis-aligned. Now: lines, polylines, polygons,

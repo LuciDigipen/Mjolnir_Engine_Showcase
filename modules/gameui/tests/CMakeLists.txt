@@ -8,6 +8,7 @@
     UILayout.tests.cpp
     UINavInput.tests.cpp
     UIState.tests.cpp
+    UIStyle.tests.cpp
     UITextures.tests.cpp
     UITransform.tests.cpp
     UIWidgets.tests.cpp
