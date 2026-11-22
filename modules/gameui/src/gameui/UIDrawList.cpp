@@ -415,7 +415,10 @@ namespace mir
 
     void UIDrawList::PushClip(const UIRect &rect)
     {
-        mClipStack.push_back(Intersect(CurrentClip(), CurrentTransform().Bounds(rect)));
+        // an empty rect's transformed bounds can have area, so it stays empty
+        const UIRect clip = CurrentClip();
+        mClipStack.push_back(rect.IsEmpty() ? UIRect{clip.x, clip.y, 0.0f, 0.0f}
+                                            : Intersect(clip, CurrentTransform().Bounds(rect)));
     }
 
     void UIDrawList::PopClip()

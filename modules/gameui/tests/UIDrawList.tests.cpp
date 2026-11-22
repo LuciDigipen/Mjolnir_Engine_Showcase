@@ -146,6 +146,20 @@ TEST_CASE("PushClip intersects with the current clip and PopClip restores it", "
     CHECK(list.CurrentClip() == UIRect{0, 0, 100, 100});
 }
 
+TEST_CASE("An empty clip stays empty under a turn", "[gameui][transform]")
+{
+    UIDrawList list;
+    list.Reset(100, 100);
+
+    list.PushTransform(UITransform::Rotate(kTurn / 8.0f, {50, 50}));
+    list.PushClip(UIRect{50, 30, 0, 40});
+    CHECK(list.CurrentClip().IsEmpty());
+    list.Rect(UIRect{40, 40, 20, 20}, kUIWhite);
+    list.PopClip();
+    list.PopTransform();
+    CHECK(list.Commands().empty());
+}
+
 TEST_CASE("Draws entirely outside the clip are not recorded", "[gameui]")
 {
     UIDrawList list;

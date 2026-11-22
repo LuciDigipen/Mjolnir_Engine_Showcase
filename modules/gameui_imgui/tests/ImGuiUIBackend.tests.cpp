@@ -683,6 +683,32 @@ TEST_CASE("Text a transform moves into view is drawn though it starts outside th
     ImGui::Render();
 }
 
+TEST_CASE("A short arc or pie still draws", "[gameui][shapes]")
+{
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+
+    // 5 degrees from 0 falls between ImGui's own arc samples
+    constexpr float kSweep = 5.0f * std::numbers::pi_v<float> / 180.0f;
+    const std::function<void(UIDrawList &)> shapes[] = {
+        [&](UIDrawList &list) { list.Arc({100, 100}, 20, 0.0f, kSweep, kUIWhite, UIStroke{.mWidth = 2}); },
+        [&](UIDrawList &list) { list.Arc({100, 100}, 20, kSweep, 0.0f, kUIWhite, UIStroke{.mWidth = 2}); },
+        [&](UIDrawList &list) { list.Pie({100, 100}, 20, 0.0f, kSweep, kUIWhite); },
+    };
+    for (const auto &shape : shapes)
+    {
+        UIDrawList list;
+        list.Reset(kScreen.width, kScreen.height);
+        shape(list);
+        REQUIRE(list.Commands().size() == 1);
+        const Submitted drawn = SubmitList(backend, list, fonts);
+        CHECK(drawn.mLast - drawn.mFirst >= 3);
+    }
+    ImGui::Render();
+}
+
 TEST_CASE("Every shape draws through ImGui", "[gameui][shapes]")
 {
     ImGuiFixture imgui;

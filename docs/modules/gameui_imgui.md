@@ -37,7 +37,8 @@ and measured at its size in pixels rounded as ImGui rounds it, which asserts at
 0.25 unit label is drawn and measured one pixel tall.
 
 Shapes are ImGui's own: `AddPolyline`, `AddConcavePolyFilled`, `AddCircle`,
-`AddCircleFilled`, `PathArcTo` stroked or filled from the centre, and
+`AddCircleFilled`, `PathArcTo` stroked or filled from the centre with at least
+one segment, so a short arc keeps both ends, and
 `AddRect`, widths times the scale. Gradients and transforms are applied after a
 command is drawn, to the vertices it wrote: a gradient multiplies each vertex's
 colour by where it lies along the gradient, and a transform moves each vertex

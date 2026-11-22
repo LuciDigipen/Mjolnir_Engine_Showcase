@@ -116,6 +116,9 @@ namespace mir
         bool PointerWithheld() const { return mPointerWithheld; }
         float PointerX() const { return mPointerX; }
         float PointerY() const { return mPointerY; }
+        // the pointer back through transform, where a widget drawn under it would see it. Empty when the
+        // transform flattens everything
+        std::optional<UIPoint> LocalPointer(const UITransform &transform) const;
         bool PointerMoved() const { return mPointerMoved; }
 
         size_t Collisions() const { return mCollisions; }

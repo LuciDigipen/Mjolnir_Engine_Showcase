@@ -24,6 +24,7 @@
 #include <input/InputState.h>
 
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 namespace mir
@@ -59,6 +60,9 @@ namespace mir
 
         UIState &State() { return mState; }
         const UIState &State() const { return mState; }
+
+        // the pointer in the coordinates of whatever is drawn now, under the current transform
+        std::optional<UIPoint> LocalPointer() const { return mState.LocalPointer(mDrawList.CurrentTransform()); }
 
 
         const UIRect &Area() const { return mArea; }

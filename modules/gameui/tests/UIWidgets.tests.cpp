@@ -223,6 +223,25 @@ TEST_CASE("Slider follows a drag across its rect, snaps to its step and clamps p
     CHECK_FALSE(result.mChanged);
 }
 
+TEST_CASE("A moved slider takes its value from where it is drawn", "[gameui][transform]")
+{
+    Fixture f;
+    float value = 0.0f;
+    const auto draw = [&](UIContext &ui) {
+        ui.DrawList().PushTransform(UITransform::Translate(300, 0));
+        Slider(ui, UIId("slider"), kRect, value, 0.0f, 100.0f);
+        ui.DrawList().PopTransform();
+    };
+
+    // the drawn slider spans 400 to 600
+    f.Frame(draw, UIPointer{500, 120, false});
+    f.Frame(draw, UIPointer{500, 120, true});
+    f.Frame(draw, UIPointer{500, 120, true});
+    CHECK(value == Catch::Approx(50.0f));
+    f.Frame(draw, UIPointer{450, 120, true});
+    CHECK(value == Catch::Approx(25.0f));
+}
+
 TEST_CASE("Slider steps left and right while focused, without moving focus", "[gameui]")
 {
     Fixture f;

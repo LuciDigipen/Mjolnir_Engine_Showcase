@@ -174,12 +174,18 @@ namespace mir
     {
         if (mPointerWithheld || !Contains(Intersect(clip, mBounds), mPointerX, mPointerY))
             return false;
+        const std::optional<UIPoint> local = LocalPointer(transform);
+        return local && Contains(rect, local->x, local->y);
+    }
+
+    std::optional<UIPoint> UIState::LocalPointer(const UITransform &transform) const
+    {
+        const UIPoint pointer{mPointerX, mPointerY};
         if (transform.IsIdentity())
-            return Contains(rect, mPointerX, mPointerY);
+            return pointer;
         const std::optional<UITransform> inverse = transform.Inverse();
         if (!inverse)
-            return false;
-        const UIPoint local = inverse->Apply(UIPoint{mPointerX, mPointerY});
-        return Contains(rect, local.x, local.y);
+            return std::nullopt;
+        return inverse->Apply(pointer);
     }
 } // namespace mir

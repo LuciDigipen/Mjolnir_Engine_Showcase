@@ -46,6 +46,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <climits>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -114,6 +115,14 @@ namespace mir
         UIPoint ToLocal(const ImVec2 &position, const UIRect &area, float scale)
         {
             return UIPoint{(position.x - area.x) / scale, (position.y - area.y) / scale};
+        }
+
+        // ImGui's own count can skip a short arc's start point, so an arc always gets both ends
+        void ArcPath(ImDrawList &list, const ImVec2 &center, float radius, float from, float to)
+        {
+            const float turns = std::abs(to - from) / (2.0f * IM_PI);
+            const int segments = static_cast<int>(std::ceil(list._CalcCircleAutoSegmentCount(radius) * turns));
+            list.PathArcTo(center, radius, from, to, std::max(segments, 1));
         }
 
         // multiplies the colour of the vertices from first on by the gradient, read where each was drawn
@@ -327,13 +336,13 @@ namespace mir
             case UIDrawCommandKind::Arc:
                 if (command.mThickness > 0.0f)
                 {
-                    drawList->PathArcTo(center, radius, command.mAngleFrom, command.mAngleTo);
+                    ArcPath(*drawList, center, radius, command.mAngleFrom, command.mAngleTo);
                     drawList->PathStroke(color, ImDrawFlags_None, command.mThickness * scale);
                 }
                 else
                 {
                     drawList->PathLineTo(center);
-                    drawList->PathArcTo(center, radius, command.mAngleFrom, command.mAngleTo);
+                    ArcPath(*drawList, center, radius, command.mAngleFrom, command.mAngleTo);
                     drawList->PathFillConcave(color);
                 }
                 break;

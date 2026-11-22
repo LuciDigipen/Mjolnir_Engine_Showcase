@@ -356,7 +356,7 @@ wrap or grid, and no measuring pass.
 | `UIFonts` | `gameui/UIFonts.h` | Font files kept as bytes and made by the backend, handed out as `UIFont`s; `Load` from an `AssetCache`, `Add` from bytes |
 | `IUIBackend`, `UIBackendTexture`, `UIBackendFont` | `gameui/UIBackend.h` | What draws the UI: `CreateTexture`, `MakeFont`, `Submit`, `MeasureText` in a font |
 | `UIId` | `gameui/UIId.h` | A widget's identity: a `constexpr` hash of a name and an optional index |
-| `UIState`, `UIPointer`, `UIInteraction` | `gameui/UIState.h` | Hot, active and focus, the press latch, the hit test, and `FollowLink` |
+| `UIState`, `UIPointer`, `UIInteraction` | `gameui/UIState.h` | Hot, active and focus, the press latch, the hit test, `LocalPointer(transform)`, and `FollowLink` |
 | `UINavLinks`, `UIWidgetOptions` | `gameui/UIState.h` | A widget's four neighbours, whether it is hidden or disabled, whether it takes left and right (`mAdjustsX`), and whether only the pointer reaches it (`mPointerOnly`) |
 | `UINavInput`, `UINavDirection` | `gameui/UINavInput.h` | The UI actions for a frame, read from `InputState` by name; `UINavStepper` turns `UINavigate` into steps, one per direction per press |
 | `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel`, `StyledText` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing; `StyledText` draws text in the style's font with its shadow and outline |
@@ -364,7 +364,7 @@ wrap or grid, and no measuring pass.
 | `GameUIModule`, `UIScreenLayer` | `gameui/GameUIModule.h` | The context and the screens by layer; `RunFrame`, `SetSuspended`, `ShellHeldInput` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
 | `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures, the fonts and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `LocalPointer`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures, the fonts and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area, before any transform. Each command stores its clip already
@@ -450,6 +450,12 @@ clips and opacity.
 **A clip under a turn is a box.** Clips are axis-aligned in the area, so a
 rect pushed under a rotation clips to the box round it, never to the turned
 rect. Clip first and turn inside it, as a pitch ladder does inside its window.
+An empty clip stays empty under any transform.
+
+**Read the pointer where the widget is drawn.** A widget that turns the pointer
+into a value, as the slider does, reads `UIContext::LocalPointer()`, the pointer
+back through the current transform, not `UIState::PointerX()`, which is in the
+area's units.
 
 **Balance every `PushOpacity` too, and know it only fades.** It multiplies the
 alpha of every command recorded until its pop, nested pushes multiply, and
@@ -722,8 +728,9 @@ looks right is verified by running `--ui-demo`.
 textures and text only, all axis-aligned. Now: lines, polylines, polygons,
 circles, arcs, pies and outlined rects, dashed strokes, linear gradients, and a
 transform stack that moves, turns and scales anything drawn, widgets included,
-with the hit test following it. `UIState::Interact` and `HitTest` take the
-transform. Because: gauges, dials, compasses and pitch ladders.
+with the hit test and the slider's drag following it. `UIState::Interact` and
+`HitTest` take the transform, and `UIContext::LocalPointer` gives the pointer
+under it. Because: gauges, dials, compasses and pitch ladders.
 
 *2026-11-21* — **Fonts.** Was: all text was in the backend's one font, the
 editor's Inter. Now: `UIFonts` loads TrueType and OpenType files from the game's
