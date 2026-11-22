@@ -361,10 +361,10 @@ stages. A stage runs the functions modules registered for it, in registration
 order, then flushes the command buffer.
 
 ```
-New / Load        SceneUnload  ->  scene replaced  ->  SceneLoad
+New / Load        SceneUnload  ->  SceneUnloaded  ->  scene replaced  ->  SceneLoad
 Save              written      ->  SceneSaved
   Play              commit authored prefabs  ->  copy live scene to runtime World  ->  runtime SceneLoad and PlayBegin
-  Stop              runtime PlayEnd and SceneUnload  ->  destroy runtime session  ->  Edit mode
+  Stop              runtime PlayEnd, SceneUnload and SceneUnloaded  ->  destroy runtime session  ->  Edit mode
 Asset reload      BeginReload  ->  ReloadPrepare  ->  CommitReload  ->  ReloadCommit
                                      (a veto)  ->  ReloadAbort  ->  AbortReload
 ```

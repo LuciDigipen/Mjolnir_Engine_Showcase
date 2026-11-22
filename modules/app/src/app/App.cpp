@@ -649,6 +649,9 @@ namespace mir
             prefabs.SetFrozen(false);
             return;
         }
+        // Standalone never updates the authoring terrain, so it could not acknowledge a retired material.
+        if (!mDesc.mEnableEditorLayout)
+            mTerrain.Runtime().Unload();
         SetPlayState(mWorldState.world, PlayState::Running);
         SetEngineMode(mWorldState.world, EngineMode::Play);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
@@ -692,7 +695,11 @@ namespace mir
         const auto instances = mRuntime->state.scene.Scenes().Instances();
         for (size_t i = 0; i < instances.size(); ++i)
             UnloadRuntimeScene(instances[i], i + 1 != instances.size());
-        if (instances.empty()) mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+        if (instances.empty())
+        {
+            mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+            mRuntime->state.scheduler.RunStage(Stage::SceneUnloaded, runtimeContext);
+        }
         mRuntime->state.scheduler.Stop(runtimeContext);
     }
 
@@ -844,6 +851,7 @@ namespace mir
         mRuntime->state.scheduler.RunStage(Stage::SceneEnd, context);
         mRuntime->state.scene.Remove(instance);
         mRuntime->state.scheduler.RunStage(Stage::SceneUnload, context);
+        mRuntime->state.scheduler.RunStage(Stage::SceneUnloaded, context);
     #if MIR_WITH_EDITOR
         mEditor.ClearPlayHistory();
     #endif
@@ -1061,6 +1069,7 @@ namespace mir
     {
         mWorldState.scene.Unload();
         RunStage(Stage::SceneUnload);
+        RunStage(Stage::SceneUnloaded);
     }
 
     void App::RunStage(Stage stage)

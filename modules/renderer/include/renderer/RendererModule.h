@@ -90,6 +90,7 @@ namespace mir
             // last: they unregister before the renderer above shuts down
             Registration mHooks;
             Registration mSceneUnload;
+            Registration mSceneUnloaded;
             Registration mSceneLoad;
             Registration mPlayBegin;
             Registration mPlayEnd;

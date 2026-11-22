@@ -215,7 +215,6 @@ namespace mir
         mWorld = &world;
         mRenderer = &renderer;
         mSurfaceMaterials = &materials;
-        mMaterialUseOwner = mSurfaceMaterials->AddMaterialUseOwner();
         mSurfaceMaterials->SetMaterialValidator([](const SurfaceMaterialBinding &binding, std::string &error)
             {
                 return ValidateSurfaceMaterialParameters(binding, error);
@@ -375,7 +374,8 @@ namespace mir
                 ResolveBinding(mResources[i]);
                 SyncMaterialSlots(mResources[i], instances[i]);
             }
-            mSurfaceMaterials->AcknowledgeGeneration(mMaterialUseOwner, mSurfaceMaterials->Generation());
+            if (mMaterialUseOwner != 0)
+                mSurfaceMaterials->AcknowledgeGeneration(mMaterialUseOwner, mSurfaceMaterials->Generation());
         }
         if (mMeshes)
             mMeshes->Install();
@@ -530,8 +530,7 @@ namespace mir
         mStagedProblems.clear();
         mGuards.clear();
         mResources.clear();
-        if (mSurfaceMaterials)
-            mSurfaceMaterials->SetMaterialUses(mMaterialUseOwner, {});
+        PublishMaterialUses({});
         mWorld->Resource<TerrainWorld>() = TerrainWorld{};
         if (mGround)
             mGround->Invalidate();
@@ -733,6 +732,21 @@ namespace mir
         for (const InstanceResources &resources : mResources)
             if (!resources.materialLogicalPath.empty() && !resources.materialAsset.IsNull())
                 uses.push_back({resources.materialLogicalPath, resources.materialAsset, "terrain"});
+        PublishMaterialUses(uses);
+    }
+
+    void TerrainRuntime::PublishMaterialUses(std::span<const SurfaceMaterialUse> uses)
+    {
+        if (!mSurfaceMaterials)
+            return;
+        if (uses.empty())
+        {
+            mSurfaceMaterials->RemoveMaterialUseOwner(mMaterialUseOwner);
+            mMaterialUseOwner = 0;
+            return;
+        }
+        if (mMaterialUseOwner == 0)
+            mMaterialUseOwner = mSurfaceMaterials->AddMaterialUseOwner();
         mSurfaceMaterials->SetMaterialUses(mMaterialUseOwner, uses);
     }
 

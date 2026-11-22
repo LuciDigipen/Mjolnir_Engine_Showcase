@@ -151,6 +151,7 @@ namespace mir
 
         // Temporary seam
         VulkanRenderer &Renderer() { return mRenderer.Renderer(); }
+        const SurfaceMaterialLibrary &SurfaceMaterials() { return mRenderer.SurfaceMaterials(); }
 
         // Startup splash
         SplashScreen &Splash() { return mSplash.screen; }
