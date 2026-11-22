@@ -32,5 +32,11 @@ namespace mir
     struct PhysicsStepGates
     {
         std::vector<PhysicsStepGate *> mGates;
+
+        // A gate that holds and resumes bodies goes first, so the others see this step's decision.
+        void AddHolding(PhysicsStepGate *gate)
+        {
+            mGates.insert(mGates.begin(), gate);
+        }
     };
 } // namespace mir

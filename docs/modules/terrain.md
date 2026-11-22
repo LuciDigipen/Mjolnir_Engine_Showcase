@@ -1010,7 +1010,11 @@ its key is discarded too).
 **Play.** Play never polls or switches. `PlayScene` adopts a B that is already
 ready; otherwise Play enters on A without waiting, and `Suspend` lets B's staged
 release go (its late reads and builds are discarded, its verification result is
-kept) and posts no further checks until `StopScene`.
+kept) and posts no further checks until `StopScene`. What the suspended Edit
+runtime still holds, A and a B it staged, is only `Retained` in the streamer: it
+demands nothing, is not counted against Auto residency and is evicted under
+pressure, so only the releases Play uses are Required. Stop makes A Loaded and B
+Staged again.
 
 **Diagnostics.** Logs only; the engine writes nothing into the releases tree.
 App logs Play's pinned release per asset, a candidate started, verified (worker
@@ -1319,7 +1323,7 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainLayerWeightQuery` | `terrain/TerrainLayerWeightQuery.h` | resident material layer weights of one release; `WeightsAt` (terrain-local, or world plus placement), `Insert`, `MarkFailed`, `Evict`, `Residency`, `ResidentTile`, `TileError`, `PayloadRequests`, `TakePayloadRequests`, `TakeUsedTiles` |
 | `TerrainLayerWeightsResult`, `TerrainLayerWeight`, `TerrainLayerWeightPayloadRequest`, `TerrainLayerWeightsStatus`, `TerrainLayerWeightsFailure` | `terrain/TerrainLayerWeightQuery.h` | status, failure, sorted nonzero layers, release and tile out; one named layer weight; a missing weight payload for a loader; the query's statuses and failures |
 | `PreloadTerrainTiles`, `PreloadAllTerrainTiles` | `terrain/TerrainHeightQuery.h` | synchronous fill of a query from its own release handle, recording per-tile failures; tools and tests |
-| `TerrainStreamer` | `terrain/TerrainStreamer.h` | asynchronous payload reads and CPU residency: `Add` (residency mode; staged for a release switch), `Find`, `ModeOf`, `AddInterest`/`SetInterest`/`RemoveInterest`, `Update` (the per-frame install point), `WaitForEager`, `WaitForCompletion`, `Status`, `Heights`/`Lod`/`Normals`/`Region`, `RetryFailed`, `Stats`, `Usage` |
+| `TerrainStreamer` | `terrain/TerrainStreamer.h` | asynchronous payload reads and CPU residency: `Add` (residency mode; staged for a release switch), `SetUse` (`TerrainReleaseUse`: Retained, Staged or Loaded), `Find`, `ModeOf`, `AddInterest`/`SetInterest`/`RemoveInterest`, `Update` (the per-frame install point), `WaitForEager`, `WaitForCompletion`, `Status`, `Heights`/`Lod`/`Normals`/`Region`, `RetryFailed`, `Stats`, `Usage` |
 | `TerrainReleaseUsage` | `terrain/TerrainStreamer.h` | one release's share of a residency (waiting, in flight, ready, failed, bytes, first failure); `Usage(release)` on the streamer, the mesh residency and the collision residency |
 | `TerrainPayloadKey`, `TerrainPayloadWant`, `TerrainDemand`, `TerrainPayloadState`, `TerrainPayloadStatus`, `TerrainStreamingStats` | `terrain/TerrainStreamer.h` | the key (asset, release, kind, level, layer, tile or Region), a want with demand and rank, the states, budget and counters; `TerrainPayloadKeyOf`, `TerrainPayloadFootprint`, `DescribeTerrainPayloadKey` |
 | `TerrainExecutor`, `TerrainWorkerPool`, `TerrainManualExecutor` | `terrain/TerrainExecutor.h` | where background jobs run: a pool of `std::jthread`s, or a queue a test runs by hand |

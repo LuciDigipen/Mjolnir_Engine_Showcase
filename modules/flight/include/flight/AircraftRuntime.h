@@ -198,9 +198,11 @@ namespace mir
         // The config the engine rpm was last initialised for.
         const AircraftConfig *propulsionConfig = nullptr;
         // The config the chase and cockpit cameras were last set up for, the cockpit camera child
-        // and the view the toggle last selected.
+        // and the view the toggle or the setup's fallback last selected.
         const AircraftConfig *cameraConfig = nullptr;
         Entity cockpitCamera = kNullEntity;
+        // Whether the last setup found a chase camera, to tell a lost one from none.
+        bool hasChaseCamera = false;
         FlightCameraView cameraView = FlightCameraView::Chase;
     };
 }

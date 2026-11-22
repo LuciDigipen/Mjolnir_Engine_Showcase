@@ -15,6 +15,7 @@
 #include <jobs/JobExecutor.h>
 #include <renderer/VulkanRenderer.h>
 
+#include <algorithm>
 #include <utility>
 
 namespace mir
@@ -85,23 +86,60 @@ namespace mir
         return mNextOwner++;
     }
 
-    void TerrainRuntimeCache::SetHeldReleases(TerrainCacheOwner owner, std::span<const TerrainReleaseInfo> releases)
+    void TerrainRuntimeCache::SetHeldReleases(TerrainCacheOwner owner, std::span<const TerrainReleaseInfo> loaded,
+                                              std::span<const TerrainReleaseInfo> staged)
     {
-        mHeld[owner].assign(releases.begin(), releases.end());
+        Holding &holding = mHeld[owner];
+        holding.loaded.assign(loaded.begin(), loaded.end());
+        holding.staged.assign(staged.begin(), staged.end());
+        ApplyUses();
         RetireUnheld();
+    }
+
+    void TerrainRuntimeCache::SetSuspended(TerrainCacheOwner owner, bool suspended)
+    {
+        mHeld[owner].suspended = suspended;
+        ApplyUses();
     }
 
     void TerrainRuntimeCache::RemoveOwner(TerrainCacheOwner owner)
     {
-        if (mHeld.erase(owner) > 0)
-            RetireUnheld();
+        if (mHeld.erase(owner) == 0)
+            return;
+        ApplyUses();
+        RetireUnheld();
+    }
+
+    void TerrainRuntimeCache::ApplyUses()
+    {
+        std::vector<std::pair<TerrainReleaseInfo, TerrainReleaseUse>> uses;
+        const auto add = [&uses](const TerrainReleaseInfo &release, TerrainReleaseUse use) {
+            const auto found = std::find_if(uses.begin(), uses.end(),
+                                            [&release](const auto &entry) { return entry.first == release; });
+            if (found == uses.end())
+                uses.emplace_back(release, use);
+            else
+                found->second = std::max(found->second, use);
+        };
+        for (const auto &[owner, holding] : mHeld)
+        {
+            for (const TerrainReleaseInfo &release : holding.loaded)
+                add(release, holding.suspended ? TerrainReleaseUse::Retained : TerrainReleaseUse::Loaded);
+            for (const TerrainReleaseInfo &release : holding.staged)
+                add(release, holding.suspended ? TerrainReleaseUse::Retained : TerrainReleaseUse::Staged);
+        }
+        for (const auto &[release, use] : uses)
+            mStreamer->SetUse(release, use);
     }
 
     void TerrainRuntimeCache::RetireUnheld()
     {
         std::vector<TerrainReleaseInfo> keep;
-        for (const auto &[owner, releases] : mHeld)
-            keep.insert(keep.end(), releases.begin(), releases.end());
+        for (const auto &[owner, holding] : mHeld)
+        {
+            keep.insert(keep.end(), holding.loaded.begin(), holding.loaded.end());
+            keep.insert(keep.end(), holding.staged.begin(), holding.staged.end());
+        }
         mMeshes->RetireReleases(keep);
         // A weight texture names no release, so one the other runtime may draw is left to expire.
         if (mWeights && keep.empty())

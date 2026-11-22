@@ -102,7 +102,7 @@ namespace mir
         void Unload();
 
         // While another runtime draws the same cache: the viewports' streamer interests and draw lists go, and the
-        // releases stay held so their payloads and meshes are still warm when Resume draws them again.
+        // releases are only retained, so what is warm when Resume draws them again is what pressure left.
         void Suspend();
         void Resume();
 

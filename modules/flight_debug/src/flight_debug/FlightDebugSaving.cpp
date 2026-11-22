@@ -25,8 +25,17 @@ namespace mir
             return false;
         }
 
+        const std::string text = SerializeAircraftConfig(config);
+        AircraftConfig parsed;
+        std::string invalid;
+        if (!ParseAircraftConfig(text, parsed, invalid))
+        {
+            error = std::format("'{}' was not saved, the edit is invalid: {}", configPath, invalid);
+            return false;
+        }
+
         const std::filesystem::path target = sourceAssetsRoot / std::filesystem::path(configPath);
-        if (!WriteTextAtomic(target, SerializeAircraftConfig(config)))
+        if (!WriteTextAtomic(target, text))
         {
             error = std::format("could not write '{}'", target.string());
             return false;

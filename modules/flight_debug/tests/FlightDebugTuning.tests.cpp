@@ -285,3 +285,20 @@ TEST_CASE("The read-only rows report the curve and table sizes", "[flight_debug]
     CHECK(FindRow(rows, "L2 flaps").value == "1 rows");
     CHECK(FindRow(rows, "Nodes").value == "1 entries");
 }
+
+TEST_CASE("Saving refuses a config the parser rejects and keeps the source file", "[flight_debug][save]")
+{
+    const std::filesystem::path root = MakeTempRoot("invalid");
+    std::filesystem::create_directories((root / kPath).parent_path());
+    mir::AircraftConfig config = ParseConfig();
+    std::string error;
+    REQUIRE(mir::SaveAircraftConfigToSource(config, root, kPath, error));
+    const auto saved = mir::ReadBytes(root / kPath);
+    REQUIRE(saved.has_value());
+
+    REQUIRE_FALSE(config.gear.empty());
+    config.gear[0].restLength = -0.1f;
+    CHECK_FALSE(mir::SaveAircraftConfigToSource(config, root, kPath, error));
+    CHECK(error.find("restLength") != std::string::npos);
+    CHECK(mir::ReadBytes(root / kPath) == saved);
+}

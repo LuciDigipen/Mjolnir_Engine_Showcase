@@ -72,7 +72,7 @@ namespace mir
         glm::vec3 mInertiaProducts{0.0f};
         // Places the centre of mass away from the shape's centre, with the shape and the Transform staying where they are.
         bool mCustomCenterOfMass = false;
-        // Centre of mass in the body's own axes, in metres.
+        // Centre of mass from the body's origin in its own axes, in metres; the shape's offset does not move it.
         glm::vec3 mCenterOfMassOffset{0.0f};
     };
 

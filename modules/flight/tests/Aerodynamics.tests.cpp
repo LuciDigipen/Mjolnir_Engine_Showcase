@@ -392,3 +392,30 @@ TEST_CASE("An L1 aircraft loses roll rate without controls", "[flight][aero]")
     CHECK(rollRate > 0.0f);
     CHECK(rollRate < 0.5f);
 }
+
+TEST_CASE("Switching to a missing tier clears the last aerodynamic result", "[flight][aero]")
+{
+    const RawConfig config(kL1Config);
+    REQUIRE(config.view.has_value());
+
+    FlightFixture fixture;
+    mir::FlightModule flight(fixture.ModuleContext(),
+        [&config](std::string_view path, std::string &) -> const mir::AssetBlobView *
+        {
+            return path == "l1.aircraft.json" ? &*config.view : nullptr;
+        });
+    fixture.Start();
+    const mir::Entity entity = fixture.AddAircraft("l1.aircraft.json");
+    const mir::BodyHandle body = fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body;
+    fixture.Physics().SetBodyLinearVelocity(body, glm::vec3{ 0.0f, 0.0f, -50.0f });
+    fixture.Run(2);
+    REQUIRE(glm::length(fixture.world.GetComponent<mir::Aircraft>(entity)->runtime.telemetry.aeroForces.force) > 0.0f);
+
+    fixture.world.GetComponent<mir::Aircraft>(entity)->tier = mir::AerodynamicTier::L3;
+    fixture.Run(1);
+
+    const mir::AircraftRuntime &runtime = fixture.world.GetComponent<mir::Aircraft>(entity)->runtime;
+    CHECK(glm::length(runtime.telemetry.aeroForces.force) == 0.0f);
+    CHECK(glm::length(runtime.telemetry.aeroForces.moment) == 0.0f);
+    CHECK(glm::length(runtime.aero.sources.lift) == 0.0f);
+}

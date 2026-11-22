@@ -51,7 +51,7 @@ are per pool, not an aggregate thread cap.
 | `RigidBody`, `AppliedBody` | `physics/components/RigidBody.h` | The component, and the copy of its fields the live body was last built from |
 | `PhysicsSystem` | `physics/PhysicsSystem.h` | The step, the body lifetime hooks, `Teleport` |
 | `PhysicsInterpolationSystem` | `physics/PhysicsInterpolationSystem.h` | The blend between the last two steps |
-| `PhysicsStepGate`, `PhysicsStepGates` | `physics/PhysicsStepGate.h` | Lets another module act on bodies between the sync and the step |
+| `PhysicsStepGate`, `PhysicsStepGates` | `physics/PhysicsStepGate.h` | Lets another module act on bodies between the sync and the step. A gate that holds and resumes bodies registers through `AddHolding`, which runs it before the others |
 | `CollisionEvents`, `CollisionEventSystem` | `physics/CollisionEvents.h` | The per-frame event list and its drain |
 | `PhysicsLayerTable`, `ReadPhysicsLayers`, `CheckPhysicsLayers` | `physics_layers/PhysicsLayers.h`, `physics_layers/PhysicsLayerSettings.h` | The 32 layers, comparable with `==`, the `physicsLayers` section of `project_settings.json`, and the check a table passes before it is applied or saved. A plain library with no Jolt, which the editor links on its own |
 | `PhysicsMotion`, `PhysicsShape`, `PhysicsAxis`, `BodyHandle` | `physics/PhysicsTypes.h` | The enums and the handle, free of Jolt |

@@ -95,7 +95,7 @@ namespace mir
         glm::vec3 inertiaProducts{ 0.0f };
         // Places the centre of mass away from the shape's centre, with the shape and the Transform staying where they are.
         bool customCenterOfMass = false;
-        // Centre of mass in the entity's own axes, in metres.
+        // Centre of mass from the entity's origin in its own axes, in metres; the collider offset does not move it.
         glm::vec3 centerOfMassOffset{ 0.0f };
 
         // Runtime state PhysicsSystem keeps; not in the field table, so never saved.

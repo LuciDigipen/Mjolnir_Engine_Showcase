@@ -240,8 +240,13 @@ namespace mir
                     shape = new JPH::RotatedTranslatedShape(ToJolt(desc.mOffset), ToJolt(rotation), shape);
             }
 
-            if (desc.mCustomCenterOfMass && desc.mCenterOfMassOffset != glm::vec3(0.0f))
-                return new JPH::OffsetCenterOfMassShape(shape, ToJolt(desc.mCenterOfMassOffset));
+            if (desc.mCustomCenterOfMass)
+            {
+                // Jolt moves the centre of mass from where the shape's own already is.
+                const JPH::Vec3 move = ToJolt(desc.mCenterOfMassOffset) - shape->GetCenterOfMass();
+                if (move != JPH::Vec3::sZero())
+                    return new JPH::OffsetCenterOfMassShape(shape, move);
+            }
             return shape;
         }
 

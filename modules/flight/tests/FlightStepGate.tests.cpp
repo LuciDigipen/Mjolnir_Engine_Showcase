@@ -304,3 +304,42 @@ TEST_CASE("A held body gets no flight force and logs nothing", "[flight][gate]")
     const glm::dvec3 after = fixture.Physics().BodyPosition(body)->Meters();
     CHECK(glm::length(after - before) == Catch::Approx(0.0).margin(kTolerance));
 }
+
+TEST_CASE("A body resumed by a holding gate gets flight force on that substep", "[flight][gate]")
+{
+    struct ResumingGate final : mir::PhysicsStepGate
+    {
+        mir::BodyHandle body;
+
+        void BeforeStep(mir::World &, mir::PhysicsWorld &physics, float) override { physics.ResumeBody(body); }
+    };
+
+    std::string thrusting(kFlightConfig);
+    const std::string engine = R"("engines": [{ "position": [1.0, 0.0, 0.0], "direction": [1, 0, 0], "idleRpm": 700,
+        "maxRpm": 2700, "rpmTau": 0.5, "staticThrust": [[0, 2000], [1, 2000]], "speedFactor": [[0, 1], [100, 1]] }])";
+    thrusting.replace(thrusting.find(R"("engines": [])"), std::string_view(R"("engines": [])").size(), engine);
+    const RawConfig config(thrusting);
+    REQUIRE(config.view.has_value());
+
+    ResumingGate resuming;
+    FlightFixture fixture;
+    mir::FlightModule flight(fixture.ModuleContext(),
+        [&config](std::string_view path, std::string &) -> const mir::AssetBlobView *
+        {
+            return path == "plane.aircraft.json" ? &*config.view : nullptr;
+        });
+    fixture.Start();
+    const mir::Entity entity = fixture.AddAircraft("plane.aircraft.json");
+    fixture.Run(1);
+
+    const mir::BodyHandle body = fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body;
+    fixture.Physics().SetBodyLinearVelocity(body, glm::vec3{ 0.0f });
+    fixture.Physics().HoldBody(body);
+    resuming.body = body;
+    fixture.world.Resource<mir::PhysicsStepGates>().AddHolding(&resuming);
+
+    fixture.Run(1);
+
+    CHECK_FALSE(fixture.Physics().IsBodyHeld(body));
+    CHECK(glm::length(fixture.Physics().BodyLinearVelocity(body)) > 0.5f * 2000.0f / 1200.0f * kStep);
+}

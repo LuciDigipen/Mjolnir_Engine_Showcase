@@ -15,9 +15,10 @@ path once. The store keeps the decoded configs for the module's lifetime, and `A
 into it.
 
 Editor builds hot-reload the configs through the engine's reload stages. `App` gives `FlightModule` a factory
-that resolves a staged path against `AssetsModule::Candidate()`; with no factory (every other build) the module
-registers nothing to reload. `ReloadPrepare` decodes every cached successful path through the candidate; a
-failure throws and vetoes the whole reload, while a cached failure that now decodes is staged to load. A commit
+that resolves a path in the candidate manifest and loads it from `AssetsModule::Candidate()`; with no factory
+(every other build) the module registers nothing to reload. `ReloadPrepare` decodes every cached successful path
+and every path the World's aircraft reference through the candidate; a failure this import causes throws and
+vetoes the whole reload, while a cached failure that now decodes is staged to load. A commit
 assigns the staged configs into their existing objects, so the pointers in `AircraftRuntime::config` stay valid,
 clears those failures and bumps the store generation. Abort drops the staging. On the next fixed step the config
 system re-applies a config whose generation is newer than the aircraft's and clears the tracking pointers the
@@ -27,7 +28,7 @@ throttle and the flap detent are kept.
 The store also carries live tuning. `Edit` returns the decoded object, the one every aircraft on that path
 shares, so a panel edit reaches them all at once; `MarkEdited` sets the path unsaved and bumps `EditGeneration`,
 so the next fixed step re-applies the mass properties. `SerializeAircraftConfig` writes a config back in the parser's own
-schema, and a save plus the resulting hot reload keeps every value.
+schema, and a save plus the import keeps every value.
 
 `FlightStepGate` is the per-step pipeline. It reads the body state before the physics step and skips any
 aircraft whose config did not load. After the step it re-reads the body, recomputes the air data with the wind
@@ -85,7 +86,7 @@ and disables saving. The panel writes `Aircraft::tier` and the shared `AircraftC
 ```cpp
 #if MIR_WITH_EDITOR
 mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver),
-    [&assets, &resolver] { return mir::MakeAircraftConfigSource(assets.Candidate(), resolver); });
+    [&assets, &resolver] { return mir::MakeAircraftCandidateSource(assets, resolver); });
 #else
 mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), resolver));
 #endif
@@ -97,7 +98,7 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
 |---|---|---|
 | `Aircraft`, `AircraftRuntime`, `AerodynamicTier` | `<flight/components/Aircraft.h>` | component and its transient per-step state |
 | `AircraftConfig`, `ParseAircraftConfig`, `SerializeAircraftConfig`, `AircraftConfigDecoder` | `<flight/AircraftConfig.h>` | the file's values, its parser, its writer and the raw-blob decoder |
-| `AircraftConfigStore`, `AircraftConfigStoreRef`, `MakeAircraftConfigSource` | `<flight/AircraftConfigStore.h>` | cached decode by path, unsaved edits, its World resource and the source fed by the asset cache |
+| `AircraftConfigStore`, `AircraftConfigStoreRef`, `MakeAircraftConfigSource`, `MakeAircraftCandidateSource` | `<flight/AircraftConfigStore.h>` | cached decode by path, unsaved edits, its World resource and the sources fed by the asset cache and by a reload's candidate |
 | `AircraftConfigSystem`, `WriteMassProperties` | `<flight/AircraftConfigSystem.h>` | FixedUpdate system that writes mass properties |
 | `FlightModule` | `<flight/FlightModule.h>` | registers components, the input system, the config system and the step gate |
 | `FlightStepGate` | `<flight/FlightStepGate.h>` | the before/after step pipeline |
@@ -136,10 +137,13 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   the store generation differs from `AircraftRuntime::configGeneration`. A failed load is cached, logged once,
   leaves the body untouched and sets `runtime.config` to null; the gate then skips that aircraft.
 - Hot reload is editor-only, driven by `App::ApplyImportedAssets`: `FlightModule` registers the reload stages
-  only when it is given a source factory, and only the editor build passes one, resolving
-  `AssetsModule::Candidate()`. `PrepareReload` decodes every cached successful path and every cached failure
-  through the candidate source; if a cached success no longer decodes it throws
-  `aircraft config reload rejected: '<path>': <error>` and stages nothing. `CommitReload` assigns each staged
+  only when it is given a source factory, and only the editor build passes `MakeAircraftCandidateSource`, which
+  resolves paths in the candidate manifest. `PrepareReload` decodes every cached successful path and every cached
+  failure through the candidate source; if a cached success no longer decodes it throws
+  `aircraft config reload rejected: '<path>': <error>` and stages nothing. Edit caches no config, so the module
+  also passes the paths the World's aircraft reference: one the candidate cannot decode throws the same way,
+  unless its content is what it was (a broken reference left untouched does not block other imports).
+  `CommitReload` assigns each staged
   config into the existing heap object, so `AircraftConfig` pointers already held by aircraft stay valid, clears
   the failures that now decode and bumps `Generation`; `AbortReload` drops the staging.
 - A config-generation change makes the config system re-apply `WriteMassProperties` and clear
@@ -147,7 +151,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   each engine at `idleRpm`, the camera system re-runs its setup and the missing-tier warning can fire again.
   Surface deflections, trim, throttle and the flap detent are kept.
 - `WriteMassProperties` never changes the motion type. It sets mass, the rotated custom inertia tensor, the
-  rotated custom centre of mass, zero damping, the gyroscopic force, `LinearCast` and `interpolate`.
+  rotated custom centre of mass, zero damping, the gyroscopic force, `LinearCast` and `interpolate`. The centre
+  of mass is measured from the entity origin, wherever the collider offset puts the shape.
 - `FlightEnvironment::wind` and `AircraftRuntime::additionalWind` are the velocity of the air in the world
   frame, not the direction it blows from. The gate computes with their sum and clears `additionalWind` after
   reading it, so a script or system must write it again every fixed step.
@@ -166,7 +171,8 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   `blendDeg` after each critical alpha. `qbar` uses the true airspeed and the rate normalisation uses
   `max(V, minAirspeed)`, so the force is zero at rest and the damping stays bounded at low speed. Post-stall
   scales the control derivatives by `controlScale` and `Cmalpha`, `Clbeta`, `Cnbeta` by `stabilityScale`.
-- A tier with no profile in the config adds no aerodynamic force and warns once per aircraft config.
+- A tier with no profile in the config adds no aerodynamic force, clears `AircraftRuntime::aero` so the telemetry
+  shows none, and warns once per aircraft config.
 - L3 reads the four grid axes with a multilinear blend, clamps an input outside an axis to its edge and sets
   `ForceMoment::outOfTable`; the total force is `qbar S [CX, CY, CZ]` and the moment `qbar S [b Cl, c Cm,
   b Cn]`. The control increments add to the base coefficients, the rate tables give `dampingMoment` and the
@@ -189,8 +195,9 @@ mir::FlightModule flight(context, mir::MakeAircraftConfigSource(assets.Cache(), 
   the derived values never reach the authored scene. Every Follow `CameraController` whose target is the
   aircraft gets `mOffset = (0, chaseHeight, chaseDistance)`, `mOffsetInTargetSpace`, `mOffsetHeadingOnly` and
   `mLookAtTarget`; behind is entity-local +Z. The cockpit is the first direct child with a `Camera`: its local
-  Transform becomes `BodyToLocal(camera.eye)` with the identity rotation, and its `Camera` is inactive while the
-  chase camera keeps its authored `mActive`. The view starts as chase.
+  Transform becomes `BodyToLocal(camera.eye)` with the identity rotation. The view starts as chase, with the
+  cockpit `Camera` inactive and the chase camera keeping its authored `mActive`. A later setup keeps the selected
+  view; if that view's camera is gone it activates and cuts to the other one.
 - `FlightCameraToggle` acts only for a `playerInput` aircraft that has both a chase camera (a `Camera` with a
   Follow `CameraController` targeting it) and a cockpit camera. It flips the two `mActive` flags, cuts the
   newly active camera and stores the view in `runtime.cameraView`; with only one of the two it does nothing.
@@ -272,8 +279,8 @@ the same store the aircraft fly from. The panel asks for the selected aircraft's
 - A save is a full rewrite: `SerializeAircraftConfig` emits every section the parser reads, with angles back in
   the `*Deg` keys, so the writer never has to preserve the file's own formatting. Each number is written as the
   shortest text that reads back as the same float, so a save adds no widening noise. The panel writes the result
-  through a temp file beside the target and renames it, then clears the dirty flag; the editor's import and the
-  hot reload then carry it into the running Play world.
+  through a temp file beside the target and renames it, then clears the dirty flag. `App` applies imports only in
+  Edit, so the running Play keeps its edited copy and the next Play loads the imported file.
 - A `CommitReload` over a dirty path takes the file's content like any other path, clears the dirty flag and
   keeps the path in `TakeOverwrittenEdits`; a caller takes that list once and shows it as an overwrite notice.
 
@@ -289,8 +296,8 @@ respawns an aircraft. `FlightCameraSystem` wires the chase and cockpit cameras f
 toggle switches between them. L3 is a table model with an L2 generator and the out-of-table flag. Editor
 builds hot-reload an edited config through the reload stages; other builds decode once and keep the result
 for the module's lifetime.
-The store also holds live tuning: an edit re-applies on the next fixed step, a save rewrites the source file and
-the next reload replaces any unsaved edits it finds.
+The store also holds live tuning: an edit re-applies on the next fixed step and a save rewrites the source file,
+which the app imports in Edit, for the next Play.
 
 Tests in `modules/flight/tests/`: `AircraftConfig` (full file, every error class, decoder tag, store caching,
 mass-property rotation, an aircraft through one fixed step), `AirData` (wind and updraft, crosswind, rotated

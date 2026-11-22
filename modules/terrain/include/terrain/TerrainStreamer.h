@@ -61,6 +61,17 @@ namespace mir
         Required,
     };
 
+    // What the runtimes holding a release do with it; a higher use wins.
+    enum class TerrainReleaseUse : uint8_t
+    {
+        // Only kept warm: no demand of its own, so what is resident goes first under pressure.
+        Retained,
+        // Prewarmed for a switch: an Eager one's payloads are Prefetch.
+        Staged,
+        // In use: an Eager one's payloads are Required.
+        Loaded,
+    };
+
     struct TerrainPayloadWant
     {
         TerrainPayloadKey key;
@@ -166,8 +177,10 @@ namespace mir
         // Held weakly: once nobody else holds a release, its payloads go at the next Update. Returns the
         // mode chosen when the release was first added. A staged release is one a release switch prepares: its
         // mode is chosen as if the other releases of its asset were gone, and an Eager one's payloads are only
-        // prefetched until it is added again unstaged.
+        // prefetched until it is added again unstaged. Adding a known release only ever raises its use.
         TerrainResidencyMode Add(const std::shared_ptr<TerrainResidentRelease> &release, bool staged = false);
+        // Raises or lowers the use of an added release. A Retained one leaves Auto's budget to the others.
+        void SetUse(const TerrainReleaseInfo &release, TerrainReleaseUse use);
         std::shared_ptr<TerrainResidentRelease> Find(AssetId asset, TerrainReleaseId release) const;
         std::optional<TerrainResidencyMode> ModeOf(const TerrainReleaseInfo &release) const;
 

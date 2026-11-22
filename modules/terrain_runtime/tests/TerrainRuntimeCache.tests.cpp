@@ -80,6 +80,27 @@ namespace
         cache.Streamer().Update();
     }
 
+    // For a budget that never lets everything settle.
+    void Pump(TerrainRuntimeCache &cache, TerrainManualExecutor &executor)
+    {
+        for (int round = 0; round < 200; ++round)
+        {
+            cache.Streamer().Update();
+            executor.RunAll();
+        }
+        cache.Streamer().Update();
+    }
+
+    uint64_t Footprint(const TerrainResidentRelease &release)
+    {
+        uint64_t bytes = 0;
+        const TerrainIndex &index = release.Handle().Index();
+        for (const std::vector<TerrainTileRecord> *records : {&index.tiles, &index.regions})
+            for (const TerrainTileRecord &record : *records)
+                bytes += TerrainPayloadFootprint(record);
+        return bytes;
+    }
+
     std::span<const TerrainReleaseInfo> Held(const TerrainReleaseInfo &info)
     {
         return std::span<const TerrainReleaseInfo>(&info, 1);
@@ -287,4 +308,90 @@ TEST_CASE("Weight textures survive one runtime's unload and retire with the last
 
     cache.SetHeldReleases(edit, {});
     CHECK(textures.mRetired.size() == 1);
+}
+
+TEST_CASE("A suspended runtime's releases stay warm and give way to Play's under pressure", "[terrain_runtime][cache]")
+{
+    const AssetId asset = TerrainAsset(std::string(kRecipe));
+    const TerrainReleaseInfo infoA = Info(asset, 0xA), infoB = Info(asset, 0xB);
+    const auto a = TerrainResidentRelease::Create(
+        OpenOk(TerrainReleaseHandle::Open(MakeTerrainMemorySource(ResidencyRelease(infoA)))));
+    const auto b = TerrainResidentRelease::Create(
+        OpenOk(TerrainReleaseHandle::Open(MakeTerrainMemorySource(ResidencyRelease(infoB)))));
+    const uint64_t footprint = Footprint(*a);
+
+    auto executor = std::make_shared<TerrainManualExecutor>();
+    FakeUploader uploader;
+    TerrainRuntimeCache cache(StreamingSettings(footprint + footprint / 2), executor, Borrowed(uploader));
+    TerrainStreamer &streamer = cache.Streamer();
+
+    const TerrainCacheOwner edit = cache.AddOwner();
+    REQUIRE(streamer.Add(a) == TerrainResidencyMode::Eager);
+    cache.SetHeldReleases(edit, Held(infoA));
+    Pump(cache, *executor);
+    REQUIRE(streamer.Usage(infoA).bytes == footprint);
+    REQUIRE(streamer.Add(b, true) == TerrainResidencyMode::Eager);
+    cache.SetHeldReleases(edit, Held(infoA), Held(infoB));
+    Pump(cache, *executor);
+
+    cache.SetSuspended(edit, true);
+    const TerrainCacheOwner play = cache.AddOwner();
+
+    SECTION("Play takes the staged release")
+    {
+        REQUIRE(streamer.Add(b) == TerrainResidencyMode::Eager);
+        cache.SetHeldReleases(play, Held(infoB));
+        Pump(cache, *executor);
+        CHECK(streamer.Usage(infoB).bytes == footprint);
+        CHECK(streamer.Usage(infoA).ready > 0);
+        CHECK(streamer.Stats().overBudgetBytes == 0);
+    }
+    SECTION("Play keeps the loaded release")
+    {
+        streamer.Add(a);
+        cache.SetHeldReleases(play, Held(infoA));
+        Pump(cache, *executor);
+        CHECK(streamer.Usage(infoA).bytes == footprint);
+        CHECK(streamer.Stats().overBudgetBytes == 0);
+    }
+
+    cache.SetHeldReleases(play, {});
+    cache.RemoveOwner(play);
+    cache.SetSuspended(edit, false);
+    Pump(cache, *executor);
+    CHECK(streamer.Usage(infoA).bytes == footprint);
+    CHECK(streamer.Usage(infoB).waiting > 0);
+    CHECK(streamer.Stats().overBudgetBytes == 0);
+}
+
+TEST_CASE("A suspended runtime's release leaves Auto residency its whole budget", "[terrain_runtime][cache]")
+{
+    const TerrainReleaseInfo edited = Info(TerrainAsset(std::string(kRecipe)), 0xA);
+    const TerrainReleaseInfo played = Info(TerrainAsset("terrain/other.terrain.json"), 0xC);
+    const auto a = TerrainResidentRelease::Create(
+        OpenOk(TerrainReleaseHandle::Open(MakeTerrainMemorySource(ResidencyRelease(edited)))));
+    const auto c = TerrainResidentRelease::Create(
+        OpenOk(TerrainReleaseHandle::Open(MakeTerrainMemorySource(ResidencyRelease(played)))));
+    const uint64_t footprint = Footprint(*a);
+
+    auto executor = std::make_shared<TerrainManualExecutor>();
+    FakeUploader uploader;
+    TerrainRuntimeCache cache(StreamingSettings(footprint + footprint / 2), executor, Borrowed(uploader));
+    TerrainStreamer &streamer = cache.Streamer();
+
+    const TerrainCacheOwner edit = cache.AddOwner();
+    streamer.Add(a);
+    cache.SetHeldReleases(edit, Held(edited));
+    Pump(cache, *executor);
+
+    cache.SetSuspended(edit, true);
+    Pump(cache, *executor);
+    CHECK(streamer.Usage(edited).bytes == footprint);
+
+    const TerrainCacheOwner play = cache.AddOwner();
+    CHECK(streamer.Add(c) == TerrainResidencyMode::Eager);
+    cache.SetHeldReleases(play, Held(played));
+    Pump(cache, *executor);
+    CHECK(streamer.Usage(played).bytes == footprint);
+    CHECK(streamer.Stats().overBudgetBytes == 0);
 }

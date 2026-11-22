@@ -43,6 +43,30 @@ namespace mir
                 });
         }
 
+        void SelectView(World &world, Entity aircraftEntity, AircraftRuntime &runtime,
+            Query<CameraController> &controllers, FlightCameraView view, bool cut)
+        {
+            const bool toCockpit = view == FlightCameraView::Cockpit;
+            const Entity cockpitEntity = runtime.cockpitCamera;
+            if (!cockpitEntity.IsNull())
+            {
+                if (Camera *cockpit = world.GetComponent<Camera>(cockpitEntity))
+                    cockpit->mActive = toCockpit;
+            }
+            ForEachChaseCamera(world, controllers, aircraftEntity,
+                [&](Entity entity)
+                {
+                    if (Camera *camera = world.GetComponent<Camera>(entity))
+                        camera->mActive = !toCockpit;
+                    if (cut && !toCockpit)
+                        CutCamera(world, entity);
+                });
+            if (cut && toCockpit && !cockpitEntity.IsNull())
+                CutCamera(world, cockpitEntity);
+
+            runtime.cameraView = view;
+        }
+
         void SetUpCameras(World &world, Entity aircraftEntity, const AircraftConfig &config,
             AircraftRuntime &runtime, Query<CameraController> &controllers)
         {
@@ -65,10 +89,9 @@ namespace mir
                         runtime.cockpitCamera = child;
                 });
 
-            if (!runtime.cockpitCamera.IsNull())
+            const bool hasCockpit = !runtime.cockpitCamera.IsNull();
+            if (hasCockpit)
             {
-                if (Camera *cockpit = world.GetComponent<Camera>(runtime.cockpitCamera))
-                    cockpit->mActive = false;
                 if (Transform *transform = world.GetComponent<Transform>(runtime.cockpitCamera))
                 {
                     transform->SetPosition(WorldVec3(BodyToLocal(config.camera.eye)));
@@ -76,7 +99,23 @@ namespace mir
                 }
             }
 
-            runtime.cameraView = FlightCameraView::Chase;
+            bool hasChase = false;
+            ForEachChaseCamera(world, controllers, aircraftEntity, [&hasChase](Entity) { hasChase = true; });
+
+            const bool inCockpit = runtime.cameraView == FlightCameraView::Cockpit;
+            if (inCockpit && !hasCockpit && hasChase)
+                SelectView(world, aircraftEntity, runtime, controllers, FlightCameraView::Chase, true);
+            else if (!inCockpit && !hasChase && runtime.hasChaseCamera && hasCockpit)
+                SelectView(world, aircraftEntity, runtime, controllers, FlightCameraView::Cockpit, true);
+            else if (inCockpit && hasCockpit)
+                SelectView(world, aircraftEntity, runtime, controllers, FlightCameraView::Cockpit, false);
+            else if (hasCockpit)
+            {
+                if (Camera *cockpit = world.GetComponent<Camera>(runtime.cockpitCamera))
+                    cockpit->mActive = false;
+            }
+
+            runtime.hasChaseCamera = hasChase;
             runtime.cameraConfig = &config;
         }
 
@@ -96,20 +135,9 @@ namespace mir
             if (!hasChase)
                 return;
 
-            const bool toCockpit = runtime.cameraView == FlightCameraView::Chase;
-            cockpit->mActive = toCockpit;
-            ForEachChaseCamera(world, controllers, aircraftEntity,
-                [&](Entity entity)
-                {
-                    if (Camera *camera = world.GetComponent<Camera>(entity))
-                        camera->mActive = !toCockpit;
-                    if (!toCockpit)
-                        CutCamera(world, entity);
-                });
-            if (toCockpit)
-                CutCamera(world, cockpitEntity);
-
-            runtime.cameraView = toCockpit ? FlightCameraView::Cockpit : FlightCameraView::Chase;
+            const FlightCameraView next =
+                runtime.cameraView == FlightCameraView::Chase ? FlightCameraView::Cockpit : FlightCameraView::Chase;
+            SelectView(world, aircraftEntity, runtime, controllers, next, true);
         }
     }
 

@@ -291,7 +291,7 @@ namespace mir
         PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>();
         if (!gates)
             gates = &world.EmplaceResource<PhysicsStepGates>();
-        gates->mGates.push_back(this);
+        gates->AddHolding(this);
     }
 
     // The cache's budgets and policy, logged once where the cache is made.
@@ -538,14 +538,20 @@ namespace mir
         if (!Bound())
             return;
         mSuspended = true;
-        if (mCollision && mCache)
-            mCollision->ReleaseInterest(mCache->Streamer());
+        if (mCache)
+        {
+            mCache->SetSuspended(mCacheOwner, true);
+            if (mCollision)
+                mCollision->ReleaseInterest(mCache->Streamer());
+        }
         ClearViews();
     }
 
     void TerrainRuntime::Resume()
     {
         mSuspended = false;
+        if (mCache)
+            mCache->SetSuspended(mCacheOwner, false);
     }
 
     void TerrainRuntime::ClearViews()
@@ -897,24 +903,24 @@ namespace mir
             return;
         const std::vector<std::shared_ptr<TerrainResidentRelease>> staged =
             mSwitch ? mSwitch->Staged() : std::vector<std::shared_ptr<TerrainResidentRelease>>{};
-        std::vector<TerrainReleaseInfo> keep;
+        std::vector<TerrainReleaseInfo> loaded, stagedInfos;
         std::vector<TerrainCollisionInstance> active, prewarm;
         for (const TerrainInstanceState &instance : mWorld->Resource<TerrainWorld>().Instances())
         {
             const TerrainReleaseInfo &info = instance.release->Info();
-            keep.push_back(info);
+            loaded.push_back(info);
             active.push_back({instance.release->SharedHandle(), instance.placement,
                               streamer->ModeOf(info).value_or(TerrainResidencyMode::Interest)});
             for (const std::shared_ptr<TerrainResidentRelease> &release : staged)
                 if (release->Info().asset == info.asset)
                 {
-                    keep.push_back(release->Info());
+                    stagedInfos.push_back(release->Info());
                     prewarm.push_back({release->SharedHandle(), instance.placement,
                                        streamer->ModeOf(release->Info()).value_or(TerrainResidencyMode::Interest)});
                 }
         }
         if (mCache)
-            mCache->SetHeldReleases(mCacheOwner, keep);
+            mCache->SetHeldReleases(mCacheOwner, loaded, stagedInfos);
         if (mCollision)
             mCollision->SetInstances(active, prewarm);
         mStagingVersion = mSwitch ? mSwitch->StagingVersion() : 0;

@@ -14,12 +14,15 @@
 #include <flight/FlightEnvironment.h>
 #include <flight/FlightInputSystem.h>
 #include <flight/FlightTouchdownSystem.h>
+#include <flight/components/Aircraft.h>
 
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 
 #include <algorithm>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace mir
 {
@@ -45,7 +48,18 @@ namespace mir
         if (mReloadSource)
         {
             mReloadStages[0] = context.scheduler.AddStage(Stage::ReloadPrepare,
-                [this](SystemContext &) { mStore.PrepareReload(mReloadSource()); });
+                [this](SystemContext &)
+                {
+                    // Edit never loads configs into the store, so the aircraft in the World name what to check.
+                    std::vector<std::string> referenced;
+                    mWorld->ForEach<Aircraft>(
+                        [&referenced](Entity, Aircraft &aircraft)
+                        {
+                            if (aircraft.config[0] != '\0')
+                                referenced.emplace_back(aircraft.config);
+                        });
+                    mStore.PrepareReload(mReloadSource(), referenced);
+                });
             mReloadStages[1] = context.scheduler.AddStage(Stage::ReloadCommit,
                 [this](SystemContext &) { mStore.CommitReload(); });
             mReloadStages[2] = context.scheduler.AddStage(Stage::ReloadAbort,

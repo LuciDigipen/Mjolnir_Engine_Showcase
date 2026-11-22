@@ -77,8 +77,9 @@ edits the store's object for the path, so every aircraft on that file sees the c
 re-applies it. With no store in the world, or a path that did not load, the Edit section is hidden.
 
 **Only a dirty path saves, and only with a source root.** The `* unsaved` marker follows `IsDirty`; a
-successful write clears it, a failed write keeps it and shows the error, which is logged too. A reload that
-replaces unsaved edits leaves a notice the window shows until it is dismissed.
+successful write clears it. The text is parsed before it is written, so an edit the parser rejects leaves the
+source file as it was. That and a failed write keep the marker and show the error, which is logged too. A reload
+that replaces unsaved edits leaves a notice the window shows until it is dismissed.
 
 **L3 is read and generated, not edited.** The L3 section and its out-of-table highlight are read-only; the
 generate button replaces the store's L3 profile through `Edit` + `MarkEdited` and saves with the same path as

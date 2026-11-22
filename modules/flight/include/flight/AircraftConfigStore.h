@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -22,6 +23,7 @@ namespace mir
     struct AircraftConfig;
     class AssetCache;
     class AssetResolver;
+    class AssetsModule;
     struct AssetBlobView;
 
     class AircraftConfigStore
@@ -45,8 +47,9 @@ namespace mir
         void ClearDirty(std::string_view path);
 
         // Decodes every cached path through the candidate source; a cached success that no longer
-        // decodes vetoes the whole reload with std::runtime_error and stages nothing.
-        void PrepareReload(Source candidate);
+        // decodes vetoes the whole reload with std::runtime_error and stages nothing. So does a referenced
+        // path the candidate cannot decode, unless this reload leaves that path as it was.
+        void PrepareReload(Source candidate, std::span<const std::string> referenced = {});
         // Swaps the staged configs into their existing objects, so held pointers stay valid. A dirty
         // path takes the file's content and is reported by TakeOverwrittenEdits.
         void CommitReload();
@@ -82,4 +85,6 @@ namespace mir
 
     // Synchronous, through the cooked assets, like the script loader.
     AircraftConfigStore::Source MakeAircraftConfigSource(AssetCache &assets, const AssetResolver &resolver);
+    // Reads the reload being prepared, including the paths it adds.
+    AircraftConfigStore::Source MakeAircraftCandidateSource(AssetsModule &assets, const AssetResolver &resolver);
 }

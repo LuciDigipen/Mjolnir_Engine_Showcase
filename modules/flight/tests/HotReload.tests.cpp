@@ -445,3 +445,48 @@ TEST_CASE("A reload re-runs the camera setup", "[flight][reload][camera]")
     REQUIRE(cockpitTransform != nullptr);
     CHECK(SameVector(cockpitTransform->Position(), mir::WorldVec3(mir::BodyToLocal(config->camera.eye))));
 }
+
+TEST_CASE("An import is validated against the aircraft the Edit world references", "[flight][reload]")
+{
+    BlobFiles current;
+    BlobFiles candidate;
+
+    FlightFixture fixture;
+    mir::SetEngineMode(fixture.world, mir::EngineMode::Edit);
+    mir::FlightModule flight(fixture.ModuleContext(), MakeSource(current), MakeFactory(candidate));
+    fixture.Start();
+    fixture.AddAircraft(kPath);
+
+    SECTION("a config that becomes malformed vetoes")
+    {
+        current.Set(kPath, kLightConfig);
+        candidate.Set(kPath, "{");
+        CHECK_THROWS_AS(fixture.RunStage(mir::Stage::ReloadPrepare), std::runtime_error);
+    }
+    SECTION("a newly imported malformed config vetoes")
+    {
+        candidate.Set(kPath, "{");
+        CHECK_THROWS_AS(fixture.RunStage(mir::Stage::ReloadPrepare), std::runtime_error);
+    }
+    SECTION("a deleted config vetoes")
+    {
+        current.Set(kPath, kLightConfig);
+        CHECK_THROWS_AS(fixture.RunStage(mir::Stage::ReloadPrepare), std::runtime_error);
+    }
+    SECTION("a valid config passes")
+    {
+        candidate.Set(kPath, kHeavyConfig);
+        CHECK_NOTHROW(fixture.RunStage(mir::Stage::ReloadPrepare));
+    }
+    SECTION("a config that was already missing does not block other imports")
+    {
+        CHECK_NOTHROW(fixture.RunStage(mir::Stage::ReloadPrepare));
+    }
+    SECTION("a config that was already malformed and is untouched does not block other imports")
+    {
+        current.Set(kPath, "{");
+        candidate.Set(kPath, "{");
+        CHECK_NOTHROW(fixture.RunStage(mir::Stage::ReloadPrepare));
+    }
+    fixture.RunStage(mir::Stage::ReloadAbort);
+}

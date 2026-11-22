@@ -823,3 +823,43 @@ TEST_CASE("An invalid inertia tensor falls back to the shape's and is logged", "
     CHECK(world.BodyAngularVelocity(refusedDiagonal).y == Catch::Approx(expected));
     CHECK(world.BodyAngularVelocity(refusedProducts).y == Catch::Approx(expected));
 }
+
+TEST_CASE("A custom centre of mass is measured from the body origin whatever the collider offset",
+          "[physics][inertia][centerOfMass]")
+{
+    mir::PhysicsWorldDesc desc;
+    desc.mGravity = glm::vec3(0.0f);
+    mir::PhysicsWorld world(desc);
+
+    mir::BodyDesc properties;
+    properties.mAllowSleeping = false;
+    properties.mLinearDamping = 0.0f;
+    properties.mAngularDamping = 0.0f;
+    properties.mCustomInertia = true;
+    properties.mInertiaDiagonal = glm::vec3(2.0f);
+    properties.mCustomCenterOfMass = true;
+    properties.mOffset = glm::vec3(1.0f, 0.0f, 0.0f);
+
+    SECTION("at the origin")
+    {
+        properties.mCenterOfMassOffset = glm::vec3(0.0f);
+    }
+    SECTION("away from the origin and the collider")
+    {
+        properties.mCenterOfMassOffset = glm::vec3(0.25f, 0.5f, 0.0f);
+    }
+    SECTION("at the collider")
+    {
+        properties.mCenterOfMassOffset = properties.mOffset;
+    }
+
+    const mir::BodyHandle body = AddFloatingBox(world, {}, glm::vec3(0.5f), properties);
+    world.SetBodyAngularVelocity(body, glm::vec3(0.0f, 0.0f, 2.0f));
+    for (int step = 0; step < 30; ++step)
+        world.Step(kStep);
+
+    // A free body spins about its centre of mass, so that point stays where it was.
+    const glm::vec3 center = properties.mCenterOfMassOffset;
+    const mir::WorldVec3 moved = MetersOf(world, body) + mir::WorldVec3(world.BodyRotation(body) * center);
+    CHECK(glm::length(glm::vec3(moved - mir::WorldVec3(center))) <= 1.0e-3f);
+}

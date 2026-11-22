@@ -15,6 +15,7 @@
 
 namespace mir
 {
+    class AssetManifest;
     class AssetsModule;
 
     // Finds an asset's id from its path.
@@ -27,6 +28,9 @@ namespace mir
         // The id of the asset with this path
         AssetId Resolve(std::string_view path, std::string *error = nullptr) const;
 
+        // Like Resolve, against the reload being prepared; only between BeginReload and Commit/AbortReload
+        AssetId ResolveCandidate(std::string_view path, std::string *error = nullptr) const;
+
         // Like Resolve, but for a full path that is not inside the game's folder
         AssetId ResolveFull(std::string_view path) const;
 
@@ -34,6 +38,8 @@ namespace mir
         std::string PathOf(AssetId id) const;
 
     private:
+        AssetId ResolveIn(const AssetManifest &manifest, std::string_view path, std::string *error) const;
+
         const AssetsModule &mAssets;
         std::string mIdRoot;
     };

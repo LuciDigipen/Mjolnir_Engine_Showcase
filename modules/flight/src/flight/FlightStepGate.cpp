@@ -143,6 +143,7 @@ namespace mir
         const AircraftConfig &config = *runtime.config;
         if (!HasAerodynamicProfile(config.aero, aircraft.tier))
         {
+            runtime.aero = {};
             if (runtime.aeroMissingConfig != runtime.config)
             {
                 runtime.aeroMissingConfig = runtime.config;

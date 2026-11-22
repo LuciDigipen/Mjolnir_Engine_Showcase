@@ -339,7 +339,7 @@ namespace mir
             std::shared_ptr<const TerrainReleaseHandle> handle;
             TerrainResidencyMode mode = TerrainResidencyMode::Interest;
             uint64_t footprint = 0;
-            bool staged = false;
+            TerrainReleaseUse use = TerrainReleaseUse::Loaded;
             // Height-query tiles and when they were last asked for or answered from.
             std::unordered_map<TerrainPayloadKey, double> queryUses;
             // Weight-query tiles and when they were last asked for or answered from.
@@ -389,7 +389,7 @@ namespace mir
             Payload payload;
             // The last failure, if any.
             TerrainPackError error;
-            // Required for as long as its Eager release lives.
+            // Its Eager release's use gives it a demand.
             bool eager = false;
         };
 
@@ -684,6 +684,15 @@ namespace mir
                         e->eager = true;
         }
 
+        void ChangeUse(ReleaseState &release, TerrainReleaseUse next)
+        {
+            const bool wasRetained = release.use == TerrainReleaseUse::Retained;
+            release.use = next;
+            // A retained release's unwanted entries may be gone, canceled or evicted.
+            if (wasRetained && next != TerrainReleaseUse::Retained && release.mode == TerrainResidencyMode::Eager)
+                AddEager(release);
+        }
+
         void Want(const TerrainPayloadKey &key, TerrainDemand demand, float rank)
         {
             Entry *found = FindOrCreate(key);
@@ -708,12 +717,14 @@ namespace mir
             {
                 e.demand = std::nullopt;
                 e.rank = 0.0f;
-                if (e.eager && e.release->staged)
+                if (!e.eager)
+                    continue;
+                if (e.release->use == TerrainReleaseUse::Staged)
                 {
                     e.demand = TerrainDemand::Prefetch;
                     e.rank = std::numeric_limits<float>::infinity();
                 }
-                else if (e.eager)
+                else if (e.release->use == TerrainReleaseUse::Loaded)
                     e.demand = TerrainDemand::Required;
             }
             for (const std::shared_ptr<ReleaseState> &release : releases)
@@ -1046,6 +1057,7 @@ namespace mir
     {
         MIR_ASSERT(release != nullptr, "TerrainStreamer::Add: no release");
         const TerrainReleaseInfo &info = release->Info();
+        const TerrainReleaseUse use = staged ? TerrainReleaseUse::Staged : TerrainReleaseUse::Loaded;
         if (const std::shared_ptr<Impl::ReleaseState> known = mImpl->FindRelease(info.asset, info.release))
         {
             const bool owned = std::any_of(
@@ -1053,7 +1065,7 @@ namespace mir
                 [&](const std::weak_ptr<TerrainResidentRelease> &owner) { return owner.lock() == release; });
             if (!owned)
                 known->owners.push_back(release);
-            known->staged = known->staged && staged;
+            mImpl->ChangeUse(*known, std::max(known->use, use));
             return known->mode;
         }
 
@@ -1061,7 +1073,7 @@ namespace mir
         state->info = info;
         state->owners.push_back(release);
         state->handle = release->SharedHandle();
-        state->staged = staged;
+        state->use = use;
         for (const TerrainTileRecord &record : state->handle->Index().tiles)
             state->footprint += TerrainPayloadFootprint(record);
         for (const TerrainTileRecord &record : state->handle->Index().regions)
@@ -1072,7 +1084,8 @@ namespace mir
         {
             uint64_t eager = 0;
             for (const std::shared_ptr<Impl::ReleaseState> &other : mImpl->releases)
-                if (other->mode == TerrainResidencyMode::Eager && !other->staged && other->Alive() &&
+                if (other->mode == TerrainResidencyMode::Eager && other->use == TerrainReleaseUse::Loaded &&
+                    other->Alive() &&
                     !(staged && other->info.asset == info.asset))
                     eager += other->footprint;
             const uint64_t budget = mImpl->settings.cpu.budgetBytes;
@@ -1084,6 +1097,13 @@ namespace mir
         if (mode == TerrainResidencyMode::Eager)
             mImpl->AddEager(*state);
         return mode;
+    }
+
+    void TerrainStreamer::SetUse(const TerrainReleaseInfo &release, TerrainReleaseUse use)
+    {
+        const std::shared_ptr<Impl::ReleaseState> state = mImpl->FindRelease(release.asset, release.release);
+        if (state && state->info == release)
+            mImpl->ChangeUse(*state, use);
     }
 
     std::shared_ptr<TerrainResidentRelease> TerrainStreamer::Find(AssetId asset, TerrainReleaseId release) const

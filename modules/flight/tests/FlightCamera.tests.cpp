@@ -228,3 +228,47 @@ TEST_CASE("The toggle does nothing without both cameras", "[flight][camera]")
         CHECK(fixture.Aircraft().runtime.cameraView == mir::FlightCameraView::Chase);
     }
 }
+
+TEST_CASE("Camera setup keeps the cockpit view", "[flight][camera]")
+{
+    CameraFixture fixture;
+    fixture.Update();
+    fixture.Press();
+
+    fixture.config.camera.chaseDistance = 25.0f;
+    fixture.Aircraft().runtime.cameraConfig = nullptr;
+    fixture.Update();
+
+    CHECK(fixture.CockpitCamera().mActive);
+    CHECK_FALSE(fixture.ChaseCamera().mActive);
+    CHECK(fixture.Aircraft().runtime.cameraView == mir::FlightCameraView::Cockpit);
+    CHECK(SameVector(mir::WorldVec3(fixture.ChaseController().mOffset), glm::vec3{0.0f, 3.0f, 25.0f}));
+}
+
+TEST_CASE("Camera setup falls back when the selected camera is gone", "[flight][camera]")
+{
+    CameraFixture fixture;
+    fixture.Update();
+
+    SECTION("the cockpit")
+    {
+        fixture.Press();
+        fixture.world.RemoveComponent<mir::Camera>(fixture.cockpit);
+        fixture.Aircraft().runtime.cameraConfig = nullptr;
+        fixture.Update();
+
+        CHECK(fixture.ChaseCamera().mActive);
+        CHECK(mir::IsCameraCut(fixture.world, fixture.chase));
+        CHECK(fixture.Aircraft().runtime.cameraView == mir::FlightCameraView::Chase);
+    }
+    SECTION("the chase camera")
+    {
+        fixture.world.RemoveComponent<mir::Camera>(fixture.chase);
+        fixture.Aircraft().runtime.cameraConfig = nullptr;
+        fixture.Update();
+
+        CHECK(fixture.CockpitCamera().mActive);
+        CHECK(mir::IsCameraCut(fixture.world, fixture.cockpit));
+        CHECK(fixture.Aircraft().runtime.cameraView == mir::FlightCameraView::Cockpit);
+    }
+}

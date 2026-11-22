@@ -148,3 +148,21 @@ TEST_CASE("PathOf gives the full path, or the id in hex", "[assets][resolver]")
     CHECK(resolver.PathOf(unnamed).size() == 16);
     CHECK(resolver.PathOf(AssetId{ 0xABCDull }) == "000000000000abcd");
 }
+
+TEST_CASE("A candidate lookup sees what the reload adds before it commits", "[assets][resolver]")
+{
+    Cooked cooked;
+    cooked.Write({ Entry("games/Game/assets/old.txt", "games/Game/assets/old.txt") });
+    AssetsModule assets(cooked.dir);
+    const AssetResolver resolver(assets, kRoot);
+
+    cooked.Write({ Entry("games/Game/assets/new.txt", "games/Game/assets/new.txt") });
+    assets.BeginReload();
+
+    CHECK(resolver.ResolveCandidate("new.txt") == MakeAssetId("games/Game/assets/new.txt"));
+    std::string error;
+    CHECK(resolver.ResolveCandidate("old.txt", &error).IsNull());
+    CHECK(error == "no asset has the path 'games/Game/assets/old.txt'");
+    CHECK(resolver.Resolve("new.txt").IsNull());
+    assets.AbortReload();
+}

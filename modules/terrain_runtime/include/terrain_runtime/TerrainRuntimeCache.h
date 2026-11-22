@@ -53,9 +53,12 @@ namespace mir
         size_t Concurrency() const;
 
         TerrainCacheOwner AddOwner();
-        // The releases this owner holds. Meshes of a release no owner holds retire now, and every weight texture
-        // once no owner holds any.
-        void SetHeldReleases(TerrainCacheOwner owner, std::span<const TerrainReleaseInfo> releases);
+        // The releases this owner holds: loaded, and staged for a switch. Meshes of a release no owner holds
+        // retire now, and every weight texture once no owner holds any.
+        void SetHeldReleases(TerrainCacheOwner owner, std::span<const TerrainReleaseInfo> loaded,
+                             std::span<const TerrainReleaseInfo> staged = {});
+        // A suspended owner's releases stay held, but only Retained in the streamer.
+        void SetSuspended(TerrainCacheOwner owner, bool suspended);
         void RemoveOwner(TerrainCacheOwner owner);
 
         // One clock for both runtimes, the streamer and the mesh residency.
@@ -73,9 +76,18 @@ namespace mir
         void SetRayTracing(bool rayTracing);
 
       private:
+        struct Holding
+        {
+            std::vector<TerrainReleaseInfo> loaded;
+            std::vector<TerrainReleaseInfo> staged;
+            bool suspended = false;
+        };
+
         void MakeResidencies(const TerrainStreamingSettings &settings, ITextureUploader *textures,
                              uint32_t samplerRow);
         void RetireUnheld();
+        // Each held release's highest use over its owners, to the streamer.
+        void ApplyUses();
 
         std::chrono::steady_clock::time_point mStart = std::chrono::steady_clock::now();
         std::shared_ptr<TerrainJobExecutor> mJobPool;
@@ -87,7 +99,7 @@ namespace mir
         std::unique_ptr<TerrainMeshResidency> mMeshes;
         std::unique_ptr<TerrainWeightResidency> mWeights;
         // By owner: the releases whose payloads and meshes stay.
-        std::map<TerrainCacheOwner, std::vector<TerrainReleaseInfo>> mHeld;
+        std::map<TerrainCacheOwner, Holding> mHeld;
         TerrainCacheOwner mNextOwner = 1;
         bool mRayTracing = false;
     };

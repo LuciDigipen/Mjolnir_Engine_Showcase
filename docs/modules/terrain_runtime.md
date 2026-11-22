@@ -67,8 +67,9 @@ PlayBegin      -> Refresh(force), BeginPlay adopt a ready switch, then Play pins
 SceneUnload    -> Unload                    interests released, meshes of releases no other runtime holds retired,
                                             weight textures retired once no runtime holds a release,
                                             collision pieces removed, TerrainWorld emptied
-Play / Stop    -> Suspend / Resume          the Edit runtime drops its interests and draws while Play draws the cache
-FixedUpdate    -> TerrainRuntime::BeforeStep  as a PhysicsStepGate before each step: install pieces, update needs,
+Play / Stop    -> Suspend / Resume          the Edit runtime drops its interests and draws while Play draws the cache;
+                                            its releases are only Retained, evictable under pressure
+FixedUpdate    -> TerrainRuntime::BeforeStep  as the first PhysicsStepGate before each step: install pieces, update needs,
                                             hold or resume each dynamic body, restrict its contacts
 Render         -> TerrainRuntime::Prepare   per viewport: select, SetInterest; then request every viewport's meshes
                   AppendViewDraws           that view's draws

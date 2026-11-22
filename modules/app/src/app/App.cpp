@@ -198,7 +198,7 @@ namespace mir
         : physics(context, &jobs),
     #if MIR_WITH_EDITOR
         flight(context, MakeAircraftConfigSource(assets.Cache(), resolver),
-            [&assets, &resolver] { return MakeAircraftConfigSource(assets.Candidate(), resolver); }),
+            [&assets, &resolver] { return MakeAircraftCandidateSource(assets, resolver); }),
     #else
         flight(context, MakeAircraftConfigSource(assets.Cache(), resolver)),
     #endif
