@@ -25,6 +25,7 @@
 #include <project/GameProject.h>
 
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -61,6 +62,7 @@ namespace mir
         Editor &Get() { return mEditor; }
         const Editor &Get() const { return mEditor; }
         AssetImportManager &Import() { return mImport; }
+        std::future<std::string> ImportTerrainMaterial(const std::filesystem::path &path);
         bool LayoutEnabled() const { return mEnableLayout; }
         bool HasUnsavedMaterialDrafts() const;
 
@@ -164,6 +166,7 @@ namespace mir
 
         Registration mFrameBegin;
         Registration mDrawer;
+        Registration mLateDrawer;
         Registration mSceneUnload;
         Registration mSceneLoad;
         Registration mSceneSaved;

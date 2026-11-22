@@ -339,3 +339,22 @@ TEST_CASE("A failed upload no longer holds its footprint", "[renderer][mesh-load
     // the memory is gone, so it must not count toward the target or evict other records
     CHECK(f.tracker.HeldBytes() == 0);
 }
+
+TEST_CASE("A ready mesh the renderer shrinks holds its new size", "[renderer][mesh-load]")
+{
+    Fixture f({ { "tri", std::string(kTriangle) } });
+    const MeshLoad &load = f.tracker.Request(Id("tri"), "tri");
+    f.tracker.Retain(Id("tri"));
+    f.Frame();
+    f.uploader.Record(load.mesh);
+    f.uploader.Complete(load.mesh);
+    f.Frame();
+    REQUIRE(load.phase == MeshLoadPhase::Ready);
+    const uint64_t uploaded = f.tracker.HeldBytes();
+    REQUIRE(uploaded > 1);
+
+    f.uploader.meshes.at(load.mesh.mIndex).compactedBytes = uploaded / 2;
+    CHECK(f.tracker.HeldBytes() == uploaded / 2);
+    CHECK(f.tracker.BytesOf(Id("tri")) == uploaded / 2);
+    CHECK(f.uploader.Residency().Held(GpuCategory::Mesh) == uploaded / 2);
+}

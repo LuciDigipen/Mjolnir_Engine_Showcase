@@ -41,12 +41,32 @@ units, measured by the backend's font at the size it is drawn, and screens size
 and centre their text with it. Without a backend it estimates half the font
 size a character.
 
+Text is drawn in `UIStyle::mFont`, the backend's own font while it is 0, and a
+widget places it across its rect by `mTextAlign`, left, centre or right inside
+the padding. `StyledText` is the one way text is drawn, by widgets, the shell's
+prompts and the demo alike: a shadow when `mTextShadowColor` has alpha, then an
+outline of eight copies `mTextOutlineWidth` out when `mTextOutlineColor` has
+alpha, then the text. Both fade with the text's own alpha, so a fading label
+takes its outline with it. They keep text readable over a bright sky.
+
 `GameUIModule` owns the `UIContext` and the screens drawn into it, each a
-function registered with `AddScreen`. `SetSuspended(true)` makes `RunFrame` return without running a screen or reading the pointer, for a scene that is still preparing its resources. `RunFrame(area, pointer)` is one frame:
-`BeginFrame`, every screen in registration order, `EndFrame`. A backend bridge
+function registered with `AddScreen(layer, screen)`. `SetSuspended(true)` makes `RunFrame` return without running a screen or reading the pointer, for a scene that is still preparing its resources. `RunFrame(area, pointer)` is one frame:
+`BeginFrame`, every `UIScreenLayer::Game` screen, then every `Shell` screen,
+each layer in registration order, `EndFrame`. A `Game` screen is what a game
+draws in play: its HUD, inventory or own menus, from Lua through
+[gameui_script](gameui_script.md). A `Shell` screen is the engine's, gameshell's
+HUD and pause menu, which must stay on top and reachable whatever the game
+draws. When a `Shell` screen holds the input, the next frame's `Game` screens
+draw every widget disabled (`UIContext::SetWidgetsDisabled`), so nothing under
+an open pause menu can be clicked or focused. A `Game` widget held when that
+happens lets go, so a drag under the menu stops, and `UIContext::SetFocus` is
+refused, so a `Game` screen cannot take focus from the menu. Screens move focus
+through `UIContext::SetFocus`, not `UIState::SetFocus`, for that reason. A backend bridge
 calls it; today that is `gameui_imgui`, which runs it in the ImGui frame's
 `Game` drawer group. The area comes from the `GameUIArea` World resource, which
 the editor's drawer writes with its scene viewport, or is the whole window.
+After each frame it writes `GameUIPointer::mOverWidget`: whether a widget is
+under the pointer or held by it.
 
 A widget is a rect plus a `UIId`. The id is a hash of a name and an optional
 index, the trick ImGui uses, so a widget in a loop keeps its identity
@@ -236,6 +256,20 @@ installed backend make its own copy, when the texture is added or when a
 backend is installed later. Each copy carries its own release function, so a
 backend may go before the textures; removing the backend only stops new copies.
 
+Fonts are TrueType or OpenType files in the game's assets. The cooker imports
+nothing from them and keeps them as raw bytes under their path's id.
+`UIFonts::Load(AssetCache&, AssetId)` reads them, and `UIFonts`, also owned by
+`UIContext`, keeps the bytes and has the backend make its font the same way
+`UITextures` does, with the same release. Bytes that do not start with a font
+file's tag, or whose table directory lists a table past the end of the file,
+are refused before the backend sees them: backends read the tables without
+checking, and a cut-off file is the usual damage. A font the installed backend
+cannot make is not added either, so `Add` and `Load` give the default font, and
+`ui:font` gives `nil`. Only a font added before any backend can turn out
+unusable later, and it then draws in the default font. A font that does not
+load is reported once. A font has no size: one font draws at every size a style
+or widget asks for.
+
 ### Layout
 
 `gameui/UILayout.h` turns one rect into others. `Inset` takes edges in,
@@ -285,18 +319,21 @@ wrap or grid, and no measuring pass.
 
 | Type | Header | Role |
 |---|---|---|
-| `UIRect`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice |
-| `UIDrawList` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`, `PushClip`/`PopClip`, recorded as `UIDrawCommand`s; `Sprite` nine-slices into `Texture`s |
+| `UIRect`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIFont`, `UITextAlign`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice; a font is a handle into `UIFonts`, 0 the backend's own |
+| `UIDrawList` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`, `PushClip`/`PopClip`, `PushOpacity`/`PopOpacity`, recorded as `UIDrawCommand`s; `Sprite` nine-slices into `Texture`s |
 | `UITextures` | `gameui/UITextures.h` | Cooked textures as ImGui user textures, handed out as sprites; `Load` from an `AssetCache`, `Add` from a `TextureAsset` |
+| `UIFonts` | `gameui/UIFonts.h` | Font files kept as bytes and made by the backend, handed out as `UIFont`s; `Load` from an `AssetCache`, `Add` from bytes |
+| `IUIBackend`, `UIBackendTexture`, `UIBackendFont` | `gameui/UIBackend.h` | What draws the UI: `CreateTexture`, `MakeFont`, `Submit`, `MeasureText` in a font |
 | `UIId` | `gameui/UIId.h` | A widget's identity: a `constexpr` hash of a name and an optional index |
 | `UIState`, `UIPointer`, `UIInteraction` | `gameui/UIState.h` | Hot, active and focus, the press latch, the hit test, and `FollowLink` |
 | `UINavLinks`, `UIWidgetOptions` | `gameui/UIState.h` | A widget's four neighbours, whether it is hidden or disabled, whether it takes left and right (`mAdjustsX`), and whether only the pointer reaches it (`mPointerOnly`) |
 | `UINavInput`, `UINavDirection` | `gameui/UINavInput.h` | The UI actions for a frame, read from `InputState` by name; `UINavStepper` turns `UINavigate` into steps, one per direction per press |
-| `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing |
+| `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel`, `StyledText` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing; `StyledText` draws text in the style's font with its shadow and outline |
 | `UIAnchor`, `UIAxis`, `UIStack`; `Inset`, `Anchor` | `gameui/UILayout.h` | Layout over rects: insets, anchoring to a point of a container, rows and columns cut from either end; `kUITopLeft` to `kUIBottomRight` |
+| `GameUIModule`, `UIScreenLayer` | `gameui/GameUIModule.h` | The context and the screens by layer; `RunFrame`, `SetSuspended`, `ShellHeldInput` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
 | `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures, the fonts and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area. Each command stores its clip already intersected with
@@ -347,8 +384,8 @@ enabled widget declared. `UIState::SetFocus` picks the widget a screen opens on.
 ## Rules
 
 **gameui names no graphics API.** It does not link `imgui`, and no header in it
-includes one. `IUIBackend` is the whole contract: make a texture, submit a
-frame. Swapping the backend means swapping the bridge.
+includes one. `IUIBackend` is the whole contract: make a texture, make a font,
+measure text, submit a frame. Swapping the backend means swapping the bridge.
 
 **The game UI draws after the editor's layout in the same frame.** The editor's
 drawer writes `GameUIArea` from the scene viewport, and the bridge's drawer runs
@@ -356,12 +393,31 @@ in the `Game` group, after every `Tools` drawer, so the area is this frame's.
 Neither library depends on the other, so the order comes from the group, not
 from declaration order.
 
+**A click in the viewport goes to one owner: the editor's tools, then the game
+UI, then the scene.** The tools have it while ImGui wants the mouse (a window,
+popup or menu under the pointer, or a drag that began in one) or while the
+editor sets `GameUIArea::mToolsHavePointer` (the gizmo, the view pie, or an
+extension such as a terrain brush). The bridge then passes a `UIPointer` with
+`mWithheld` set: nothing is hovered or pressed, a held widget lets go without a
+click, and the cursor is not hidden. Otherwise a widget that is hot or held, as
+`GameUIPointer` says, keeps the click from the editor's picking. The editor
+draws first, so it holds a scene click and applies it in a `Late` drawer, after
+the game UI has hit-tested the same frame's pointer. Only widgets take the
+pointer: a panel drawn as a plain `Image` lets a click through.
+
 **The fullscreen area is the window's framebuffer size, not the swapchain's.**
 The swapchain catches up to a resize only inside `DrawFrame`, a frame after the
 UI is built, so its extent would clip the first frame of every resize.
 
 **Balance every `PushClip`.** `EndFrame` asserts on an unpopped clip, and
 `PopClip` asserts on popping the root.
+
+**Balance every `PushOpacity` too, and know it only fades.** It multiplies the
+alpha of every command recorded until its pop, nested pushes multiply, and
+`EndFrame` asserts on one left open. A widget faded to 0 still takes the
+pointer and focus, so skip or disable it while it is hidden. To fade or slide a
+screen over time, ease the numbers with the `actions` module's value tweens on
+its UI clock and read them each frame: see [actions.md](actions.md).
 
 **Give each widget its own id within a frame.** Two widgets declared with one id
 are one widget to `UIState`: pressing either holds both. It is not an assert,
@@ -522,7 +578,11 @@ across sizes, pieces covering the rect exactly, corners shrinking by one factor,
 uneven and oversized slices, an atlas cell, and culling by piece.
 `tests/UITextures.tests.cpp` covers the pixels kept until a backend makes a
 texture, a wrong pixel count, and copies releasing themselves after the backend
-is gone. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
+is gone. `tests/UIFonts.tests.cpp` covers which bytes are a whole font file, a
+font made once a backend is installed and released with the table, and one the
+backend cannot make, and
+`tests/UIWidgets.tests.cpp` covers text in the style's font and size, the shadow
+and outline passes and their fading, alignment, and measuring in a font. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
 helper, a row inside a column inside an anchored region, and the demo's
 `Layout` at 16:9, 21:9, 4:3 and three more sizes, each with no inset, a TV's 5%
 and a lopsided one: everything inside the safe area, the menu down its left and
@@ -539,13 +599,13 @@ looks right is verified by running `--ui-demo`.
 
 1. ~~**Textures.**~~ Landed 2026-10-02, through ImGui's dynamic texture path
    rather than a renderer bridge. See Art.
-2. **Pointer ownership.** Whether the game UI or the editor owns a click in the
-   viewport: a hot game widget should stop the editor picking under it, and an
-   editor popup over the viewport should hide the pointer from the game UI.
-   Belongs with `imguiruntime`'s input-capture item. Hit testing itself landed
-   2026-09-28.
-3. **Content from the game.** Replace `UIDemoScreen` as the only game UI with UI a game
-   authors, through Lua or data.
+2. ~~**Pointer ownership.**~~ Landed 2026-11-20. See Rules. Left: a panel
+   that is not a widget, such as a backdrop `Image`, does not take the pointer,
+   and nothing yet keeps a click on a game widget from gameplay's mouse
+   bindings in Play.
+3. ~~**Content from the game.**~~ Landed 2026-11-20 through Lua: a script's
+   `OnUI`, see [gameui_script.md](gameui_script.md). Layouts from data are that
+   module's backlog.
 4. ~~**Text measurement**~~ for layout landed 2026-11-04. Culling text by its
    bounds still uses only the clip.
 5. **DPI.** The UI scales with the display's height above the reference
@@ -581,8 +641,48 @@ looks right is verified by running `--ui-demo`.
    the game's options, would set them through `SetSafeAreaInsets`.
 14. **More layout.** Equal shares, wrapping, grids and scrolling wait for a
    screen that needs them, as rows and columns waited for the demo screen.
+15. **More from fonts.** An outline is eight copies of the text, fine at HUD
+   amounts and soft at large widths; signed distance fields would make it
+   sharp and cheap. A character a font lacks shows the backend's fallback
+   glyph, with no second font to fall back to. No letter spacing, wrapping or
+   rich text, and no unloading, as for textures.
 
 ## Changed
+
+*2026-11-21* — **Fonts.** Was: all text was in the backend's one font, the
+editor's Inter. Now: `UIFonts` loads TrueType and OpenType files from the game's
+assets, `UIStyle` has a font, an alignment, a shadow and an outline, every text
+goes through `StyledText`, and `IUIBackend` has `MakeFont`, and its `Submit` and
+`MeasureText` take the fonts. Because: game HUDs need their own type, readable
+over the scene.
+
+*2026-11-21* — **A disabled widget lets go, and a blocked layer cannot take
+focus.** Was: a widget disabled mid-press kept the pointer, so a `Game` slider
+dragged when the pause menu opened went on following the mouse behind it, and a
+`Game` screen could move focus off the menu every frame. Now: a held widget that
+is disabled or hidden releases the pointer, every widget reads
+`UIContext::WidgetsDisabled`, and `UIContext::SetFocus` is refused while it is
+set. Because: review of the Lua game UI.
+
+*2026-11-20* — **Screens have layers.** Was: `AddScreen(screen)` drew every
+screen in registration order. Now: `AddScreen(layer, screen)`, with `Game`
+screens first and `Shell` screens over them, and a `Shell` screen that holds
+the input disables the `Game` layer's widgets the next frame. Because: a game's
+own screens, from Lua, are built after the shell and would otherwise draw over
+its pause menu and stay clickable under it.
+
+*2026-11-20* — **The pointer has one owner.** Was: the editor picked the entity
+behind a game button that was clicked, and the game UI hovered and clicked
+under an editor popup over the viewport. Now: `UIPointer::mWithheld`,
+`GameUIArea::mToolsHavePointer` and `GameUIPointer` hand each click to the
+editor's tools, the game UI or the scene, in that order. Because: one click
+did two things whenever a game screen was open in the editor.
+
+*2026-11-19* — **An opacity stack.** Was: a widget drawn in style colours could
+not be faded, only an `Image` took a tint. Now: `UIDrawList::PushOpacity` and
+`PopOpacity` scale the alpha of everything between them. Because: menus and
+HUD elements fade in and out, and every widget would otherwise need a tint
+argument.
 
 *2026-11-05* — **`GameUIDemo`.** Was: the widget demo was chosen by
 `--ui-demo` at startup only. Now: a World resource the game shell reads each

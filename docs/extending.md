@@ -70,6 +70,12 @@ if(BUILD_TESTING)
 endif()
 ```
 
+Every `engine_add_module` target gets a private C++ standard-library PCH.
+Add stable third-party headers with `PCH_HEADERS`, using header names without
+angle brackets, for example `engine_add_module(renderer PCH_HEADERS glm/glm.hpp)`.
+The module must still declare the dependencies that provide those headers.
+Keep ordinary includes in source files so builds with PCH disabled remain valid.
+
 And the tests directory, if there is one:
 
 ```cmake

@@ -28,8 +28,11 @@ namespace mir
         if (!mMenu.IsOpen())
             mPlaySeconds += dt;
 
-        if (mHud.Draw(ui, mPlaySeconds, !mMenu.IsOpen()))
+        if (mParts.mHud && mHud.Draw(ui, mPlaySeconds, !mMenu.IsOpen(), mParts.mMenu))
             mMenu.Open();
+
+        if (!mParts.mMenu)
+            return GameShellAction::None;
 
         const PauseMenuAction menuAction = mMenu.Draw(ui, true);
         UpdateCursor(ui, dt);

@@ -152,6 +152,32 @@ builds with it OFF, into its own `builds/windows-msvc-debug-float/`. Tests that
 need double positions far from the origin report Skipped there. After changing
 code that handles positions, build and test both presets.
 
+**Precompiled headers.** Every compiled engine module privately precompiles stable
+standard-library headers, with selected GLM, ImGui and JSON headers added by the
+modules that use them. Each module builds its own PCH with its compiler settings.
+C sources, tests and sources with separate compiler settings keep their normal
+include order. To disable precompiled headers for an include-dependency check:
+
+```powershell
+cmake --preset windows-msvc-debug -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+cmake --build --preset windows-msvc-debug
+```
+
+Configure with `-DCMAKE_DISABLE_PRECOMPILE_HEADERS=OFF` to enable them again.
+Keep normal includes in source files so both configurations build independently.
+
+**Offline tools.** Development builds automatically build `AssetCooker` and
+`TerrainTool` in Release under `<build>/tools-release`. Builds, editor imports
+and packaging use those executables, while engine and tool-test libraries retain
+the parent configuration. The sub-build reuses the parent's vcpkg installation
+without installing packages and checks its sources on every build. Its compile
+parallelism is capped at four jobs to limit contention with the parent build.
+Release builds keep their tools in the parent tree without a sub-build.
+
+To debug the tools in the parent configuration, configure with
+`-DMIR_OPTIMIZE_ASSET_COOKER=OFF` and rebuild. Switching configurations does not
+change asset cache fingerprints. `ShaderPublisher` remains in the parent tree.
+
 **Reconfigure** every time a `CMakeLists.txt` or `vcpkg.json` changes.
 
 Ninja does it for you at build time, and cmake-tools can do it on save — see
@@ -704,6 +730,11 @@ More info: [extending.md](extending.md).
 
 ## Changed
 
+*2026-11-15*, **Development builds run Release offline tools.** AssetCooker and
+TerrainTool use an automatic Release sub-build instead of partial Debug
+optimization. Tool tests retain Debug checks, and the opt-out builds tools in
+the parent configuration for debugging.
+
 *2026-10-01* — **World precision is a compile-time option.** `MIR_LARGE_WORLD`
 picks double or float world positions (`WorldReal`) and, through the vcpkg
 `large-world` feature, the matching Jolt. A runtime switch, or templating every
@@ -748,3 +779,19 @@ The packaged `game.json` serves as the runtime catalog and uses paths relative
 to the packaged game. Legacy games can keep `sceneDir`. To register a legacy
 startup scene explicitly, give it the ID `default` and use its existing path.
 Opening or packaging a game leaves the source manifest intact.
+
+### Engine HUD and pause menu
+
+Every game gets the engine's HUD and pause menu. A game that draws its own
+from Lua turns them off in `game.json`:
+
+```json
+{
+  "shell": { "hud": false, "menu": false }
+}
+```
+
+Both default to `true`, and either can be off alone. With the menu off, the
+game must give the player a way to pause and quit, with `world:pause()`,
+`world:resume()` and `world:quit()`. See
+[gameshell.md](modules/gameshell.md) and [gameui_script.md](modules/gameui_script.md).

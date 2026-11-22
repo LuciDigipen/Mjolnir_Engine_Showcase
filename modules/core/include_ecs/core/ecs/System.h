@@ -55,6 +55,8 @@ namespace mir
     {
         SceneEnd,
         SceneUnload,
+        // after every SceneUnload function has let go of what it held
+        SceneUnloaded,
         SceneLoad,
         SceneSaved,
         PlayBegin,

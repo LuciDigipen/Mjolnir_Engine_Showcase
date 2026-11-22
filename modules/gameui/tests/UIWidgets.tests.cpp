@@ -19,6 +19,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -661,14 +662,21 @@ namespace
     {
     public:
         UIBackendTexture CreateTexture(uint32_t, uint32_t, std::span<const uint8_t>) override { return {}; }
-        void Submit(const UIRect &, float, const UIDrawList &, const UITextures &) override {}
-        UISize MeasureText(std::string_view text, float fontSize) const override
+        UIBackendFont MakeFont(std::span<const uint8_t>) override
+        {
+            return UIBackendFont{ reinterpret_cast<void *>(static_cast<uintptr_t>(++mMadeFonts)), [](void *) {} };
+        }
+        void Submit(const UIRect &, float, const UIDrawList &, const UITextures &, const UIFonts &) override {}
+        UISize MeasureText(std::string_view text, float fontSize, void *font) const override
         {
             mAskedSize = fontSize;
+            mAskedFont = font;
             return UISize{10.0f * static_cast<float>(text.size()), fontSize};
         }
 
         mutable float mAskedSize = -1.0f;
+        mutable void *mAskedFont = nullptr;
+        int mMadeFonts = 0;
     };
 }
 
@@ -698,4 +706,132 @@ TEST_CASE("Text is measured in UI units at the style's font size, by the backend
             });
         f.UI().SetBackend(nullptr);
     }
+}
+
+namespace
+{
+    std::vector<UIDrawCommand> Texts(const UIDrawList &list)
+    {
+        std::vector<UIDrawCommand> texts;
+        for (const UIDrawCommand &command : list.Commands())
+            if (command.mKind == UIDrawCommandKind::Text)
+                texts.push_back(command);
+        return texts;
+    }
+}
+
+TEST_CASE("A widget's text is drawn in the style's font and size, over its shadow and outline", "[gameui][text]")
+{
+    Fixture f;
+    UIStyle &style = f.UI().Style();
+    style.mFont = UIFont{7};
+    style.mFontSize = 20.0f;
+    const auto label = [&](UIColor color = kUIWhite)
+    {
+        style.mTextColor = color;
+        f.Frame([](UIContext &ui) { Label(ui, UIId("label"), kRect, "Speed"); });
+        return Texts(f.UI().DrawList());
+    };
+
+    SECTION("plain, one text in the font")
+    {
+        const std::vector<UIDrawCommand> texts = label();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0].mFont == UIFont{7});
+        CHECK(texts[0].mFontSize == 20.0f);
+    }
+
+    SECTION("a shadow first, offset and in its own colour")
+    {
+        style.mTextShadowColor = UIColor{0.0f, 0.0f, 0.0f, 0.5f};
+        style.mTextShadowX = 2.0f;
+        style.mTextShadowY = 3.0f;
+        const std::vector<UIDrawCommand> texts = label();
+        REQUIRE(texts.size() == 2);
+        CHECK(texts[0].mRect.x == Catch::Approx(texts[1].mRect.x + 2.0f));
+        CHECK(texts[0].mRect.y == Catch::Approx(texts[1].mRect.y + 3.0f));
+        CHECK(texts[0].mColor == UIColor{0.0f, 0.0f, 0.0f, 0.5f});
+        CHECK(texts[1].mColor == kUIWhite);
+        CHECK(texts[0].mFont == UIFont{7});
+    }
+
+    SECTION("an outline of eight copies round it, as far out as its width, faded with the text")
+    {
+        style.mTextShadowColor = UIColor{0.0f, 0.0f, 0.0f, 0.5f};
+        style.mTextOutlineColor = UIColor{0.0f, 0.0f, 0.0f, 1.0f};
+        style.mTextOutlineWidth = 2.0f;
+        const std::vector<UIDrawCommand> texts = label(UIColor{1.0f, 1.0f, 1.0f, 0.5f});
+        REQUIRE(texts.size() == 10);
+        const UIDrawCommand &text = texts.back();
+        CHECK(texts[0].mColor.a == Catch::Approx(0.25f));
+        for (size_t i = 1; i < 9; ++i)
+        {
+            const float dx = texts[i].mRect.x - text.mRect.x;
+            const float dy = texts[i].mRect.y - text.mRect.y;
+            CHECK(std::sqrt(dx * dx + dy * dy) == Catch::Approx(2.0f));
+            CHECK(texts[i].mColor.a == Catch::Approx(0.5f));
+        }
+    }
+
+    SECTION("a clear shadow or outline, or one 0 wide, is not drawn")
+    {
+        style.mTextShadowColor = UIColor{0.0f, 0.0f, 0.0f, 0.0f};
+        style.mTextOutlineColor = UIColor{0.0f, 0.0f, 0.0f, 1.0f};
+        style.mTextOutlineWidth = 0.0f;
+        CHECK(label().size() == 1);
+    }
+}
+
+TEST_CASE("A widget's text sits left, centred or right inside its padding", "[gameui][text]")
+{
+    Fixture f;
+    UIStyle &style = f.UI().Style();
+    // without a backend "Pause" is estimated 40 wide at 16
+    const auto textX = [&](UITextAlign align)
+    {
+        style.mTextAlign = align;
+        f.Frame([](UIContext &ui) { Label(ui, UIId("label"), kRect, "Pause"); });
+        const std::vector<UIDrawCommand> texts = Texts(f.UI().DrawList());
+        REQUIRE(texts.size() == 1);
+        return texts[0].mRect.x;
+    };
+
+    const float padding = style.mPadding;
+    CHECK(textX(UITextAlign::Left) == Catch::Approx(kRect.x + padding));
+    CHECK(textX(UITextAlign::Right) == Catch::Approx(kRect.Right() - padding - 40.0f));
+    CHECK(textX(UITextAlign::Center) == Catch::Approx(kRect.x + (kRect.width - 40.0f) * 0.5f));
+}
+
+TEST_CASE("Text is measured in the font it is drawn in", "[gameui][text]")
+{
+    Fixture f;
+    MeasuringBackend backend;
+    // a TrueType tag and one 16 byte table at 28, which the backend here never reads
+    const std::vector<uint8_t> header = [] {
+        std::vector<uint8_t> bytes(200, 0);
+        bytes[1] = 1;
+        bytes[5] = 1;
+        bytes[12 + 11] = 28;
+        bytes[12 + 15] = 16;
+        return bytes;
+    }();
+    const UIFont font = f.UI().Fonts().Add(header);
+    REQUIRE(font.IsValid());
+    f.UI().SetBackend(&backend);
+    REQUIRE(backend.mMadeFonts == 1);
+
+    f.Frame(
+        [&](UIContext &ui)
+        {
+            ui.Style().mFont = font;
+            ui.MeasureText("Speed");
+            CHECK(backend.mAskedFont == ui.Fonts().Find(font));
+            CHECK(backend.mAskedFont != nullptr);
+
+            const UISize size = ui.MeasureText("Speed", UIFont{}, 10.0f);
+            CHECK(backend.mAskedFont == nullptr);
+            CHECK(backend.mAskedSize == Catch::Approx(10.0f));
+            CHECK(size.height == Catch::Approx(10.0f));
+        });
+    f.UI().SetBackend(nullptr);
 }

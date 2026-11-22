@@ -19,6 +19,7 @@
 #include <physics_layers/PhysicsLayers.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
+#include <renderer/ViewDrawSource.h>
 #include <scene/SceneIO.h>
 #include <terrain/TerrainStreamingConfiguration.h>
 
@@ -27,6 +28,60 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
+
+namespace
+{
+    constexpr int kMaterialFrameLimit = 3000;
+    constexpr int kSettleFrames = 30;
+
+    struct TestLog
+    {
+        TestLog()
+        {
+            mir::InitLog({ .filePath = path.string() });
+        }
+
+        ~TestLog()
+        {
+            mir::ShutdownLog();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+
+        std::filesystem::path path = std::filesystem::temp_directory_path() /
+            ("mjolnir_app_terrain_material_test_" + std::to_string(mir::CurrentProcessId()) + ".log");
+    };
+
+    mir::AppDesc TerrainDesc(bool editor)
+    {
+        mir::AppDesc desc;
+        desc.mProject = mir::ResolveGameProject(
+            (std::filesystem::path(MIR_APP_TEST_ROOT) / "games/TerrainCheck").string(), mir::ErrorCategory::Usage);
+        mir::ResolveAssetIdRoot(desc.mProject);
+        desc.mHidden = true;
+        desc.mNonInteractive = true;
+        desc.mWorkerThreads = 1;
+        desc.mEnableEditorLayout = editor;
+        desc.mMaxFrames = kMaterialFrameLimit;
+        return desc;
+    }
+
+    std::vector<mir::WorldDrawItem> TerrainDraws(const mir::World &world)
+    {
+        std::vector<mir::WorldDrawItem> draws;
+        if (const auto *sources = world.TryResource<mir::ViewDrawSources>())
+            for (mir::IViewDrawSource *source : sources->sources)
+                source->AppendRayTracingDraws(0, draws);
+        return draws;
+    }
+
+    mir::MaterialHandle TerrainMaterial(const mir::World &world)
+    {
+        const std::vector<mir::WorldDrawItem> draws = TerrainDraws(world);
+        return draws.empty() ? mir::kNullMaterial : draws.front().material;
+    }
+}
 
 TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime World", "[app][smoke]")
 {
@@ -310,4 +365,114 @@ TEST_CASE("Controls menu edits and saves the shared player preferences", "[app][
     CHECK(mir::LoadControlsSettings(path) == settings);
     std::error_code ec;
     std::filesystem::remove(path, ec);
+}
+
+TEST_CASE("Stopping Play keeps the Edit terrain's material handle live", "[app][smoke][terrain-material]")
+{
+    const TestLog log;
+    mir::App app(TerrainDesc(true));
+    mir::World &authored = app.GetWorld();
+    auto &requests = authored.Resource<mir::RequestQueue>();
+
+    constexpr int kCycles = 2;
+    mir::MaterialHandle edit = mir::kNullMaterial;
+    int stops = 0;
+    int settled = 0;
+    bool redrawn = false;
+    const auto checks = app.Systems().AddFrameSlot(mir::FrameSlot::FrameBegin, [&](mir::SystemContext &)
+        {
+            if (const mir::World *runtime = app.RuntimeWorld())
+            {
+                if (TerrainMaterial(*runtime).IsNull() || ++settled < kSettleFrames)
+                    return;
+                requests.Push(mir::Request::Stop);
+                ++stops;
+                settled = 0;
+                redrawn = false;
+                return;
+            }
+            const mir::MaterialHandle current = TerrainMaterial(authored);
+            if (edit.IsNull())
+            {
+                if (current.IsNull())
+                    return;
+                edit = current;
+                REQUIRE(app.Renderer().MaterialRecord(edit).has_value());
+                requests.Push(mir::Request::Play);
+                return;
+            }
+            if (stops == 0)
+                return;
+            // Play suspends Edit's views, so it has no draws until a render after Stop prepares them again.
+            if (!redrawn && TerrainDraws(authored).empty())
+                return;
+            redrawn = true;
+            CHECK(current == edit);
+            CHECK(app.Renderer().MaterialRecord(edit).has_value());
+            if (++settled < kSettleFrames)
+                return;
+            settled = 0;
+            requests.Push(stops < kCycles ? mir::Request::Play : mir::Request::Quit);
+        });
+    app.Run();
+
+    CHECK(stops == kCycles);
+    CHECK(redrawn);
+    CHECK(app.RuntimeWorld() == nullptr);
+}
+
+TEST_CASE("A full scene unload resets the library after the terrain lets go", "[app][smoke][terrain-material]")
+{
+    const TestLog log;
+    mir::App app(TerrainDesc(true));
+
+    mir::MaterialHandle edit = mir::kNullMaterial;
+    const auto checks = app.Systems().AddFrameSlot(mir::FrameSlot::FrameBegin, [&](mir::SystemContext &)
+        {
+            if (!edit.IsNull())
+                return;
+            edit = TerrainMaterial(app.GetWorld());
+            if (!edit.IsNull())
+                app.GetWorld().Resource<mir::RequestQueue>().Push(mir::Request::Quit);
+        });
+    app.Run();
+    REQUIRE_FALSE(edit.IsNull());
+    REQUIRE_FALSE(app.SurfaceMaterials().ActiveMaterials().empty());
+
+    // The renderer destroys handles after their frames finish, but a reset moves the generation at once.
+    const uint64_t generation = app.SurfaceMaterials().Generation();
+    app.NewScene();
+    CHECK(app.SurfaceMaterials().ActiveMaterials().empty());
+    CHECK(app.SurfaceMaterials().Generation() > generation);
+}
+
+TEST_CASE("A standalone scene swap releases the outgoing terrain's material", "[app][smoke][terrain-material]")
+{
+    const TestLog log;
+    mir::AppDesc desc = TerrainDesc(false);
+    desc.mProject.mScenes.push_back(
+        { "empty", std::filesystem::path(MIR_APP_TEST_ROOT) / "games/EmptyScene/scenes/default" });
+    mir::App app(desc);
+
+    mir::MaterialHandle outgoing = mir::kNullMaterial;
+    bool released = false;
+    const auto checks = app.Systems().AddFrameSlot(mir::FrameSlot::FrameBegin, [&](mir::SystemContext &)
+        {
+            mir::World &runtime = *app.RuntimeWorld();
+            if (outgoing.IsNull())
+            {
+                outgoing = TerrainMaterial(runtime);
+                if (!outgoing.IsNull())
+                    runtime.Resource<mir::RequestQueue>().PushNextScene("empty");
+            }
+            else if (!released && !app.Renderer().MaterialRecord(outgoing).has_value())
+            {
+                released = true;
+                app.GetWorld().Resource<mir::RequestQueue>().Push(mir::Request::Quit);
+            }
+        });
+    app.Run();
+
+    REQUIRE_FALSE(outgoing.IsNull());
+    CHECK(released);
 }

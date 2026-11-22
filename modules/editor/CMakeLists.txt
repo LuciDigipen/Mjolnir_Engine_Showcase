@@ -3,7 +3,7 @@ if(NOT MJOLNIR_WITH_EDITOR)
     return()
 endif()
 
-engine_add_module(editor)
+engine_add_module(editor PCH_HEADERS glm/glm.hpp imgui.h nlohmann/json.hpp)
 
 find_package(Stb REQUIRED)
 target_include_directories(engine_editor PRIVATE ${Stb_INCLUDE_DIR})
@@ -48,6 +48,7 @@ target_sources(engine_editor PRIVATE
     src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
+    src/editor/EditorExtension.cpp
     src/editor/EditorModule.cpp
     src/editor/EditorPreferences.cpp
     src/editor/EditorWidgets.cpp

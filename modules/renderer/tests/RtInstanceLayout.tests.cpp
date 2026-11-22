@@ -14,6 +14,7 @@
 #endif
 
 #include <renderer/RtInstanceInfo.h>
+#include <renderer/VulkanRenderer.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -39,7 +40,7 @@ namespace
         std::size_t mSize;
     };
 
-    constexpr std::array<Field, 17> kFields{ {
+    constexpr std::array<Field, 18> kFields{ {
         { "vertexAddress", offsetof(mir::RtInstanceInfo, vertexAddress), sizeof(VkDeviceAddress) },
         { "indexAddress", offsetof(mir::RtInstanceInfo, indexAddress), sizeof(VkDeviceAddress) },
         { "tint", offsetof(mir::RtInstanceInfo, tint), sizeof(glm::vec4) },
@@ -56,7 +57,8 @@ namespace
         { "prevModel", offsetof(mir::RtInstanceInfo, prevModel), sizeof(glm::mat4) },
         { "modelCol0", offsetof(mir::RtInstanceInfo, modelCol0), sizeof(glm::vec4) },
         { "modelCol1", offsetof(mir::RtInstanceInfo, modelCol1), sizeof(glm::vec4) },
-        { "modelCol2", offsetof(mir::RtInstanceInfo, modelCol2), sizeof(glm::vec4) } } };
+        { "modelCol2", offsetof(mir::RtInstanceInfo, modelCol2), sizeof(glm::vec4) },
+        { "terrain", offsetof(mir::RtInstanceInfo, terrain), sizeof(mir::RtInstanceInfo::terrain) } } };
 
     int RunSlangc(const std::string &commandLine, const std::filesystem::path &executable)
     {
@@ -171,4 +173,17 @@ TEST_CASE("The CPU RtInstanceInfo matches the compiled Slang layout", "[renderer
     CHECK(words[0] == 0x07230203);
     const std::vector<uint32_t> strides = ArrayStrides(words);
     CHECK(std::find(strides.begin(), strides.end(), sizeof(mir::RtInstanceInfo)) != strides.end());
+}
+
+TEST_CASE("A draw's terrain words reach the ray-traced instance record", "[renderer][rt]")
+{
+    mir::DrawItem draw;
+    draw.terrain = { 5u, 3u, 0x00010203u, 0x3f800000u };
+
+    mir::RtInstanceInfo info{};
+    mir::FillRtTerrainWords(info, draw.terrain);
+    CHECK(info.terrain[0] == 5u);
+    CHECK(info.terrain[1] == 3u);
+    CHECK(info.terrain[2] == 0x00010203u);
+    CHECK(info.terrain[3] == 0x3f800000u);
 }

@@ -25,8 +25,8 @@ namespace mir
     {
         // debug: start with every core widget instead of the menus (--ui-demo); GameUIDemo switches it later
         bool mUIDemo = false;
-        // the pause menu's Quit leaves Play, as in the editor, instead of closing the game
-        bool mQuitStopsPlay = false;
+        // game.json's "shell", a game drawing its own pause menu turns the shell's off
+        GameShellParts mParts;
     };
 
     class GameShellModule

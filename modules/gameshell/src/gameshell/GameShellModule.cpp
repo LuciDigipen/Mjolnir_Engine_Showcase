@@ -26,12 +26,13 @@ namespace mir
     {
         if (GameUIDemo *demo = mWorld.TryResource<GameUIDemo>())
             demo->mShow = mSettings.mUIDemo;
+        mShell.SetParts(mSettings.mParts);
 
         // here rather than in Draw, which does not run while the demo shows
         mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &) { mShell.Reset(); });
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mShell.Reset(); });
 
-        mScreen = gameUI.AddScreen([this](UIContext &ui, float dt) { Draw(ui, dt); });
+        mScreen = gameUI.AddScreen(UIScreenLayer::Shell, [this](UIContext &ui, float dt) { Draw(ui, dt); });
     }
 
     void GameShellModule::Draw(UIContext &ui, float dt)
@@ -79,7 +80,8 @@ namespace mir
             requests.Push(Request::Play);
             break;
         case GameShellAction::Quit:
-            requests.Push(mSettings.mQuitStopsPlay ? Request::Stop : Request::Quit);
+            // App turns it into Stop in the editor
+            requests.Push(Request::Quit);
             break;
         case GameShellAction::None:
             break;

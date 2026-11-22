@@ -343,3 +343,57 @@ TEST_CASE("Widgets given one id in a frame are counted and act as one", "[gameui
     CHECK(state.Collisions() == 0);
     state.EndFrame();
 }
+
+namespace
+{
+    constexpr UIPointer Withheld(float x, float y, bool down) { return UIPointer{x, y, down, true}; }
+}
+
+TEST_CASE("A withheld pointer hovers nothing and hits nothing", "[gameui]")
+{
+    UIState state;
+
+    Frame(state, Up(150, 120));
+    REQUIRE(state.Hot() == kButtonId);
+
+    CHECK_FALSE(Frame(state, Withheld(150, 120, false)).mHovered);
+    CHECK(state.Hot().IsNull());
+    CHECK(state.PointerWithheld());
+    CHECK_FALSE(state.HitTest(kButton, kArea));
+    CHECK_FALSE(state.PointerMoved());
+}
+
+TEST_CASE("A held widget lets go without a click when the pointer is withheld", "[gameui]")
+{
+    UIState state;
+
+    Frame(state, Up(150, 120));
+    Frame(state, Down(150, 120));
+    REQUIRE(state.Active() == kButtonId);
+
+    const UIInteraction taken = Frame(state, Withheld(150, 120, true));
+    CHECK_FALSE(taken.mHeld);
+    CHECK_FALSE(taken.mClicked);
+    CHECK(state.Active().IsNull());
+
+    // given back while still held, then released over the widget
+    CHECK_FALSE(Frame(state, Down(150, 120)).mHeld);
+    CHECK(state.Active().IsNull());
+    CHECK_FALSE(Frame(state, Up(150, 120)).mClicked);
+}
+
+TEST_CASE("A button pressed while the pointer is withheld presses nothing when it comes back", "[gameui]")
+{
+    UIState state;
+
+    Frame(state, Withheld(150, 120, false));
+    Frame(state, Withheld(150, 120, true));
+    Frame(state, Down(150, 120));
+    CHECK(state.Active().IsNull());
+    CHECK_FALSE(Frame(state, Up(150, 120)).mClicked);
+
+    // the next press is an ordinary one
+    Frame(state, Down(150, 120));
+    CHECK(state.Active() == kButtonId);
+    CHECK(Frame(state, Up(150, 120)).mClicked);
+}

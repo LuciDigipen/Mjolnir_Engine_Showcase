@@ -679,15 +679,18 @@ namespace mir
     }
 
     void Editor::DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
-        bool prefabDocument)
+        DocumentId document)
     {
+        mGizmoHasPointer = false;
         // matches EditorCamera's own Edit-only gating in App::Run
         if (mode.mMode != EngineMode::Edit)
             return;
 
+        const bool prefabDocument = document != kSceneDocument;
+        const bool viewportOwned = mExtensions.OwnsViewport();
         const bool modalOpen = ImGui::GetTopMostPopupModal() != nullptr;
         // a drag keeps the operation it began with
-        if (!modalOpen && !mGizmoWasUsing && !ImGui::GetIO().WantTextInput &&
+        if (!viewportOwned && !modalOpen && !mGizmoWasUsing && !ImGui::GetIO().WantTextInput &&
             !mWindow->RawInput().IsDown(MouseButton::Right))
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W, false))
@@ -704,10 +707,6 @@ namespace mir
         const std::vector<Entity> selected = GizmoSelection(world);
         // a drag keeps its pivot even when everything it moves is gone
         const bool hasGizmoTarget = mGizmoWasUsing || !selected.empty();
-
-        // A Prefab tab keeps the toolbar (and its Save) visible with nothing selected.
-        if (!hasGizmoTarget && !prefabDocument)
-            return;
 
         const float x = static_cast<float>(mSceneViewportRect.offset.x);
         const float y = static_cast<float>(mSceneViewportRect.offset.y);
@@ -751,9 +750,22 @@ namespace mir
                 if (widgets::ToolbarButton(ICON_FA_FLOPPY_DISK, "Save Prefab (Ctrl+S)"))
                     actions.mSaveActiveDocument = true;
             }
+
+            mExtensions.DrawToolbar(MakeExtensionContext(mode, world, document, nullptr));
         }
         ImGui::End();
         ImGui::PopStyleVar(3);
+
+        if (viewportOwned)
+        {
+            if (mGizmoWasUsing)
+            {
+                ActiveHistory().EndStep();
+                mGizmoTargets.clear();
+            }
+            mGizmoWasUsing = false;
+            return;
+        }
 
         if (!hasGizmoTarget)
             return;
@@ -801,6 +813,7 @@ namespace mir
 
         if (ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             ImGuizmo::Enable(false);
+        mGizmoHasPointer = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
 
 
         const bool usingGizmo = ImGuizmo::IsUsing();
@@ -1017,6 +1030,16 @@ namespace mir
         ImGui::PopStyleVar(2);
     }
 
+    EditorExtensionContext Editor::MakeExtensionContext(const EngineModeState &mode, World &world, DocumentId document,
+        ImDrawList *overlay)
+    {
+        const VkRect2D viewport = mSceneViewportRect;
+        return EditorExtensionContext{ mode, document, world,
+            PixelRect{ .x = viewport.offset.x, .y = viewport.offset.y, .width = viewport.extent.width,
+                .height = viewport.extent.height },
+            mCamera, mWindow->RawInput(), WantsCaptureMouse(), overlay, ActiveHistory() };
+    }
+
     void Editor::FocusSelection(const EngineModeState &mode, World &world)
     {
         if (mode.mMode != EngineMode::Edit)
@@ -1041,8 +1064,13 @@ namespace mir
         const bool down = mWindow->RawInput().IsDown(MouseButton::Left);
         const bool justPressed = down && !mMouseWasDown;
         mMouseWasDown = down;
+        mPendingPick.reset();
 
         if (mode.mMode != EngineMode::Edit)
+            return;
+
+        // brush strokes must not reselect entities
+        if (mExtensions.OwnsViewport())
             return;
 
         if (mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
@@ -1115,7 +1143,19 @@ namespace mir
                 });
         }
 
-        ApplyClick(world.Resource<Selection>(), hitEntity, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift);
+        // the game UI has not hit-tested this frame's pointer yet
+        mPendingPick = PendingPick{ &world, hitEntity, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift };
+    }
+
+    void Editor::ResolveViewportPick(World &activeWorld, bool gameUIOverWidget)
+    {
+        const std::optional<PendingPick> pick = std::exchange(mPendingPick, std::nullopt);
+        if (!pick || gameUIOverWidget || pick->mWorld != &activeWorld)
+            return;
+        if (!pick->mEntity.IsNull() && !activeWorld.IsAlive(pick->mEntity))
+            return;
+        if (Selection *selection = activeWorld.TryResource<Selection>())
+            ApplyClick(*selection, pick->mEntity, pick->mAdditive);
     }
 
     void Editor::DrawSelectionHighlights(const EngineModeState &mode, World &world)
@@ -1304,6 +1344,7 @@ namespace mir
         actions.mRequestGiSceneBounds = mProjectSettingsPanel.TakeGiSceneBoundsRequest();
 
         const bool documentTab = documents.mActive != kSceneDocument;
+        mExtensions.Update(MakeExtensionContext(mode, activeWorld, documents.mActive, nullptr));
         GroundQuery *ground = activeWorld.TryResource<GroundQuery>();
         mSnapFrameSubmissions = ActiveHistory().SubmissionCount();
         PollSnapToTerrain(activeWorld, documents.mActive, mode, dt);
@@ -1369,6 +1410,8 @@ namespace mir
 
                 ImGui::DockBuilderDockWindow("Hierarchy", left);
                 ImGui::DockBuilderDockWindow("Inspector", right);
+                for (const char *name : mExtensions.WindowNames())
+                    ImGui::DockBuilderDockWindow(name, right);
                 ImGui::DockBuilderDockWindow("Output", bottom);
 
                 ImGui::DockBuilderFinish(dockspaceId);
@@ -1483,7 +1526,9 @@ namespace mir
             UpdateBuildShortcuts(actions, mode, build);
             DrawSelectionHighlights(mode, activeWorld);
             DrawComponentGizmos(mode, activeWorld);
-            DrawViewportGizmo(mode, activeWorld, actions, documentTab);
+            DrawViewportGizmo(mode, activeWorld, actions, documents.mActive);
+            mExtensions.DrawOverlay(MakeExtensionContext(mode, activeWorld, documents.mActive,
+                ViewportOverlayDrawList()));
             UpdateViewPie(mode);
 
             ImGui::PopStyleColor(pushedColors);
@@ -1752,6 +1797,8 @@ namespace mir
                 ImGui::End();
             }
 
+            mExtensions.DrawWindows(MakeExtensionContext(mode, activeWorld, documents.mActive, nullptr));
+
             ImGui::PopStyleColor(pushedColors);
         }
         else
@@ -1772,7 +1819,7 @@ namespace mir
         if (PlayEditing())
             mPlayHistory.Flush(activeWorld, *mPlaySceneOps);
         else if (mSceneOps != nullptr && mode.mMode == EngineMode::Edit)
-            mHistory.Flush(sceneWorld, *mSceneOps);
+            mExtensions.FlushHistory(mHistory, sceneWorld, *mSceneOps);
 
         return actions;
     }
@@ -2174,6 +2221,11 @@ namespace mir
 
     bool Editor::WantsCaptureKeyboard() const { return ImGui::GetIO().WantCaptureKeyboard; }
     bool Editor::WantsCaptureMouse() const { return ImGui::GetIO().WantCaptureMouse; }
+
+    bool Editor::ViewportToolsHavePointer() const
+    {
+        return mGizmoHasPointer || mViewPieOpen || mExtensions.OwnsViewport();
+    }
 
     void Editor::UpdateCamera(float dt)
     {

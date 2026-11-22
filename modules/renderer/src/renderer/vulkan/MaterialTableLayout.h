@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "DrawRecordLayout.h"
+
 #include <cstdint>
 
 namespace mir::vk
@@ -22,14 +24,15 @@ namespace mir::vk
     constexpr uint32_t kMaxSharedSamplers = 256;
 
     constexpr uint32_t kMaterialSetCombinedImages = 2;
-    constexpr uint32_t kMaterialSetRecordUniformBuffers = 1;
+    constexpr uint32_t kMaterialTableSetStorageBuffers = 1;
     constexpr uint32_t kCameraSetUniformBuffers = 1;
     constexpr uint32_t kCameraSetStorageBuffers = 1;
     constexpr uint32_t kModelSetStorageBuffers = 1;
     constexpr uint32_t kShadowSetCombinedImages = 3;
     constexpr uint32_t kShadowSetStorageBuffers = 1;
+    constexpr uint32_t kDrawRecordSetStorageBuffers = 1;
 
-    constexpr uint32_t kRasterPipelineSetCount = kMaterialTableSetIndex + 1;
+    constexpr uint32_t kRasterPipelineSetCount = kDrawRecordSetIndex + 1;
     constexpr uint32_t kRtPipelineSetCount = 2;
     constexpr uint32_t kRtSetStorageBuffers = 2;
     constexpr uint32_t kRtSetStorageImages = 7;

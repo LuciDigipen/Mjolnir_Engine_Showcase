@@ -63,6 +63,7 @@ namespace mir::vk
     class CameraBuffer;
     class ShadowMaps;
     class ModelDescriptors;
+    class DrawRecords;
     class RayTracer;
     class MaterialTable;
     class RasterSurfaces;
@@ -131,6 +132,10 @@ namespace mir
         std::span<const glm::vec4> previousDeformation;
         // The producer expects this local deformation to remain unchanged.
         bool settledDeformation = false;
+
+        // The four terrain words of a tile draw - see renderer/TerrainDrawData.h.
+        // All zero for anything without weights.
+        std::array<uint32_t, 4> terrain{};
     };
 
     // One draw call's worth of data for one viewport. Temporary: it lives only
@@ -161,6 +166,8 @@ namespace mir
 
         std::span<const glm::vec4> previousDeformation;
         bool settledDeformation = false;
+
+        std::array<uint32_t, 4> terrain{};
     };
 
     // Draw items produced outside the MeshRenderer query (by ModelSystem),
@@ -331,6 +338,7 @@ namespace mir
         bool RetireMesh(MeshHandle handle) override;
         uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
             const MeshUploadOptions &options) const override;
+        uint64_t MeshBytes(MeshHandle handle) const override;
         MeshStreamingStats MeshStreaming() const override;
         RtDeformationStats RayTracingDeformations() const;
 
@@ -475,6 +483,7 @@ namespace mir
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;
         std::unique_ptr<vk::ShadowMaps> mShadowMaps;
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
+        std::unique_ptr<vk::DrawRecords> mDrawRecords;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
 #if MIR_WITH_RTXGI

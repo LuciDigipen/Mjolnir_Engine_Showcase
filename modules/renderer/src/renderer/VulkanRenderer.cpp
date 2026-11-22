@@ -11,6 +11,7 @@
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/DebugDraw.h"
 #include "vulkan/Device.h"
+#include "vulkan/DrawRecords.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/FxCompositionPass.h"
@@ -53,6 +54,7 @@ namespace mir
         mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
+        mDrawRecords(std::make_unique<vk::DrawRecords>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
 #if MIR_WITH_RTXGI
         mDdgi(std::make_unique<vk::Ddgi>()),
@@ -158,8 +160,12 @@ namespace mir
         if (!mModelDescriptors->Initialize(*mDevice))
             return false;
 
+        if (!mDrawRecords->Initialize(*mDevice))
+            return false;
+
         if (!mMaterialStore->Initialize(*mDevice, *mResources, materialTable, vk::kHdrColorFormat,
-            { mCameraBuffer->SetLayout(), mModelDescriptors->SetLayout(), mShadowMaps->SetLayout() }))
+            { mCameraBuffer->SetLayout(), mModelDescriptors->SetLayout(), mShadowMaps->SetLayout() },
+            mDrawRecords->SetLayout()))
             return false;
 
         if (mDevice->RayTracingSupported() &&
@@ -382,6 +388,7 @@ namespace mir
         } rootScope{ShaderRootOverride()};
         try
         {
+        const auto acceptedRoot = ShaderPath("");
         SetShaderRootOverride(generationDirectory);
 
         const auto fail = [&](std::string message)
@@ -468,7 +475,7 @@ namespace mir
         mPendingShaderReload.Clear();
         mPendingShaderReload.AddStage("materials",
             [&](std::string &stageError)
-            { return mMaterialStore->PrepareShaderReload(mPendingCatalog, &stageError); },
+            { return mMaterialStore->PrepareShaderReload(mPendingCatalog, acceptedRoot, &stageError); },
             [&] { mMaterialStore->CommitShaderReload(); },
             [&] { mMaterialStore->DiscardShaderReload(); });
         mPendingShaderReload.AddStage("shadows",
@@ -606,6 +613,7 @@ namespace mir
             mDdgi->Shutdown();
 #endif
             mMaterialStore->Shutdown();
+            mDrawRecords->Shutdown();
             mRayTracer->Shutdown();
             if (mMaterialTable != nullptr)
                 mMaterialTable->Shutdown();
@@ -702,6 +710,12 @@ namespace mir
         return mMeshUploads->Footprint(*mRayTracer, vertexCount, indexCount, options);
     }
 
+    uint64_t VulkanRenderer::MeshBytes(MeshHandle handle) const
+    {
+        const vk::GpuMesh *const mesh = mResources->FindMeshSlot(handle);
+        return mesh != nullptr ? mesh->mBytes : 0;
+    }
+
     RtDeformationStats VulkanRenderer::RayTracingDeformations() const
     {
         return mRayTracer ? mRayTracer->DeformationStats() : RtDeformationStats{};
@@ -716,6 +730,12 @@ namespace mir
         stats.queueWaits = mDevice->QueueWaits();
         stats.skippedDraws = mSkippedDraws;
         stats.highestGeneration = mResources->HighestMeshGeneration();
+        if (mRayTracer)
+        {
+            const vk::RayTracer::BlasCompactionStats compaction = mRayTracer->CompactionStats();
+            stats.blasCompacted = compaction.compacted;
+            stats.blasCompactedSavedBytes = compaction.savedBytes;
+        }
         return stats;
     }
 

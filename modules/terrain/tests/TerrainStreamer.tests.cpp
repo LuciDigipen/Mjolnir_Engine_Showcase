@@ -15,6 +15,7 @@
 #include <terrain/TerrainScene.h>
 #include <terrain/TerrainStreamer.h>
 #include <terrain/TerrainSurface.h>
+#include <terrain/TileAddressing.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -903,4 +904,72 @@ TEST_CASE("A changed residency mode resolves only releases added after it", "[te
     CHECK(m.streamer.ModeOf(a.info) == Mode::Interest);
     CHECK(m.streamer.Add(b.opened.release) == Mode::Eager);
     CHECK(m.streamer.ModeOf(b.info) == Mode::Eager);
+}
+
+TEST_CASE("Weight-query tiles stay resident while used and are loaded again after their lease",
+          "[terrain][streaming][weights]")
+{
+    const TerrainLayout layout = EdgeLayout();
+    const std::vector<TileHeights> tiles = BuildTiles(layout);
+    const std::vector<std::string> table{"dirt", "sand"};
+    std::vector<TerrainWeightTile> weights;
+    const TileRange range = layout.Tiles();
+    for (int32_t z = range.min.z; z <= range.max.z; ++z)
+        for (int32_t x = range.min.x; x <= range.max.x; ++x)
+        {
+            TerrainWeightTile tile;
+            tile.tile = {x, z};
+            tile.intervals = layout.IntervalsPerTile();
+            tile.layers = table;
+            const size_t count = tile.SampleCount();
+            tile.weights.resize(count * table.size());
+            for (size_t sample = 0; sample < count; ++sample)
+            {
+                tile.weights[sample] = 0.75f;
+                tile.weights[count + sample] = 0.25f;
+            }
+            weights.push_back(std::move(tile));
+        }
+
+    const TerrainReleaseInfo info = Info(TerrainAsset("terrain/weight-stream.terrain.json"), 0x2E16);
+    TerrainWeightsWrites writes;
+    writes.layers = table;
+    writes.fingerprint = 0x9A9A;
+    writes.tiles = weights;
+    const TerrainEncodedRelease encoded = EncodeWithWeights(info, layout, tiles, writes, {.chunkTiles = 2});
+    ControlledRelease opened = OpenControlled(encoded);
+
+    Manual m(StreamingSettings(uint64_t(1) << 24, Mode::Interest));
+    REQUIRE(m.streamer.Add(opened.release) == Mode::Interest);
+    TerrainLayerWeightQuery &query = opened.release->WeightQuery();
+
+    const auto point = *TerrainLocalPosition::FromMeters({12.25, 0.0, 20.5});
+    const TerrainLayerWeightsRequest request{info};
+    const TileAddress address = AddressLocal(layout, point);
+    REQUIRE(address.IsInside());
+    const TileCoord tile = address.tile;
+    const TerrainByteStats start = opened.source->Inner().Stats();
+
+    CHECK(query.WeightsAt(point, request).status == TerrainLayerWeightsStatus::Loading);
+    m.Settle();
+    const TerrainLayerWeightsResult ready = query.WeightsAt(point, request);
+    REQUIRE(ready.status == TerrainLayerWeightsStatus::Ready);
+    REQUIRE(ready.layers.size() == 2);
+    CHECK(ready.layers[0].name == "dirt");
+    CHECK(std::abs(ready.layers[0].weight - 0.75) <= 0.01);
+    CHECK(ready.layers[1].name == "sand");
+    CHECK(std::abs(ready.layers[1].weight - 0.25) <= 0.01);
+
+    m.Settle();
+    m.clock.Advance(1.5);
+    m.Settle();
+    CHECK(query.Residency(tile) == TerrainTileResidency::Absent);
+    CHECK(m.streamer.Stats().evicted >= 1);
+
+    const TerrainByteStats reloadStart = opened.source->Inner().Stats();
+    CHECK(query.WeightsAt(point, request).status == TerrainLayerWeightsStatus::Loading);
+    m.Settle();
+    CHECK(query.WeightsAt(point, request).status == TerrainLayerWeightsStatus::Ready);
+    CHECK(opened.source->Inner().Stats().reads > reloadStart.reads);
+    CHECK(reloadStart.reads >= start.reads);
 }

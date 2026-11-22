@@ -299,6 +299,121 @@ namespace mir::vk
             });
         mRetired.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
         mRetiredTextures.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
+        std::erase_if(mCompactionsInFlight, [&](const auto &entry) { return entry.first <= completed; });
+        ReadBlasQueries(completed);
+    }
+
+    void MeshUploader::QueueBlasCompaction(MeshHandle mesh, uint64_t serial, uint64_t sourceBytes,
+        uint64_t compactedBytes)
+    {
+        if (compactedBytes != 0)
+            mBlasReady.push_back({ mesh, serial, sourceBytes, compactedBytes });
+    }
+
+    void MeshUploader::RecordBlasQueries(VkCommandBuffer cmd, uint64_t frame, RayTracer &rayTracer,
+        const RayTracer::BlasBatch &batch, const std::unordered_map<uint32_t, MeshHandle> &handles)
+    {
+        std::vector<uint32_t> slots;
+        std::vector<PendingBlas> entries;
+        for (const uint32_t slot : batch.slots)
+        {
+            const auto found = handles.find(slot);
+            const RayTracer::MeshBlasInfo blas = rayTracer.BlasInfo(slot);
+            if (found == handles.end() || !blas.exists)
+                continue;
+            slots.push_back(slot);
+            entries.push_back({ found->second, blas.serial, blas.bytes });
+        }
+        if (entries.empty())
+            return;
+
+        const VkQueryPoolCreateInfo info{ .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+            .queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+            .queryCount = static_cast<uint32_t>(entries.size()) };
+        VkQueryPool pool = VK_NULL_HANDLE;
+        if (vkCreateQueryPool(mDevice->Handle(), &info, nullptr, &pool) != VK_SUCCESS)
+        {
+            MIR_LOG_WARN("Mesh streaming: compacted-size query pool creation failed, {} BLASes stay uncompacted",
+                entries.size());
+            return;
+        }
+
+        rayTracer.RecordMeshBlasCompactedSizes(cmd, pool, slots);
+        mBlasQueries.push_back({ pool, frame, std::move(entries) });
+    }
+
+    void MeshUploader::ReadBlasQueries(uint64_t completed)
+    {
+        std::vector<BlasQueryBatch> kept;
+        for (BlasQueryBatch &batch : mBlasQueries)
+        {
+            if (batch.frame > completed)
+            {
+                kept.push_back(std::move(batch));
+                continue;
+            }
+            std::vector<uint64_t> sizes(batch.entries.size());
+            const VkResult result = vkGetQueryPoolResults(mDevice->Handle(), batch.pool, 0,
+                static_cast<uint32_t>(sizes.size()), sizes.size() * sizeof(uint64_t), sizes.data(),
+                sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+            if (result == VK_SUCCESS)
+                for (size_t i = 0; i < batch.entries.size(); ++i)
+                    mBlasReady.push_back({ batch.entries[i].mesh, batch.entries[i].serial,
+                        batch.entries[i].sourceBytes, sizes[i] });
+            else
+                MIR_LOG_WARN("Mesh streaming: compacted-size results were not readable, those BLASes stay uncompacted");
+            vkDestroyQueryPool(mDevice->Handle(), batch.pool, nullptr);
+        }
+        mBlasQueries = std::move(kept);
+    }
+
+    bool MeshUploader::CompactReadyBlases(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources,
+        RayTracer &rayTracer)
+    {
+        std::erase_if(mBlasReady, [&](const ReadyBlas &ready)
+            {
+                const RayTracer::MeshBlasInfo blas = rayTracer.BlasInfo(ready.mesh.mIndex);
+                return resources.FindMeshSlot(ready.mesh) == nullptr || !blas.exists || blas.serial != ready.serial;
+            });
+        if (mBlasReady.empty())
+            return false;
+
+        std::vector<BlasCompactionCandidate> candidates;
+        candidates.reserve(mBlasReady.size());
+        for (const ReadyBlas &ready : mBlasReady)
+            candidates.push_back({ ready.sourceBytes, ready.compactedBytes });
+        uint64_t inFlightBytes = 0;
+        for (const auto &[inFlightFrame, bytes] : mCompactionsInFlight)
+            inFlightBytes += bytes;
+        const size_t take = SelectBlasCompactions(candidates, inFlightBytes, mDevice->DeviceLocalFreeBytes());
+        bool compactedAny = false;
+        for (size_t i = 0; i < take; ++i)
+        {
+            const ReadyBlas ready = mBlasReady.front();
+            mBlasReady.pop_front();
+            const RayTracer::BlasCompaction compacted = rayTracer.CompactMeshBlas(cmd, ready.mesh.mIndex,
+                ready.serial, ready.compactedBytes);
+            if (!compacted.compacted)
+                continue;
+            compactedAny = true;
+            const uint64_t sourceBytes = compacted.retired.mBytes;
+            const uint64_t saved = sourceBytes > ready.compactedBytes ? sourceBytes - ready.compactedBytes : 0;
+            if (GpuMesh *mesh = resources.FindMeshSlot(ready.mesh))
+                mesh->mBytes -= std::min<uint64_t>(mesh->mBytes, saved);
+            mRetired.Push(frame, sourceBytes, Garbage{ compacted.retired, {}, {} });
+            mCompactionsInFlight.emplace_back(frame, sourceBytes);
+        }
+        return compactedAny;
+    }
+
+    void MeshUploader::DestroyBlasQueries()
+    {
+        for (const BlasQueryBatch &batch : mBlasQueries)
+            if (batch.pool != VK_NULL_HANDLE)
+                vkDestroyQueryPool(mDevice->Handle(), batch.pool, nullptr);
+        mBlasQueries.clear();
+        mBlasReady.clear();
+        mCompactionsInFlight.clear();
     }
 
     void MeshUploader::Record(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources, RayTracer &rayTracer)
@@ -307,10 +422,9 @@ namespace mir::vk
             return;
         const std::vector<MeshUploadQueue::Admitted> admitted = mQueue.Admit(frame);
         mMaxFrameBytes = std::max(mMaxFrameBytes, mQueue.LastFrameBytes());
-        if (admitted.empty())
-            return;
 
         std::vector<RayTracer::MeshBlasBuild> builds;
+        std::unordered_map<uint32_t, MeshHandle> buildHandles;
         for (const MeshUploadQueue::Admitted &entry : admitted)
         {
             if (!entry.item.texture.IsNull())
@@ -388,7 +502,10 @@ namespace mir::vk
             mesh->mState = GpuMeshState::Uploading;
             mUploadedBytes += entry.item.gpuBytes;
             if (queued.blas)
+            {
                 builds.push_back({handle.mIndex, mesh, vertexCount});
+                buildHandles[handle.mIndex] = handle;
+            }
         }
 
         if (!builds.empty())
@@ -404,9 +521,14 @@ namespace mir::vk
                     }
             mBlasBuilt += batch.built;
             mBlasBytes += batch.blasBytes;
+            RecordBlasQueries(cmd, frame, rayTracer, batch, buildHandles);
             if (batch.scratchBuffer != VK_NULL_HANDLE)
                 mRetired.Push(frame, batch.scratchBytes, Garbage{{}, {{batch.scratchBuffer, batch.scratchAllocation}}});
         }
+
+        const bool compacted = CompactReadyBlases(cmd, frame, resources, rayTracer);
+        if (admitted.empty() && !compacted)
+            return;
 
         // Later frames draw and trace from these, in submission order on the one queue.
         VkPipelineStageFlags2 srcStages = VK_PIPELINE_STAGE_2_COPY_BIT;
@@ -441,6 +563,7 @@ namespace mir::vk
         mTextureFinishes.clear();
         mRetired.ReleaseAll([&](Garbage &garbage) { Free(rayTracer, garbage); });
         mRetiredTextures.ReleaseAll([&](Garbage &garbage) { Free(rayTracer, garbage); });
+        DestroyBlasQueries();
     }
 
     void MeshUploader::Free(RayTracer &rayTracer, Garbage &garbage)

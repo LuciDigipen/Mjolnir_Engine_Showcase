@@ -8,6 +8,7 @@
  */
 #include "TerrainPackage.h"
 
+#include "TerrainPrune.h"
 #include "TerrainSync.h"
 #include "TerrainValidate.h"
 
@@ -55,7 +56,7 @@ namespace mir::terrainbake
             return text;
         }
 
-        // Keeps current, the release it names and the held lock.
+        // Keeps current, the release it names, the held lock and the reader locks.
         void Prune(const fs::path &assetDir, TerrainReleaseId keep, TerrainReport &report)
         {
             const std::string keepHex = TerrainIdHex(keep.value);
@@ -64,19 +65,29 @@ namespace mir::terrainbake
             for (const fs::directory_entry &entry : fs::directory_iterator(assetDir, ec))
             {
                 const std::string name = PathUtf8(entry.path().filename());
-                if (name != kTerrainCurrentPointerFileName && name != keepHex && name != kTerrainPublishLockFileName)
+                if (name != kTerrainCurrentPointerFileName && name != keepHex && name != kTerrainPublishLockFileName &&
+                    name != kTerrainReleaseLocksDirName)
                     extra.push_back(entry.path());
             }
             std::vector<std::string> removed;
             std::vector<std::string> left;
             for (const fs::path &path : extra)
             {
-                std::error_code removeEc;
-                fs::remove_all(path, removeEc);
-                if (removeEc)
-                    left.push_back(std::format("{} ({})", PathUtf8(path.filename()), removeEc.message()));
+                const std::string name = PathUtf8(path.filename());
+                std::string reason;
+                if (const auto release = ParseTerrainIdHex(name))
+                    reason = RemoveUnusedTerrainRelease(assetDir, TerrainReleaseId(*release));
                 else
-                    removed.push_back(PathUtf8(path.filename()));
+                {
+                    std::error_code removeEc;
+                    fs::remove_all(path, removeEc);
+                    if (removeEc)
+                        reason = removeEc.message();
+                }
+                if (!reason.empty())
+                    left.push_back(std::format("{} ({})", name, reason));
+                else
+                    removed.push_back(name);
             }
             // Not a failure: only current is read, and the next package retries.
             std::string detail = std::format("kept current and {}; removed {}", keepHex,
@@ -153,7 +164,9 @@ namespace mir::terrainbake
         }
         else
         {
-            mismatch = TerrainCurrentMismatch(out, id, opened.value->Index().release.source, previous);
+            mismatch = TerrainCurrentMismatch(out, id, opened.value->Index().release.source,
+                                              TerrainSourceFingerprint(opened.value->Index().weightsFingerprint),
+                                              previous);
             if (!mismatch && previous != release)
                 mismatch = std::format("the output's current names release {}", TerrainIdHex(previous->value));
         }

@@ -1,7 +1,7 @@
 /**
  * @file TerrainRuntimeCache.h
  * @author Jackey Cen
- * @brief The job pool, payload cache and GPU meshes the Edit and Play terrain runtimes share.
+ * @brief The job pool, payload cache, GPU meshes and weight textures the Edit and Play terrain runtimes share.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -23,23 +23,26 @@
 
 namespace mir
 {
+    class ITextureUploader;
     class JobExecutor;
     class TerrainGpuUploader;
     class TerrainJobExecutor;
+    class TerrainWeightResidency;
     class VulkanRenderer;
 
     // One runtime holding the cache; each World keeps its own colliders and release switch.
     using TerrainCacheOwner = uint64_t;
 
-    // Main-thread object. Play binds to the cache Edit built, so entering Play finds the payloads and meshes the
-    // Edit runtime already holds and one GPU budget covers the whole App.
+    // Main-thread object. Play binds to the cache Edit built, so entering Play finds the payloads, meshes and weight
+    // textures the Edit runtime already holds and one budget of each covers the whole App.
     class TerrainRuntimeCache
     {
       public:
         TerrainRuntimeCache(const TerrainStreamingSettings &settings, JobExecutor &jobs, VulkanRenderer &renderer);
-        // Over an executor and an uploader the caller owns, such as a manual executor and a fake uploader.
+        // Over an executor and uploaders the caller owns, such as a manual executor and fakes.
         TerrainRuntimeCache(const TerrainStreamingSettings &settings, std::shared_ptr<TerrainExecutor> executor,
-                            std::shared_ptr<TerrainMeshUploader> uploader);
+                            std::shared_ptr<TerrainMeshUploader> uploader, ITextureUploader *textures = nullptr,
+                            uint32_t samplerRow = UINT32_MAX);
         ~TerrainRuntimeCache();
 
         TerrainRuntimeCache(const TerrainRuntimeCache &) = delete;
@@ -50,7 +53,8 @@ namespace mir
         size_t Concurrency() const;
 
         TerrainCacheOwner AddOwner();
-        // The releases this owner holds. Meshes of a release no owner holds retire now.
+        // The releases this owner holds. Meshes of a release no owner holds retire now, and every weight texture
+        // once no owner holds any.
         void SetHeldReleases(TerrainCacheOwner owner, std::span<const TerrainReleaseInfo> releases);
         void RemoveOwner(TerrainCacheOwner owner);
 
@@ -58,6 +62,8 @@ namespace mir
         double Now() const;
         TerrainStreamer &Streamer();
         TerrainMeshResidency &Meshes();
+        // Null without a texture uploader.
+        TerrainWeightResidency *Weights() const;
         std::shared_ptr<TerrainExecutor> Executor() const;
         // Meshes built with a BLAS only when the renderer traces; a change retires the ones built the other way.
         bool RayTracing() const
@@ -67,7 +73,8 @@ namespace mir
         void SetRayTracing(bool rayTracing);
 
       private:
-        void MakeResidencies(const TerrainStreamingSettings &settings);
+        void MakeResidencies(const TerrainStreamingSettings &settings, ITextureUploader *textures,
+                             uint32_t samplerRow);
         void RetireUnheld();
 
         std::chrono::steady_clock::time_point mStart = std::chrono::steady_clock::now();
@@ -78,6 +85,7 @@ namespace mir
         TerrainGpuUploader *mGpuUploader = nullptr;
         std::unique_ptr<TerrainStreamer> mStreamer;
         std::unique_ptr<TerrainMeshResidency> mMeshes;
+        std::unique_ptr<TerrainWeightResidency> mWeights;
         // By owner: the releases whose payloads and meshes stay.
         std::map<TerrainCacheOwner, std::vector<TerrainReleaseInfo>> mHeld;
         TerrainCacheOwner mNextOwner = 1;

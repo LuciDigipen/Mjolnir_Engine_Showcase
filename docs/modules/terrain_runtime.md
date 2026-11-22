@@ -51,7 +51,7 @@ real renderer, and everything else in the bridge, are covered only by the
 ```
 constructor    -> TerrainRuntime::Bind      effective streaming settings from the shared TerrainStreamingConfiguration
                                             -> the Edit runtime makes the TerrainRuntimeCache (pool, streamer, mesh
-                                            residency, clock), the Play runtime joins it; collision residency;
+                                            and weight residencies, clock), the Play runtime joins it; collision residency;
                                             registers itself in the ViewDrawSources and PhysicsStepGates resources
 FrameBegin     -> TerrainRuntime::Update    a changed effective configuration applied first; TerrainStreamer::Update,
                                             TerrainReleaseSwitch::Update,
@@ -65,6 +65,7 @@ SceneLoad      -> Refresh(force)            after an Unload, CollectTerrainScene
 PlayBegin      -> Refresh(force), BeginPlay adopt a ready switch, then Play pins what is loaded; a switch in progress
                                             waits for Stop
 SceneUnload    -> Unload                    interests released, meshes of releases no other runtime holds retired,
+                                            weight textures retired once no runtime holds a release,
                                             collision pieces removed, TerrainWorld emptied
 Play / Stop    -> Suspend / Resume          the Edit runtime drops its interests and draws while Play draws the cache
 FixedUpdate    -> TerrainRuntime::BeforeStep  as a PhysicsStepGate before each step: install pieces, update needs,
@@ -94,7 +95,7 @@ a scene with terrain, are one error, and no terrain loads; a game without
 terrain needs no file.
 
 `Update` compares `Effective()` with the settings it last saw, and on a difference
-applies them to the streamer, to `TerrainMeshResidency` and
+applies them to the streamer, to `TerrainMeshResidency`, `TerrainWeightResidency` and
 `TerrainCollisionResidency`, and to the view selector of every viewport and of every
 staged release, because each selector holds its own copy of the `view` bounds.
 Four fields are never applied to a running terrain, and a change to one is logged

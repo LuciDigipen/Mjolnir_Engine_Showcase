@@ -2,6 +2,7 @@
     GameUIModule.tests.cpp
     UIActiveDevice.tests.cpp
     UIDrawList.tests.cpp
+    UIFonts.tests.cpp
     UIFocus.tests.cpp
     UIId.tests.cpp
     UILayout.tests.cpp

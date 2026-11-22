@@ -79,13 +79,19 @@ namespace mir
         return mUploader.MeshStreaming().retiringBytes;
     }
 
+    uint64_t TerrainGpuUploader::Bytes(TerrainGpuMeshId mesh) const
+    {
+        return mUploader.MeshBytes(Handle(mesh));
+    }
+
     MeshHandle TerrainGpuUploader::Handle(TerrainGpuMeshId mesh)
     {
         return MeshHandle{uint32_t(mesh & 0xffffffffu), uint32_t(mesh >> 32)};
     }
 
     std::optional<WorldDrawItem> MakeTerrainDraw(const TerrainResidentMesh &mesh, const TerrainPlacement &placement,
-                                                 MaterialHandle material, const glm::vec4 &diagnosticTint)
+                                                 MaterialHandle material, const glm::vec4 &diagnosticTint,
+                                                 const std::array<uint32_t, 4> &terrain)
     {
         const std::optional<WorldPosition> origin = TryTerrainLocalToWorld(mesh.origin, placement.translation);
         if (!origin)
@@ -97,6 +103,7 @@ namespace mir
         draw.material = material;
         draw.tint = material.IsNull() ? diagnosticTint : glm::vec4(1.0f);
         draw.translationGrid = kTerrainTranslationGrid;
+        draw.terrain = terrain;
         return draw;
     }
 }

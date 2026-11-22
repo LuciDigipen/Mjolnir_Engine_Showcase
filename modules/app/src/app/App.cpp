@@ -30,6 +30,7 @@
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
 #include <serial/JsonFile.h>
+#include <terrain/TerrainScene.h>
 #include <terrain_runtime/TerrainRuntime.h>
 
 #include <imgui.h>
@@ -48,6 +49,11 @@ namespace mir
 {
     namespace
     {
+        GameShellParts ShellParts(const GameProject &project)
+        {
+            return GameShellParts{ .mHud = project.mShellHud, .mMenu = project.mShellMenu };
+        }
+
         size_t MissingFileCount(const SceneProbe &probe)
         {
             return probe.mMissingEntities.size() + probe.mMissingInstances.size();
@@ -188,7 +194,7 @@ namespace mir
 
     App::SimulationSystems::SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
         AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
-        ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
+        ParticlesGpuModule &particlesGpu, RenderSystem &rendering, GameUIModule &gameUI)
         : physics(context, &jobs),
     #if MIR_WITH_EDITOR
         flight(context, MakeAircraftConfigSource(assets.Cache(), resolver),
@@ -198,6 +204,7 @@ namespace mir
     #endif
         terrainData(context),
         script(context, assets, resolver),
+        actions(context),
         particlesRuntime(context, particles, particlesGpu, rendering),
         particlesScript(script),
     #if MIR_WITH_AUDIO
@@ -207,14 +214,16 @@ namespace mir
         physicsScript(script),
         flightScript(script),
         rendererScript(script),
-        terrainScript(script)
+        terrainScript(script),
+        actionsScript(script),
+        gameUIScript(context, script, gameUI, assets, resolver)
     {}
 
     struct App::RuntimeSession
     {
         explicit RuntimeSession(App &app)
             : state(app.mProjectResources, app.mProject, app.mAssets, app.mResolver,
-                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
+                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mParts = ShellParts(app.mProject) }),
             rendering(app.mRenderer.BindWorld(state.Context(),
                 RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
                                         .mEnableValidation = app.mDesc.mEnableValidation,
@@ -228,7 +237,7 @@ namespace mir
             audio(app.mAudio.BindWorld(state.Context())),
         #endif
             simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
-                app.mParticlesGpu, rendering->Rendering()),
+                app.mParticlesGpu, rendering->Rendering(), state.gameUI),
             terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs, true,
                 app.mTerrain.Cache())
         {
@@ -284,7 +293,7 @@ namespace mir
         mControls(LoadControlsSettings(UserSettingsPath(mProject))),
         mControlsOptions(mControls, UserSettingsPath(mProject)),
         mWorldState(mProjectResources, mProject, mAssets, mResolver,
-            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
+            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mParts = ShellParts(mProject) }),
         mWindow(MakeWindowDesc(mDesc)),
         mRenderer(Context(), mWindow.Get(),
             RendererModuleSettings{ .mAppName = mDesc.mAppName,
@@ -298,6 +307,9 @@ namespace mir
     #if MIR_WITH_EDITOR
         mEditor(Context(), mImGui, mWindow, mRenderer, mWorldState.scene, mWorldState.prefab, mAssets, mAssetService.get(), mResolver,
             mProject, mJobs, mDesc.mEnableEditorLayout, mAnimation.Library()),
+        mTerrainEditor(Context(), mEditor, mProject,
+            [this](AssetId asset, std::shared_ptr<const TerrainOverlay> overlay)
+            { return mTerrain.Runtime().SetTerrainOverlay(asset, std::move(overlay)); }),
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO
@@ -305,7 +317,7 @@ namespace mir
             UserSettingsPath(mProject)),
     #endif
         mSimulation(Context(), mProject, mJobs, mAssets, mResolver, mWorldState.particles,
-            mParticlesGpu, mRenderer.Rendering()),
+            mParticlesGpu, mRenderer.Rendering(), mWorldState.gameUI),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
         mFlightDebug(Context(), mImGui, SourceAssetsRoot(mProject)),
@@ -623,6 +635,9 @@ namespace mir
         try
         {
             mRuntime = std::make_unique<RuntimeSession>(*this);
+            // Edit's snapshots go to the Play runtime before PlayBegin resolves and pins its releases.
+            if (const TerrainWorld *edit = mWorldState.world.TryResource<TerrainWorld>())
+                mRuntime->terrain.Runtime().OfferPlayOverlays(*edit);
             mRuntime->Begin(0.0, 0);
             if (mWorldState.scheduler.Started())
             {
@@ -657,6 +672,9 @@ namespace mir
             mTerrain.Runtime().Resume();
             return;
         }
+        // Standalone never updates the authoring terrain, so it could not acknowledge a retired material.
+        if (!mDesc.mEnableEditorLayout)
+            mTerrain.Runtime().Unload();
         SetPlayState(mWorldState.world, PlayState::Running);
         SetEngineMode(mWorldState.world, EngineMode::Play);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
@@ -703,7 +721,11 @@ namespace mir
         const auto instances = mRuntime->state.scene.Scenes().Instances();
         for (size_t i = 0; i < instances.size(); ++i)
             UnloadRuntimeScene(instances[i], i + 1 != instances.size());
-        if (instances.empty()) mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+        if (instances.empty())
+        {
+            mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+            mRuntime->state.scheduler.RunStage(Stage::SceneUnloaded, runtimeContext);
+        }
         mRuntime->state.scheduler.Stop(runtimeContext);
     }
 
@@ -856,6 +878,7 @@ namespace mir
         mRuntime->state.scheduler.RunStage(Stage::SceneEnd, context);
         mRuntime->state.scene.Remove(instance);
         mRuntime->state.scheduler.RunStage(Stage::SceneUnload, context);
+        mRuntime->state.scheduler.RunStage(Stage::SceneUnloaded, context);
     #if MIR_WITH_EDITOR
         mEditor.ClearPlayHistory();
     #endif
@@ -979,6 +1002,9 @@ namespace mir
             unloadScenes = runtimeQueue.TakeUnloadScenes();
             primaryScene = runtimeQueue.TakePrimaryScene();
             std::vector<Request> runtimeActions = runtimeQueue.Take();
+            // the game asked to quit: in the editor that leaves Play, as the pause menu's Quit always has
+            if (mDesc.mEnableEditorLayout)
+                std::ranges::replace(runtimeActions, Request::Quit, Request::Stop);
             actions.insert(actions.end(), runtimeActions.begin(), runtimeActions.end());
             // A Lua failure ends Play in the editor so it is fixed before it hides behind later frames. A
             // standalone game has nowhere to return to, so it logs the error and keeps running.
@@ -1070,6 +1096,7 @@ namespace mir
     {
         mWorldState.scene.Unload();
         RunStage(Stage::SceneUnload);
+        RunStage(Stage::SceneUnloaded);
     }
 
     void App::RunStage(Stage stage)

@@ -3,7 +3,7 @@
  * @author Quy Dong Ta
  * @brief The game UI's frame: the area it draws into, the input it reads, the
  *        widgets' hot and active state, the draw list that is submitted
- *        when the frame ends, and the textures it draws.
+ *        when the frame ends, and the textures and fonts it draws.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -51,6 +51,8 @@ namespace mir
 
         const bool focusVisible = input.ActiveDevice() != DeviceKind::Mouse;
         mState.BeginFrame(area, pointer, mNav, focusVisible, mScale);
+        mHoldInputCalls = 0;
+        mWidgetsDisabled = false;
         mInFrame = true;
     }
 
@@ -59,9 +61,11 @@ namespace mir
         MIR_ASSERT(mInFrame, "UIContext::EndFrame without BeginFrame");
         MIR_ASSERT(mDrawList.ClipDepth() == 0, "UIContext::EndFrame with {} PushClip unpopped",
                    mDrawList.ClipDepth());
+        MIR_ASSERT(mDrawList.OpacityDepth() == 0, "UIContext::EndFrame with {} PushOpacity unpopped",
+                   mDrawList.OpacityDepth());
 
         if (mInFrame && !mArea.IsEmpty() && mBackend != nullptr)
-            mBackend->Submit(mArea, mScale, mDrawList, mTextures);
+            mBackend->Submit(mArea, mScale, mDrawList, mTextures, mFonts);
 
         if (mInFrame)
         {
@@ -85,6 +89,7 @@ namespace mir
     {
         MIR_ASSERT(mInFrame, "UIContext::HoldInput outside BeginFrame/EndFrame");
         mHoldInput = mInFrame;
+        ++mHoldInputCalls;
     }
 
     void UIContext::HideCursor()
@@ -97,7 +102,19 @@ namespace mir
     {
         MIR_ASSERT(mInFrame, "UIContext::Interact outside BeginFrame/EndFrame");
 
-        return mState.Interact(id, rect, mDrawList.CurrentClip(), options);
+        if (!mWidgetsDisabled)
+            return mState.Interact(id, rect, mDrawList.CurrentClip(), options);
+        UIWidgetOptions disabled = options;
+        disabled.mDisabled = true;
+        return mState.Interact(id, rect, mDrawList.CurrentClip(), disabled);
+    }
+
+    bool UIContext::SetFocus(UIId id)
+    {
+        if (mWidgetsDisabled)
+            return false;
+        mState.SetFocus(id);
+        return true;
     }
 
     UIPrompt UIContext::Prompt(std::string_view action) const
@@ -112,15 +129,22 @@ namespace mir
 
     UISize UIContext::MeasureText(std::string_view text) const
     {
+        return MeasureText(text, mStyle.mFont, mStyle.mFontSize);
+    }
+
+    UISize UIContext::MeasureText(std::string_view text, UIFont font, float fontSize) const
+    {
         if (mBackend == nullptr)
-            return EstimateTextSize(text, mStyle.mFontSize > 0.0f ? mStyle.mFontSize : mStyle.mTextHeight);
+            return EstimateTextSize(text, fontSize > 0.0f ? fontSize : mStyle.mTextHeight);
+
+        void *backendFont = mFonts.Find(font);
 
         // the backend's own size is not scaled when drawn, so it is already in UI units
-        if (mStyle.mFontSize <= 0.0f)
-            return mBackend->MeasureText(text, 0.0f);
+        if (fontSize <= 0.0f)
+            return mBackend->MeasureText(text, 0.0f, backendFont);
 
         // measured at the size it is drawn, since a font's widths do not scale exactly
-        const UISize pixels = mBackend->MeasureText(text, mStyle.mFontSize * mScale);
+        const UISize pixels = mBackend->MeasureText(text, fontSize * mScale, backendFont);
         return UISize{pixels.width / mScale, pixels.height / mScale};
     }
 } // namespace mir

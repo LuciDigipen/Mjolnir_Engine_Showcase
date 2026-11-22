@@ -108,6 +108,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `physics` | module | `physics_layers`, `jobs` |
 | `input` | module | `window`, `serial` |
 | `camera` | module | `input` |
+| `actions` | module | none |
 | `renderer` | module | `assets`, `serial` |
 | `particles_gpu` | module | `renderer` |
 | `animation` | module | `assets`, `renderer`, `jobs` |
@@ -115,7 +116,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `particles_runtime` | module, bridge | `particles`, `particles_gpu` |
 | `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project`, `jobs` |
 | `script` | module | `assets`, `scene` |
-| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script` | module, bridge | `script` and its library |
+| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script`, `actions_script`, `gameui_script` | module, bridge | `script` and its library |
 | `imguiruntime` | module | `window`, `renderer`, `input` |
 | `gameui` | module | `assets`, `input` |
 | `gameui_imgui` | module, bridge | `gameui`, `imguiruntime`, `window` |
@@ -125,7 +126,7 @@ each library links in the engine, besides `core`; `app` links everything.
 A cross-library piece moves into a library only when that adds no cycle, no new
 third-party code to the library's link closure, and no new runtime setup to its
 tests. Otherwise it is a bridge library. `terrain_runtime` is one, so `terrain`
-and `TerrainTool` need neither Vulkan nor Jolt. The six `*_script` bridges are
+and `TerrainTool` need neither Vulkan nor Jolt. The eight `*_script` bridges are
 the others, so no library but `script` and its bridges sees Lua.
 
 `gameui` names no graphics API. The `gameui_imgui` bridge puts its draw list in
@@ -148,10 +149,11 @@ would.
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
 | `physics` | Jolt world, `RigidBody`, the step, layers, events | [physics.md](modules/physics.md) |
-| `*_script` | Six bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
+| `*_script` | Eight bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
 | `terrain_runtime` | Terrain streaming, drawing and collision at runtime | [terrain_runtime.md](modules/terrain_runtime.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
 | `camera` | Gameplay camera control: follow a target, or free-fly from input | [camera.md](modules/camera.md) |
+| `actions` | Eased moves, turns and scales of entities, and named values for game UI, reachable from anywhere through the World | [actions.md](modules/actions.md) |
 | `imguiruntime` | ImGui context lifetime, fonts, both backends, the frame bracket | [imguiruntime.md](modules/imguiruntime.md) |
 | `editor` | The editor shell, drawn into `imguiruntime`'s context | [editor.md](modules/editor.md) |
 | `editortheme` | Theme data only | [editortheme.md](modules/editortheme.md) |
@@ -359,10 +361,10 @@ stages. A stage runs the functions modules registered for it, in registration
 order, then flushes the command buffer.
 
 ```
-New / Load        SceneUnload  ->  scene replaced  ->  SceneLoad
+New / Load        SceneUnload  ->  SceneUnloaded  ->  scene replaced  ->  SceneLoad
 Save              written      ->  SceneSaved
   Play              commit authored prefabs  ->  copy live scene to runtime World  ->  runtime SceneLoad and PlayBegin
-  Stop              runtime PlayEnd and SceneUnload  ->  destroy runtime session  ->  Edit mode
+  Stop              runtime PlayEnd, SceneUnload and SceneUnloaded  ->  destroy runtime session  ->  Edit mode
 Asset reload      BeginReload  ->  ReloadPrepare  ->  CommitReload  ->  ReloadCommit
                                      (a veto)  ->  ReloadAbort  ->  AbortReload
 ```

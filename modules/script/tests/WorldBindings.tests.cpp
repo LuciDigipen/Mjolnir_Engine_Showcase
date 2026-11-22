@@ -606,3 +606,54 @@ TEST_CASE("world:set refuses a zero-length or NaN rotation and leaves the Transf
     CHECK(world.GetComponent<Transform>(entity)->Rotation() == turn);
     CHECK(world.GetComponent<Transform>(entity)->Version() == version);
 }
+
+TEST_CASE("Lua pauses, resumes, restarts and quits the session, in Play only", "[script]")
+{
+    World world;
+    CommandBuffer commands;
+    world.EmplaceResource<mir::EngineModeState>();
+    world.EmplaceResource<mir::RequestQueue>();
+    mir::SetEngineMode(world, mir::EngineMode::Play);
+
+    ScriptHost host;
+    REQUIRE(host.LoadScriptSource("session_requests", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnStart(self, world, entity)
+    if world:is_paused() then error("not paused yet") end
+    world:pause()
+    world:resume()
+    world:restart()
+    world:quit()
+end
+return T
+)LUA"));
+    const int32_t instance = host.CreateInstance("session_requests");
+    REQUIRE(instance != -1);
+    host.CallOnStart(world, commands, world.CreateEntity(), instance);
+    CHECK(host.ErrorCount() == 0);
+    CHECK(world.Resource<mir::RequestQueue>().Take() ==
+          std::vector<mir::Request>{ mir::Request::Pause, mir::Request::Resume, mir::Request::Stop,
+                                     mir::Request::Play, mir::Request::Quit });
+
+    mir::SetPlayState(world, mir::PlayState::Paused);
+    REQUIRE(host.LoadScriptSource("session_paused", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnStart(self, world, entity)
+    if not world:is_paused() then error("paused") end
+end
+return T
+)LUA"));
+    const int32_t paused = host.CreateInstance("session_paused");
+    host.CallOnStart(world, commands, world.CreateEntity(), paused);
+    CHECK(host.ErrorCount() == 0);
+
+    // outside Play a script asks nothing of the editor
+    mir::SetEngineMode(world, mir::EngineMode::Edit);
+    host.CallOnStart(world, commands, world.CreateEntity(), instance);
+    CHECK(world.Resource<mir::RequestQueue>().Take().empty());
+
+    host.DestroyInstance(instance);
+    host.DestroyInstance(paused);
+}

@@ -62,7 +62,7 @@ namespace mir
         void DrawLine(UIContext &ui, const UIRect &rect, float x, std::string_view text, UIColor color)
         {
             const float height = ui.MeasureText(text).height;
-            ui.DrawList().Text(x, rect.y + (rect.height - height) * 0.5f, text, color, ui.Style().mFontSize);
+            StyledText(ui, x, rect.y + (rect.height - height) * 0.5f, text, color);
         }
 
         void DrawPrompt(UIContext &ui, UIStack &strip, std::string_view action, std::string_view text)

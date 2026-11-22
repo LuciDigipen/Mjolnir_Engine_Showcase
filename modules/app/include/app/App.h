@@ -10,6 +10,8 @@
 
 #include <app/ProjectResources.h>
 #include <project/GameProject.h>
+#include <actions/ActionsModule.h>
+#include <actions_script/ActionsScriptModule.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
@@ -34,6 +36,7 @@
 #include <flight_script/FlightScriptModule.h>
 #include <gameshell/GameShellModule.h>
 #include <gameui/GameUIModule.h>
+#include <gameui_script/GameUIScriptModule.h>
 #include <gameui_imgui/GameUIImGuiModule.h>
 #include <imguiruntime/ImGuiModule.h>
 #include <input/InputModule.h>
@@ -68,6 +71,7 @@
 
 #if MIR_WITH_EDITOR
 #include <editor/EditorModule.h>
+#include <terrain_editor/TerrainEditorModule.h>
 #endif
 #if MIR_WITH_AUDIO && MIR_WITH_EDITOR
 #include <app/EditorAudioOptions.h>
@@ -150,6 +154,7 @@ namespace mir
 
         // Temporary seam
         VulkanRenderer &Renderer() { return mRenderer.Renderer(); }
+        const SurfaceMaterialLibrary &SurfaceMaterials() { return mRenderer.SurfaceMaterials(); }
 
         // Startup splash
         SplashScreen &Splash() { return mSplash.screen; }
@@ -351,6 +356,7 @@ namespace mir
     #if MIR_WITH_EDITOR
         SplashStep mEditorStep{ mSplash, "Initializing editor...", 0.5f };
         EditorModule mEditor;
+        TerrainEditorModule mTerrainEditor;
     #endif
         SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
         CameraModule mCamera;
@@ -367,12 +373,15 @@ namespace mir
         {
             SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
                 AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
-                ParticlesGpuModule &particlesGpu, RenderSystem &rendering);
+                ParticlesGpuModule &particlesGpu, RenderSystem &rendering, GameUIModule &gameUI);
 
             PhysicsModule physics;
             FlightModule flight;
             TerrainModule terrainData;
             ScriptModule script;
+            // after script: stages run in registration order, so scripts' OnStop at PlayEnd still reads action values
+            // before this module clears them
+            ActionsModule actions;
             ParticlesRuntimeModule particlesRuntime;
             ParticlesScriptModule particlesScript;
         #if MIR_WITH_AUDIO
@@ -383,6 +392,8 @@ namespace mir
             FlightScriptModule flightScript;
             RendererScriptModule rendererScript;
             TerrainScriptModule terrainScript;
+            ActionsScriptModule actionsScript;
+            GameUIScriptModule gameUIScript;
         };
 
         SimulationSystems mSimulation;

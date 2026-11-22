@@ -25,6 +25,19 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(cmake/EnginePlatform.cmake)
 include(cmake/EngineModule.cmake)
+option(MIR_OPTIMIZE_ASSET_COOKER "Run Release offline tools in development builds" ON)
+set(MIR_TOOLS_ONLY "${MIR_TOOLS_ONLY}" CACHE INTERNAL "Configure only offline tool dependencies")
+if(MIR_TOOLS_ONLY)
+    set(BUILD_TESTING OFF)
+    include(cmake/Shaders.cmake)
+    foreach(module core jobs project assets serial scene terrain prefab particles)
+        add_subdirectory(modules/${module})
+    endforeach()
+    add_subdirectory(tools/AssetCooker)
+    add_subdirectory(tools/TerrainTool)
+    return()
+endif()
+include(cmake/OfflineTools.cmake)
 include(cmake/Shaders.cmake)
 include(cmake/Assets.cmake)
 include(cmake/Fonts.cmake)
@@ -56,6 +69,8 @@ if(BUILD_TESTING)
 endif()
 
 add_subdirectory(third_party)
+add_subdirectory(modules/actions)
+add_subdirectory(modules/actions_script)
 add_subdirectory(modules/animation)
 add_subdirectory(modules/app)
 add_subdirectory(modules/assets)
@@ -73,6 +88,7 @@ add_subdirectory(modules/flight_script)
 add_subdirectory(modules/gameshell)
 add_subdirectory(modules/gameui)
 add_subdirectory(modules/gameui_imgui)
+add_subdirectory(modules/gameui_script)
 add_subdirectory(modules/imguiruntime)
 add_subdirectory(modules/input)
 add_subdirectory(modules/input_script)
@@ -92,6 +108,7 @@ add_subdirectory(modules/scene)
 add_subdirectory(modules/script)
 add_subdirectory(modules/serial)
 add_subdirectory(modules/terrain)
+add_subdirectory(modules/terrain_editor)
 add_subdirectory(modules/terrain_runtime)
 add_subdirectory(modules/terrain_script)
 add_subdirectory(modules/window)
@@ -154,9 +171,9 @@ if(MJOLNIR_WITH_EDITOR)
     file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" asset_workspace_source_root)
     file(GENERATE
         OUTPUT "$<TARGET_FILE_DIR:MjolnirEngine>/asset_workspace.json"
-        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\",\n  \"buildTool\": \"$<TARGET_FILE:MjolnirBuild>\"\n}\n")
-    # File > Build runs it
-    add_dependencies(MjolnirEngine MjolnirBuild)
+        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\",\n  \"buildTool\": \"$<TARGET_FILE:MjolnirBuild>\",\n  \"terrainTool\": \"$<TARGET_FILE:TerrainTool>\"\n}\n")
+    # File > Build runs it; the Terrain panel's Bake runs TerrainTool
+    add_dependencies(MjolnirEngine MjolnirBuild TerrainTool)
 endif()
 
 if(MSVC)
@@ -461,6 +478,8 @@ endif()
 find_package(nlohmann_json CONFIG REQUIRED)
 
 target_link_libraries(MjolnirEngine PRIVATE
+    mir::actions
+    mir::actions_script
     mir::app
     mir::assets
     mir::core
@@ -490,6 +509,13 @@ if(BUILD_TESTING)
             -Repository "${CMAKE_SOURCE_DIR}" -BuildDirectory "${CMAKE_BINARY_DIR}"
             -Publisher "$<TARGET_FILE:ShaderPublisher>" -Compiler "$<TARGET_FILE:shader_compiler_driver>"
             -CxxCompiler "${CMAKE_CXX_COMPILER}" -MakeProgram "${CMAKE_MAKE_PROGRAM}")
+    # The nested Ninja configure needs the same compiler and SDK environment as this configure.
+    foreach(variable PATH INCLUDE LIB LIBPATH)
+        if(DEFINED ENV{${variable}})
+            string(REPLACE ";" "\\;" value "$ENV{${variable}}")
+            set_property(TEST shader_publication_fixture APPEND PROPERTY ENVIRONMENT "${variable}=${value}")
+        endif()
+    endforeach()
     add_test(NAME surface_material_discovery
         COMMAND "${CMAKE_COMMAND}" -DSLANGC_EXECUTABLE=${SLANGC_EXECUTABLE}
                 -P "${CMAKE_SOURCE_DIR}/tools/tests/SurfaceMaterialDiscovery.cmake")

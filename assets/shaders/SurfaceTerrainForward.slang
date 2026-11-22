@@ -33,6 +33,7 @@ struct TerrainVSOutput
     float2 uv : TEXCOORD1;
     float4 color : COLOR;
     float3 localPos : TEXCOORD2;
+    nointerpolation uint baseInstance : TEXCOORD3;
 };
 
 struct TerrainPushConstants
@@ -46,9 +47,12 @@ struct TerrainPushConstants
 
 [[vk::push_constant]] TerrainPushConstants pushData;
 
-[[vk::binding(2, 0)]] ConstantBuffer<MaterialRecordRef> gMaterialRecordRef;
+[[vk::binding(MIR_DRAW_RECORDS_BINDING, MIR_DRAW_RECORDS_SET)]]
+StructuredBuffer<DrawRecord> gDrawRecords;
 
-[shader("vertex")] TerrainVSOutput vertexMain(TerrainVSInput input) {
+[shader("vertex")]
+TerrainVSOutput vertexMain(TerrainVSInput input, uint baseInstance : SV_StartInstanceLocation)
+{
     TerrainVSOutput output;
     const float4 worldPos = mul(pushData.model, float4(input.pos, 1.0));
     output.position = mul(viewProj, worldPos);
@@ -58,6 +62,7 @@ struct TerrainPushConstants
     output.uv = input.uv;
     output.color = float4(input.color, input.alpha);
     output.localPos = input.pos;
+    output.baseInstance = baseInstance;
     return output;
 }
 
@@ -69,7 +74,8 @@ struct TerrainPushConstants
     : SV_Target
 #endif
 {
-    const M material = gSurfaceRecords.Load<M>(gMaterialRecordRef.offset);
+    const DrawRecord record = gDrawRecords[input.baseInstance];
+    const M material = gSurfaceRecords.Load<M>(record.materialOffset);
     const float3 macroNormal = SafeNormalize(input.normal, float3(0.0, 1.0, 0.0));
 
     MaterialContext context;
@@ -79,9 +85,11 @@ struct TerrainPushConstants
     context.footprintMeters = 0.0;
     context.incidence = 1.0;
     context.uvDensity = 0.0;
+    context.recordOffset = record.materialOffset;
 
-    const SurfaceInput surfaceInput =
+    SurfaceInput surfaceInput =
         TerrainFrontend::Build(input.worldPos, macroNormal, input.uv, input.localPos, input.color, frontFace, 0.0);
+    surfaceInput.layerWeights = TerrainLayerWeights(record.terrain, input.localPos);
     const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), pushData.tint);
 
     ShadowMapVisibility visibility;

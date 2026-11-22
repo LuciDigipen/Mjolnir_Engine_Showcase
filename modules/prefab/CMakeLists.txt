@@ -1,4 +1,4 @@
-engine_add_module(prefab)
+engine_add_module(prefab PCH_HEADERS glm/glm.hpp nlohmann/json.hpp)
 
 target_link_libraries(engine_prefab
     PUBLIC mir::core

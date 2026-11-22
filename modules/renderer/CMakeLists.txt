@@ -1,4 +1,4 @@
-engine_add_module(renderer)
+engine_add_module(renderer PCH_HEADERS glm/glm.hpp imgui.h nlohmann/json.hpp)
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/DlssConfig.h.in
@@ -81,6 +81,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/SurfaceMaterialCatalog.cpp
     src/renderer/SurfaceMaterialHost.cpp
     src/renderer/SurfaceMaterialLibrary.cpp
+    src/renderer/TerrainMaterialAsset.cpp
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp
     src/renderer/PostProcessingSettings.cpp
@@ -103,6 +104,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/DebugDraw.cpp
     src/renderer/vulkan/DepthOfField.cpp
     src/renderer/vulkan/Device.cpp
+    src/renderer/vulkan/DrawRecords.cpp
     src/renderer/vulkan/FrameCapture.cpp
     src/renderer/vulkan/FrameSync.cpp
     src/renderer/vulkan/Fxaa.cpp

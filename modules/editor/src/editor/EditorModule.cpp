@@ -168,6 +168,18 @@ namespace mir
         }
     }
 
+    std::future<std::string> EditorModule::ImportTerrainMaterial(const std::filesystem::path &path)
+    {
+        auto completion = std::make_shared<std::promise<std::string>>();
+        auto result = completion->get_future();
+        mShaderHotReload.QueueTerrainMaterial(path, [this, path, completion](std::string error) {
+            if (error.empty() && !mImport.QueueChanged(path))
+                error = "The shader was published, but the layered material could not be queued for import.";
+            completion->set_value(std::move(error));
+        });
+        return result;
+    }
+
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
         AsyncAssetService *assetService, const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs,
@@ -361,6 +373,15 @@ namespace mir
                     mEnableLayout && IsEditing(mWorld), mImport.View(), materialContext);
                 FeedViewport();
             });
+
+        // after the game UI, so a click it took this frame selects nothing behind it
+        mLateDrawer = imgui.AddDrawer(DrawerGroup::Late, [this]
+            {
+                World *preview = mPlayWorld != nullptr ? mPlayWorld : ActivePreviewWorld();
+                const GameUIPointer *gameUI = mWorld.TryResource<GameUIPointer>();
+                mEditor.ResolveViewportPick(preview != nullptr ? *preview : mWorld,
+                    gameUI != nullptr && gameUI->mOverWidget);
+            });
     }
 
     EditorModule::~EditorModule()
@@ -371,6 +392,7 @@ namespace mir
         mSceneSaved.Reset();
         mSceneLoad.Reset();
         mSceneUnload.Reset();
+        mLateDrawer.Reset();
         mDrawer.Reset();
         mFrameBegin.Reset();
         mEditor.Shutdown();
@@ -439,14 +461,15 @@ namespace mir
         // set in Edit only, but drawn in Play too
         rendering.SetViewportDebugView(0, mEnableLayout ? mEditor.SceneDebugView() : DebugViewSettings{});
 
+        // only Edit feeds the editor camera, and only Edit shows a Prefab tab's preview
+        const bool editorView = IsEditing(mWorld) && mEnableLayout;
+
         // the game UI draws later this frame, into the same scene viewport
         GameUIArea &area = (mPlayWorld != nullptr ? *mPlayWorld : mWorld).Resource<GameUIArea>();
         area.mSet = mEnableLayout;
         area.mRect = UIRect{ static_cast<float>(viewport.offset.x), static_cast<float>(viewport.offset.y),
                              static_cast<float>(viewport.extent.width), static_cast<float>(viewport.extent.height) };
-
-        // only Edit feeds the editor camera, and only Edit shows a Prefab tab's preview
-        const bool editorView = IsEditing(mWorld) && mEnableLayout;
+        area.mToolsHavePointer = editorView && mEditor.ViewportToolsHavePointer();
         if (editorView)
         {
             mEditor.UpdateCamera(mFrameDt);

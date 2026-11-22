@@ -36,6 +36,7 @@ namespace mir::test
         {
             return uploader.MeshFootprint(vertexCount, indexCount, options);
         }
+        uint64_t MeshBytes(MeshHandle handle) const override { return uploader.MeshBytes(handle); }
         MeshStreamingStats MeshStreaming() const override { return uploader.MeshStreaming(); }
         uint64_t UploadFrameBudget() const override { return uploader.UploadFrameBudget(); }
 

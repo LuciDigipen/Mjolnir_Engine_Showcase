@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -67,6 +68,8 @@ namespace mir::vk
         void Record(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources, RayTracer &rayTracer);
         // Every queued or in-flight upload and every retired object, with the device idle.
         void Clear(RayTracer &rayTracer);
+        // Compacts a BLAS built outside the streaming path in a later Record; serial is its BLAS's.
+        void QueueBlasCompaction(MeshHandle mesh, uint64_t serial, uint64_t sourceBytes, uint64_t compactedBytes);
 
         void FillStats(MeshStreamingStats &stats) const;
 
@@ -95,6 +98,34 @@ namespace mir::vk
         void RecordTexture(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources,
             const MeshUploadQueue::Admitted &band);
 
+        struct PendingBlas
+        {
+            MeshHandle mesh;
+            uint64_t serial = 0;
+            uint64_t sourceBytes = 0;
+        };
+        struct BlasQueryBatch
+        {
+            VkQueryPool pool = VK_NULL_HANDLE;
+            uint64_t frame = 0;
+            std::vector<PendingBlas> entries;
+        };
+        struct ReadyBlas
+        {
+            MeshHandle mesh;
+            uint64_t serial = 0;
+            uint64_t sourceBytes = 0;
+            uint64_t compactedBytes = 0;
+        };
+
+        void RecordBlasQueries(VkCommandBuffer cmd, uint64_t frame, RayTracer &rayTracer,
+            const RayTracer::BlasBatch &batch, const std::unordered_map<uint32_t, MeshHandle> &handles);
+        void ReadBlasQueries(uint64_t completed);
+        // Compacts ready entries in order while the in-flight cap and the device's free memory allow.
+        bool CompactReadyBlases(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources,
+            RayTracer &rayTracer);
+        void DestroyBlasQueries();
+
         // Replaces the ring when nothing is queued or in flight.
         bool Configure(const MeshStreamingDesc &desc);
         void Free(RayTracer &rayTracer, Garbage &garbage);
@@ -111,6 +142,10 @@ namespace mir::vk
         std::unordered_map<uint32_t, TextureFinish> mTextureFinishes;
         FrameRetireList<Garbage> mRetired;
         FrameRetireList<Garbage> mRetiredTextures;
+        std::vector<BlasQueryBatch> mBlasQueries;
+        std::deque<ReadyBlas> mBlasReady;
+        // Frame and source bytes of compactions whose original has not retired yet.
+        std::vector<std::pair<uint64_t, uint64_t>> mCompactionsInFlight;
 
         uint64_t mQueuedCount = 0;
         uint64_t mTextureQueuedCount = 0;

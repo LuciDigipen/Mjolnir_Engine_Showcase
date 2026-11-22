@@ -36,11 +36,13 @@ namespace mir
                                                    : UIRect{ 0.0f, 0.0f, static_cast<float>(surface.Width()),
                                                              static_cast<float>(surface.Height()) };
                 const RawInputSnapshot &input = surface.RawInput();
+                // an ImGui window, popup or drag, or an editor tool over the viewport, is above the game UI
+                const bool withheld = ImGui::GetIO().WantCaptureMouse || published.mToolsHavePointer;
                 mActiveGameUI->RunFrame(area, UIPointer{ static_cast<float>(input.mouseX), static_cast<float>(input.mouseY),
-                                                  input.IsDown(MouseButton::Left) });
+                                                  input.IsDown(MouseButton::Left), withheld });
 
                 // ImGui's GLFW backend sets the OS cursor from this every frame, so it is the only place to hide it
-                if (!mActiveGameUI->Suspended() && mActiveGameUI->Context().HidesCursor())
+                if (!withheld && !mActiveGameUI->Suspended() && mActiveGameUI->Context().HidesCursor())
                     ImGui::SetMouseCursor(ImGuiMouseCursor_None);
             });
     }

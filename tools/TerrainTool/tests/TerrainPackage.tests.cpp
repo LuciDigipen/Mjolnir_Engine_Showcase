@@ -13,6 +13,7 @@
 
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainRelease.h>
+#include <terrain/TerrainReleaseLock.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -63,11 +64,11 @@ namespace
         return report;
     }
 
-    // Without the lock file, which exists only while held on Windows.
     std::vector<std::string> AssetDirNames(const fs::path &assetDir)
     {
         std::vector<std::string> names = FileNames(assetDir);
         std::erase(names, std::string(kTerrainPublishLockFileName));
+        std::erase(names, std::string(kTerrainReleaseLocksDirName));
         return names;
     }
 
@@ -113,6 +114,7 @@ TEST_CASE("Package copies only the current release, then does nothing while it m
     CHECK(first.publish->releasesRoot == outRoot);
 
     CHECK(AssetDirNames(TerrainAssetReleasesDir(outRoot, asset)) == CurrentAnd(a));
+    CHECK(fs::is_regular_file(TerrainReleaseLockPath(TerrainAssetReleasesDir(outRoot, asset), a)));
     CHECK(Snapshot(TerrainReleaseDir(outRoot, asset, a)) == Snapshot(TerrainReleaseDir(TerrainReleasesRoot(gameDir), asset, a)));
     const TerrainResult<TerrainReleaseHandle> shipped = OpenCurrentTerrainRelease(outRoot, asset);
     const TerrainResult<TerrainReleaseHandle> published = OpenCurrentTerrainRelease(TerrainReleasesRoot(gameDir), asset);
@@ -177,6 +179,32 @@ TEST_CASE("Package follows the game's current and clears the rest of its output"
     CHECK(ReleaseDirNames(TerrainAssetReleasesDir(TerrainReleasesRoot(gameDir), asset)).size() == 2);
 }
 
+TEST_CASE("Package keeps a pinned output release until its reader closes", "[terraintool][package]")
+{
+    ScratchDir scratch("package_reader");
+    const fs::path gameDir = scratch.path / "game";
+    const fs::path outDir = scratch.path / "output";
+    const fs::path outRoot = TerrainReleasesRoot(outDir);
+    const AssetId asset = ExampleAsset();
+    const auto a = PublishToGame(scratch.path, gameDir, "a");
+    REQUIRE(Package(gameDir, outDir).Ok());
+    const auto b = PublishToGame(scratch.path, gameDir, "b");
+    {
+        const auto reader = OpenCurrentTerrainRelease(outRoot, asset);
+        REQUIRE(reader);
+        const auto tiles = ReadAllTiles(*reader.value);
+        const auto report = Package(gameDir, outDir);
+        REQUIRE(report.Ok());
+        CHECK(report.publish->current == b);
+        CHECK(DetailOf(report, check::kPrune).find("in use") != std::string::npos);
+        CHECK(ReadAllTiles(*reader.value) == tiles);
+        REQUIRE(Package(gameDir, outDir).Ok());
+        CHECK(fs::exists(TerrainReleaseDir(outRoot, asset, a)));
+    }
+    REQUIRE(Package(gameDir, outDir).Ok());
+    CHECK_FALSE(fs::exists(TerrainReleaseDir(outRoot, asset, a)));
+}
+
 TEST_CASE("A failed or interrupted package keeps the output's current release readable",
           "[terraintool][package][fault]")
 {
@@ -209,13 +237,17 @@ TEST_CASE("A failed or interrupted package keeps the output's current release re
     CHECK(faulted.Status(check::kPrune) == CheckStatus::Skipped);
     CHECK(PeekTerrainCurrent(outRoot, asset) == a);
     CHECK(Snapshot(outA) == aFiles);
-    const TerrainResult<TerrainReleaseHandle> reopened = OpenCurrentTerrainRelease(outRoot, asset);
-    REQUIRE(reopened);
-    CHECK(reopened.value->VerifyAllPacks().code == TerrainPackErrorCode::None);
+    {
+        const TerrainResult<TerrainReleaseHandle> reopened = OpenCurrentTerrainRelease(outRoot, asset);
+        REQUIRE(reopened);
+        CHECK(reopened.value->VerifyAllPacks().code == TerrainPackErrorCode::None);
 
-    const TerrainReport next = Package(gameDir, outDir);
-    REQUIRE(next.Ok());
-    CHECK(next.publish->current == b);
+        const TerrainReport next = Package(gameDir, outDir);
+        REQUIRE(next.Ok());
+        CHECK(next.publish->current == b);
+        CHECK(Snapshot(outA) == aFiles);
+    }
+    REQUIRE(Package(gameDir, outDir).Ok());
     CHECK(AssetDirNames(TerrainAssetReleasesDir(outRoot, asset)) == CurrentAnd(b));
 }
 
@@ -266,9 +298,18 @@ TEST_CASE("Package refuses what it cannot ship and repairs a damaged copy of its
         REQUIRE(Package(gameDir, outDir).Ok());
         const fs::path outA = TerrainReleaseDir(outRoot, asset, a);
         const TileLocation where = Locate(outA, {0, 0});
-        std::vector<std::byte> pack = ReadFile(outA / where.pack);
-        pack.resize(pack.size() / 2);
-        WriteFile(outA / where.pack, pack);
+        {
+            const auto reader = OpenCurrentTerrainRelease(outRoot, asset);
+            REQUIRE(reader);
+            std::vector<std::byte> pack = ReadFile(outA / where.pack);
+            pack.resize(pack.size() / 2);
+            WriteFile(outA / where.pack, pack);
+            const auto blocked = Package(gameDir, outDir);
+            CHECK_FALSE(blocked.Ok());
+            REQUIRE_FALSE(blocked.diagnostics.empty());
+            CHECK(blocked.diagnostics.front().message.find("in use") != std::string::npos);
+            CHECK(ReadFile(outA / where.pack) == pack);
+        }
 
         const TerrainReport report = Package(gameDir, outDir);
         REQUIRE(report.Ok());

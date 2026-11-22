@@ -9,8 +9,10 @@
 #include "TerrainPackTestSupport.h"
 #include "TerrainResidencyTestSupport.h"
 #include "TerrainStreamingTestSupport.h"
+#include "support/FakeTextureUploader.h"
 
 #include <terrain_runtime/TerrainRuntimeCache.h>
+#include <terrain_runtime/TerrainWeightResidency.h>
 
 #include <terrain/TerrainExecutor.h>
 #include <terrain/TerrainMeshResidency.h>
@@ -111,6 +113,28 @@ namespace
         uploader.Frame();
         uploader.Frame();
         cache.Meshes().Install();
+    }
+
+    TerrainEncodedRelease WeightedRelease(const TerrainReleaseInfo &info, const TerrainLayout &layout)
+    {
+        const std::vector<TileHeights> tiles = BuildTiles(layout);
+        std::vector<TerrainWeightTile> weights;
+        const TileRange range = layout.Tiles();
+        for (int32_t z = range.min.z; z <= range.max.z; ++z)
+            for (int32_t x = range.min.x; x <= range.max.x; ++x)
+            {
+                TerrainWeightTile tile;
+                tile.tile = {x, z};
+                tile.intervals = layout.IntervalsPerTile();
+                tile.layers = {"dirt"};
+                tile.weights.assign(tile.SampleCount(), 1.0f);
+                weights.push_back(std::move(tile));
+            }
+        TerrainWeightsWrites writes;
+        writes.layers = {"dirt"};
+        writes.fingerprint = 0xF00D;
+        writes.tiles = weights;
+        return EncodeWithWeights(info, layout, tiles, writes, {.chunkTiles = 2});
     }
 } // namespace
 
@@ -227,4 +251,40 @@ TEST_CASE("The last runtime dropping a release retires its meshes at once", "[te
     cache.RemoveOwner(owner);
     CHECK_FALSE(cache.Meshes().Ready(tile));
     CHECK(uploader.retired == std::vector<TerrainPayloadKey>{tile});
+}
+
+TEST_CASE("Weight textures survive one runtime's unload and retire with the last", "[terrain_runtime][cache]")
+{
+    const TerrainReleaseInfo info = Info(TerrainAsset(std::string(kRecipe)), 13);
+    const TerrainLayout layout = EdgeLayout();
+    const auto release = std::make_shared<const TerrainReleaseHandle>(
+        std::move(OpenInMemory(WeightedRelease(info, layout)).handle));
+
+    auto executor = std::make_shared<TerrainManualExecutor>();
+    FakeUploader uploader;
+    FakeTextureUploader textures;
+    TerrainStreamingSettings settings = StreamingSettings(uint64_t(1) << 30);
+    settings.gpu.weightBudgetBytes = uint64_t(1) << 24;
+    TerrainRuntimeCache cache(settings, executor, Borrowed(uploader), &textures, 0);
+    REQUIRE(cache.Weights());
+
+    const TerrainCacheOwner edit = cache.AddOwner();
+    const TerrainCacheOwner play = cache.AddOwner();
+    cache.SetHeldReleases(edit, Held(info));
+    cache.SetHeldReleases(play, Held(info));
+
+    TerrainWeightResidency &weights = *cache.Weights();
+    weights.BeginRequest();
+    weights.Request({release, {info.asset, TerrainUnitKind::Tile, 0, layout.Tiles().min}});
+    weights.Install(cache.Now());
+    executor->RunAll();
+    weights.Install(cache.Now());
+    REQUIRE(textures.mQueued == 1);
+
+    cache.SetHeldReleases(play, {});
+    cache.RemoveOwner(play);
+    CHECK(textures.mRetired.empty());
+
+    cache.SetHeldReleases(edit, {});
+    CHECK(textures.mRetired.size() == 1);
 }

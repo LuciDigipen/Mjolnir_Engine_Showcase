@@ -1,12 +1,14 @@
-engine_add_module(terrain_runtime)
+engine_add_module(terrain_runtime PCH_HEADERS glm/glm.hpp)
 
 target_sources(engine_terrain_runtime PRIVATE
     src/terrain_runtime/TerrainGroundBridge.cpp
     src/terrain_runtime/TerrainJobExecutor.cpp
+    src/terrain_runtime/TerrainMaterialSlots.cpp
     src/terrain_runtime/TerrainRender.cpp
     src/terrain_runtime/TerrainRuntime.cpp
     src/terrain_runtime/TerrainRuntimeCache.cpp
     src/terrain_runtime/TerrainRuntimeModule.cpp
+    src/terrain_runtime/TerrainWeightResidency.cpp
 )
 target_link_libraries(engine_terrain_runtime PRIVATE mir::jobs)
 

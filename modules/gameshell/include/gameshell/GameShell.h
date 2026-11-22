@@ -27,9 +27,18 @@ namespace mir
         Quit,
     };
 
+    
+    struct GameShellParts
+    {
+        bool mHud = true;
+        bool mMenu = true;
+    };
+
     class GameShell
     {
     public:
+        void SetParts(const GameShellParts &parts) { mParts = parts; }
+        const GameShellParts &Parts() const { return mParts; }
 
         GameShellAction Draw(UIContext &ui, bool playing, float dt);
 
@@ -56,6 +65,7 @@ namespace mir
     private:
         void UpdateCursor(UIContext &ui, float dt);
 
+        GameShellParts mParts;
         GameHud mHud;
         PauseMenu mMenu;
         float mPlaySeconds = 0.0f;

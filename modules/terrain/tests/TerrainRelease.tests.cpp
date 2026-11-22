@@ -11,8 +11,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
+#include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 using namespace mir;
 using namespace mir::test;
@@ -37,6 +41,14 @@ namespace
         TerrainPackWriteOptions options{.chunkTiles = 2};
     };
 
+    std::vector<std::string> FileNames(const std::filesystem::path &dir)
+    {
+        std::vector<std::string> names;
+        for (const std::filesystem::directory_entry &entry : std::filesystem::directory_iterator(dir))
+            names.push_back(entry.path().filename().string());
+        std::sort(names.begin(), names.end());
+        return names;
+    }
 }
 
 TEST_CASE("Release directories and the current pointer follow the naming contract", "[terrain][release]")
@@ -254,3 +266,108 @@ TEST_CASE("A generated release preserves the pinned format bytes and reads from 
         CHECK(pack.bytes.size() == 260);
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("A release handle shares its reader lock and keeps it while any copy lives", "[terrain][release][lock]")
+{
+    const std::filesystem::path root = MakeScratchDir("release_lock");
+    const Fixture f;
+    const TerrainEncodedRelease encoded = Encode(f.info, f.layout, BuildTiles(f.layout), f.options);
+    const std::filesystem::path dir = WriteRelease(root, f.info, encoded);
+    const std::filesystem::path assetDir = TerrainAssetReleasesDir(root, f.asset);
+    const std::filesystem::path lockPath = TerrainReleaseLockPath(assetDir, f.info.release);
+    const std::vector<TileHeights> tiles = BuildTiles(f.layout);
+    const std::vector<std::string> files = FileNames(dir);
+    std::unique_ptr<TerrainReleaseLock> exclusive;
+
+    {
+        std::optional<TerrainReleaseHandle> first = OpenOk(OpenTerrainRelease(root, f.asset, f.info.release));
+        std::optional<TerrainReleaseHandle> second = OpenOk(OpenTerrainRelease(root, f.asset, f.info.release));
+        CHECK(ReadOk(*second, {-2, -1}) == tiles[0]);
+        CHECK(ReadOk(*first, {-2, -1}) == tiles[0]);
+        CHECK(std::filesystem::exists(lockPath));
+        CHECK(TerrainReleaseLock::TryAcquireExclusive(assetDir, f.info.release, exclusive) ==
+              TerrainReleaseLockStatus::Busy);
+        CHECK_FALSE(exclusive);
+        CHECK(ListTerrainReleases(root, f.asset).front().files == encoded.packs.size() + 1);
+        CHECK(FileNames(dir) == files);
+
+        std::optional<TerrainReleaseHandle> copy = *first;
+        first.reset();
+        CHECK(TerrainReleaseLock::TryAcquireExclusive(assetDir, f.info.release, exclusive) ==
+              TerrainReleaseLockStatus::Busy);
+        copy.reset();
+        second.reset();
+    }
+    REQUIRE(TerrainReleaseLock::TryAcquireExclusive(assetDir, f.info.release, exclusive) ==
+            TerrainReleaseLockStatus::Held);
+    exclusive.reset();
+    CHECK_FALSE(std::filesystem::exists(lockPath));
+
+    {
+        REQUIRE(TerrainReleaseLock::TryAcquireExclusive(assetDir, f.info.release, exclusive) ==
+                TerrainReleaseLockStatus::Held);
+        const TerrainResult<TerrainReleaseHandle> blocked = OpenTerrainRelease(root, f.asset, f.info.release);
+        CHECK_FALSE(blocked.value.has_value());
+        CHECK(blocked.error.code == Code::NotFound);
+        CHECK(Mentions(blocked.error, "being removed"));
+        exclusive.reset();
+    }
+    const TerrainReleaseHandle reopened = OpenOk(OpenTerrainRelease(root, f.asset, f.info.release));
+    CHECK(reopened.VerifyAllPacks().code == Code::None);
+    CHECK(FileNames(dir) == files);
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("A release open from memory needs no lock and a disk open reports a broken lock directory",
+          "[terrain][release][lock]")
+{
+    const Fixture f;
+
+    SECTION("memory source")
+    {
+        const std::filesystem::path root = MakeScratchDir("release_lock_memory");
+        const TerrainEncodedRelease encoded = Encode(f.info, f.layout, BuildTiles(f.layout), f.options);
+        const TerrainReleaseHandle memory = OpenOk(TerrainReleaseHandle::Open(MakeTerrainMemorySource(encoded)));
+        std::unique_ptr<TerrainReleaseLock> exclusive;
+        CHECK(TerrainReleaseLock::TryAcquireExclusive(TerrainAssetReleasesDir(root, f.asset), f.info.release,
+                                                      exclusive) == TerrainReleaseLockStatus::Held);
+        CHECK(ReadOk(memory, {-2, -1}) == BuildTiles(f.layout)[0]);
+        exclusive.reset();
+        std::filesystem::remove_all(root);
+    }
+    SECTION("a file where the locks directory belongs")
+    {
+        const std::filesystem::path root = MakeScratchDir("release_lock_none");
+        WriteRelease(root, f.info, Encode(f.info, f.layout, BuildTiles(f.layout), f.options));
+        REQUIRE(WriteText(TerrainAssetReleasesDir(root, f.asset) / kTerrainReleaseLocksDirName, "not a directory"));
+        const auto opened = OpenTerrainRelease(root, f.asset, f.info.release);
+        REQUIRE_FALSE(opened);
+        CHECK(opened.error.code == Code::Io);
+        CHECK(Mentions(opened.error, "reader lock"));
+        std::filesystem::remove_all(root);
+    }
+}
+
+#ifndef _WIN32
+TEST_CASE("A release reader can pin an existing read-only lock file", "[terrain][release][lock]")
+{
+    namespace fs = std::filesystem;
+    const fs::path root = MakeScratchDir("release_reader_permissions");
+    const Fixture f;
+    WriteRelease(root, f.info, Encode(f.info, f.layout, BuildTiles(f.layout), f.options));
+    const auto assetDir = TerrainAssetReleasesDir(root, f.asset);
+    const auto lockPath = TerrainReleaseLockPath(assetDir, f.info.release);
+    fs::create_directories(lockPath.parent_path());
+    REQUIRE(WriteText(lockPath, ""));
+    fs::permissions(lockPath, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read);
+    {
+        const auto reader = OpenTerrainRelease(root, f.asset, f.info.release);
+        REQUIRE(reader);
+        fs::permissions(lockPath, fs::perms::owner_write, fs::perm_options::add);
+        std::unique_ptr<TerrainReleaseLock> exclusive;
+        CHECK(TerrainReleaseLock::TryAcquireExclusive(assetDir, f.info.release, exclusive) ==
+              TerrainReleaseLockStatus::Busy);
+    }
+    fs::remove_all(root);
+}
+#endif

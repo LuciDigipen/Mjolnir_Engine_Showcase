@@ -13,6 +13,7 @@
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/DebugDraw.h"
 #include "vulkan/Device.h"
+#include "vulkan/DrawRecords.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/FxCompositionPass.h"
@@ -43,6 +44,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <optional>
 #include <utility>
 
 namespace mir
@@ -66,8 +68,9 @@ namespace mir
 
         if (pass == RasterPass::Scene || pass == RasterPass::Opaque)
             cameraOffset = WriteCameraData(view, viewIndex);
-        const VkDescriptorSet cameraSet = mCameraBuffer->Set(mFrameSync->Index());
-        const VkDescriptorSet shadowSet = mShadowMaps->Set(mFrameSync->Index());
+        const uint32_t frame = mFrameSync->Index();
+        const VkDescriptorSet cameraSet = mCameraBuffer->Set(frame);
+        const VkDescriptorSet shadowSet = mShadowMaps->Set(frame);
         // Wireframe draws only lines, over the clear color; without line support it stays shaded
         const bool shaded = view.debugView.shading != ViewportShading::Wireframe || !mDebugDraw->WireframeAvailable();
         const size_t drawCount = shaded ? view.items.size() : 0;
@@ -82,14 +85,15 @@ namespace mir
 
             if (mMaterialTable != nullptr)
             {
-                const VkDescriptorSet tableSet = mMaterialTable->Set(mFrameSync->Index());
+                const VkDescriptorSet tableSet = mMaterialTable->Set(frame);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
                     vk::kMaterialTableSetIndex, 1, &tableSet, 0, nullptr);
+                // After any sky draw, whose own layout replaces these bindings.
+                mDrawRecords->Bind(cmd, mMaterialStore->PipelineLayout(), frame);
             }
 
             VkPipeline boundPipeline = VK_NULL_HANDLE;
             VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
-            uint32_t boundRecordRefOffset = UINT32_MAX;
 
             // no mesh/material batching yet, just draw per item
             for (size_t draw = 0; draw < drawCount; ++draw)
@@ -110,10 +114,21 @@ namespace mir
 
                 const VkPipeline pipeline = surfaces ? mMaterialStore->SurfacePipeline(item.material) : material->mPipeline;
                 if (!pipeline) continue;
+
+                uint32_t baseInstance = 0;
+                if (NeedsDrawRecord(material->mSurfaceMaterial || material->mModelShader, !material->mRecordId.IsNull()))
+                {
+                    const std::optional<uint32_t> recordIndex = mDrawRecords->Acquire(frame);
+                    if (!recordIndex) continue;
+                    const MaterialRecordRef ref = mMaterialStore->RecordRef(*material);
+                    mDrawRecords->Write(frame, *recordIndex, MakeDrawRecord(ref, item.terrain));
+                    baseInstance = *recordIndex;
+                }
+
                 if (material->mModelShader)
                 {
                     const VkDescriptorSet set = mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(),
-                        mFrameSync->Index(), item.deformation, material->mParameters);
+                        frame, item.deformation, material->mParameters);
                     if (!set) continue;
                 }
 
@@ -123,17 +138,11 @@ namespace mir
                     boundPipeline = pipeline;
                 }
 
-                const bool sharedTables = mMaterialTable != nullptr;
-                const uint32_t recordRefOffset = sharedTables
-                    ? mMaterialStore->RecordRefDynamicOffset(mFrameSync->Index(), material->mMaterialIndex)
-                    : 0;
-                if (material->mDescriptorSet != boundDescriptorSet || recordRefOffset != boundRecordRefOffset)
+                if (material->mDescriptorSet != boundDescriptorSet)
                 {
                     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                        0, 1, &material->mDescriptorSet, sharedTables ? 1u : 0u,
-                        sharedTables ? &recordRefOffset : nullptr);
+                        0, 1, &material->mDescriptorSet, 0, nullptr);
                     boundDescriptorSet = material->mDescriptorSet;
-                    boundRecordRefOffset = recordRefOffset;
                 }
 
                 const VkDeviceSize vertexOffset = 0;
@@ -151,7 +160,7 @@ namespace mir
                 vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), vk::kRasterPushConstantStages,
                     0, sizeof(vk::RasterPushConstants), &pushData);
 
-                vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, 0);
+                vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, baseInstance);
             }
 
         };
@@ -405,6 +414,7 @@ namespace mir
                 mDevice->EndLabel(frame->cmd);
             }
             mModelDescriptors->ResetFrame(mFrameSync->Index());
+            mDrawRecords->ResetFrame(mFrameSync->Index());
             mRayTracer->ResetDeformations(mFrameSync->Index(), mResources.get());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mImGuiOverlay->Collect(mFrameSync->CompletedValue());
@@ -414,8 +424,7 @@ namespace mir
 
             if (mMaterialTable != nullptr)
             {
-                mMaterialStore->PublishRecords(mFrameSync->CompletedValue(), frame->signalValue,
-                    mFrameSync->Index());
+                mMaterialStore->PublishRecords(mFrameSync->CompletedValue(), frame->signalValue);
                 mMaterialTable->Sync(mFrameSync->Index(), *mResources);
             }
         }
@@ -648,8 +657,14 @@ namespace mir
             vk::GpuMesh &mesh = *mResources->FindMeshSlot(handle);
             // cleared either way, so a failure reports once and the mesh stays out of the trace
             const uint32_t vertexCount = std::exchange(mesh.mBlasVertexCount, 0);
-            if (!mRayTracer->BuildMeshBlas(index, mesh, vertexCount))
+            VkDeviceSize compactedBytes = 0;
+            if (!mRayTracer->BuildMeshBlas(index, mesh, vertexCount, compactedBytes))
+            {
                 MIR_LOG_ERROR("BuildOwedBlases: BLAS build failed for mesh {}, it stays out of the trace", index);
+                continue;
+            }
+            const vk::RayTracer::MeshBlasInfo blas = mRayTracer->BlasInfo(index);
+            mMeshUploads->QueueBlasCompaction(handle, blas.serial, blas.bytes, compactedBytes);
         }
         return true;
     }

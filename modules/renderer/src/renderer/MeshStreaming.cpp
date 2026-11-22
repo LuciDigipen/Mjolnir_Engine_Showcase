@@ -13,6 +13,29 @@
 
 namespace mir
 {
+    size_t SelectBlasCompactions(std::span<const BlasCompactionCandidate> candidates, uint64_t inFlightBytes,
+        uint64_t freeBytes, uint64_t cap, uint64_t headroom)
+    {
+        const uint64_t spare = freeBytes > headroom ? freeBytes - headroom : 0;
+        uint64_t source = inFlightBytes;
+        uint64_t allocated = 0;
+        size_t count = 0;
+        for (const BlasCompactionCandidate &candidate : candidates)
+        {
+            if (count > 0 || inFlightBytes > 0)
+            {
+                if (source >= cap || candidate.sourceBytes > cap - source)
+                    break;
+                if (allocated > spare || candidate.compactedBytes > spare - allocated)
+                    break;
+            }
+            source += candidate.sourceBytes;
+            allocated += candidate.compactedBytes;
+            ++count;
+        }
+        return count;
+    }
+
     MeshUploadSource MeshUploadSource::Own(std::vector<Vertex> vertices, std::vector<uint32_t> indices)
     {
         struct Payload

@@ -28,6 +28,7 @@
 #include "support/FakeSurfaceMaterialHost.h"
 #include "support/FakeTextureUploader.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -236,7 +237,21 @@ namespace
         {
             Entry &entry = mEntries[logicalPath];
             entry.file = std::format("material-{:016x}.blob", ++mSerial);
+            entry.typeTag = kSurfaceMaterialAssetTypeTag;
+            entry.contentVersion = kSurfaceMaterialAssetContentVersion;
             REQUIRE(WriteBytes(Path() / entry.file, BuildTypedAsset(material)));
+            Publish();
+        }
+
+        void SetRaw(const std::string &logicalPath, std::string_view json)
+        {
+            Entry &entry = mEntries[logicalPath];
+            entry.file = std::format("material-{:016x}.blob", ++mSerial);
+            entry.typeTag = kRawAssetTypeTag;
+            entry.contentVersion = kRawAssetContentVersion;
+            REQUIRE(WriteBytes(Path() / entry.file,
+                BuildAssetBlob(kRawAssetTypeTag, kRawAssetContentVersion,
+                    std::as_bytes(std::span(json.data(), json.size())))));
             Publish();
         }
 
@@ -245,8 +260,7 @@ namespace
             std::vector<AssetManifestSourceEntry> entries;
             entries.reserve(mEntries.size());
             for (const auto &[logicalPath, entry] : mEntries)
-                entries.push_back({ { MakeAssetId(logicalPath), kSurfaceMaterialAssetTypeTag,
-                                        kSurfaceMaterialAssetContentVersion },
+                entries.push_back({ { MakeAssetId(logicalPath), entry.typeTag, entry.contentVersion },
                     entry.file, logicalPath, {} });
             REQUIRE(WriteBytes(Path() / kAssetManifestFileName, BuildAssetManifestBlob(entries)));
         }
@@ -254,6 +268,8 @@ namespace
         struct Entry
         {
             std::string file;
+            uint32_t typeTag = kSurfaceMaterialAssetTypeTag;
+            uint32_t contentVersion = kSurfaceMaterialAssetContentVersion;
         };
 
         std::map<std::string, Entry> mEntries;
@@ -1075,4 +1091,266 @@ TEST_CASE("Numeric preview publishes both frontends and a rejected overlay keeps
     CHECK(TintOf(*f.RecordFor("test_mesh")) == 0.9f);
     CHECK(TintOf(*f.RecordFor("test_terrain")) == 0.9f);
     CHECK(f.mLibrary.Generation() == generation);
+}
+
+namespace
+{
+    const std::string kLayered = "assets/materials/layers.terrainmaterial.json";
+    const std::string kSand = "assets/materials/sand.material.json";
+    const std::string kDirt = "assets/materials/dirt.material.json";
+    const std::string kLayeredJson =
+        R"({"version":1,"blend":"height","heightContrast":0.1,"layers":[)"
+        R"({"name":"sand","material":"materials/sand.material.json"},)"
+        R"({"name":"dirt","material":"materials/dirt.material.json"}]})";
+
+    MaterialLayout LayeredHeaderLayout()
+    {
+        MaterialLayout layout;
+        layout.fields = {
+            { .name = "blendMode", .kind = MaterialFieldKind::Uint, .offset = 0, .size = 4 },
+            { .name = "heightContrast", .kind = MaterialFieldKind::Float, .offset = 4, .size = 4 },
+            { .name = "layerOffset0", .kind = MaterialFieldKind::Uint, .offset = 8, .size = 4 },
+            { .name = "layerOffset1", .kind = MaterialFieldKind::Uint, .offset = 12, .size = 4 },
+        };
+        layout.size = 16;
+        return layout;
+    }
+
+    uint32_t UintAt(const std::vector<std::byte> &bytes, std::size_t offset)
+    {
+        uint32_t value = 0;
+        if (bytes.size() >= offset + sizeof(value))
+            std::memcpy(&value, bytes.data() + offset, sizeof(value));
+        return value;
+    }
+
+    float FloatAt(const std::vector<std::byte> &bytes, std::size_t offset)
+    {
+        float value = 0.0f;
+        if (bytes.size() >= offset + sizeof(value))
+            std::memcpy(&value, bytes.data() + offset, sizeof(value));
+        return value;
+    }
+
+    SurfaceMaterialAsset TerrainMaterial(std::string parameters)
+    {
+        SurfaceMaterialAsset material = TestMaterial(std::move(parameters));
+        material.frontends = { "terrain" };
+        return material;
+    }
+
+    struct LayeredFixture : MaterialCookedDir
+    {
+        LayeredFixture()
+            : mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1)
+        {
+            mHost.schemaLayout = TintLayout();
+            mHost.stemLayouts["test_layered"] = LayeredHeaderLayout();
+            mHost.catalog.materials.push_back(MakeSurfaceRegistration("terrain", "test_sand", kSand));
+            mHost.catalog.materials.push_back(MakeSurfaceRegistration("terrain", "test_dirt", kDirt));
+            mHost.catalog.materials.push_back(MakeSurfaceRegistration("terrain", "test_layered", kLayered));
+            mLibrary.Bind(&mService, mHost, mUploader);
+        }
+
+        void Cook(float sandTint = 0.25f, float dirtTint = 0.75f)
+        {
+            Set(kSand, TerrainMaterial(std::format(R"({{"tint":{}}})", sandTint)));
+            Set(kDirt, TerrainMaterial(std::format(R"({{"tint":{}}})", dirtTint)));
+            SetRaw(kLayered, kLayeredJson);
+            mAssets.BeginReload();
+            mAssets.CommitReload();
+        }
+
+        void CookSand(float sandTint)
+        {
+            Set(kSand, TerrainMaterial(std::format(R"({{"tint":{}}})", sandTint)));
+            mAssets.BeginReload();
+            mAssets.CommitReload();
+        }
+
+        void CookSandTilePeriod(float period)
+        {
+            Set(kSand, TerrainMaterial(std::format(R"({{"tint":0.25,"tileSizeMeters":{}}})", period)));
+            Set(kDirt, TerrainMaterial(R"({"tint":0.75})"));
+            SetRaw(kLayered, kLayeredJson);
+            mAssets.BeginReload();
+            mAssets.CommitReload();
+        }
+
+        void Frame()
+        {
+            mService.DrainCompletions();
+            mLibrary.Advance();
+        }
+
+        void Use()
+        {
+            if (mOwner == 0)
+                mOwner = mLibrary.AddMaterialUseOwner();
+            mLibrary.SetMaterialUses(mOwner, std::vector<SurfaceMaterialUse>{
+                { kLayered, MakeAssetId(kLayered), "terrain" } });
+        }
+
+        SurfaceMaterialResolution Resolve()
+        {
+            return mLibrary.Resolve(kLayered, MakeAssetId(kLayered), "terrain");
+        }
+
+        SurfaceMaterialResolution Settle(int frames = 64)
+        {
+            SurfaceMaterialResolution resolution = Resolve();
+            for (int frame = 0; frame < frames && resolution.status == SurfaceMaterialStatus::Pending; ++frame)
+            {
+                Frame();
+                resolution = Resolve();
+            }
+            return resolution;
+        }
+
+        std::optional<MaterialRecordSnapshot> RecordFor(std::string_view stem) const
+        {
+            for (std::size_t i = mHost.createdMaterials.size(); i-- > 0;)
+                if (mHost.createdMaterials[i].shaderName == stem)
+                    return mHost.records.at(static_cast<uint32_t>(i));
+            return std::nullopt;
+        }
+
+        AssetsModule mAssets;
+        JobExecutor mJobs;
+        AsyncAssetService mService;
+        test::FakeTextureUploader mUploader;
+        test::FakeSurfaceMaterialHost mHost;
+        SurfaceMaterialLibrary mLibrary;
+        uint64_t mOwner = 0;
+    };
+}
+
+TEST_CASE("A layered material publishes one composite record over its child records",
+    "[renderer][material][async][layered]")
+{
+    LayeredFixture f;
+    f.Cook();
+    f.Use();
+    const SurfaceMaterialResolution resolution = f.Settle();
+    INFO(resolution.error);
+    REQUIRE(resolution.status == SurfaceMaterialStatus::Ready);
+    REQUIRE(resolution.binding);
+    CHECK_FALSE(resolution.binding->material.IsNull());
+    CHECK(resolution.binding->layers == std::vector<std::string>{ "sand", "dirt" });
+    CHECK(f.mLibrary.Publication(kLayered).status == SurfaceMaterialPublicationStatus::Published);
+
+    const auto sand = f.RecordFor("test_sand");
+    const auto dirt = f.RecordFor("test_dirt");
+    const auto layered = f.RecordFor("test_layered");
+    REQUIRE(sand);
+    REQUIRE(dirt);
+    REQUIRE(layered);
+    CHECK(layered->mBytes.size() == 48);
+    CHECK(UintAt(layered->mBytes, 0) == 1);
+    CHECK(FloatAt(layered->mBytes, 4) == Catch::Approx(0.1f));
+    const uint32_t sandOffset = UintAt(layered->mBytes, 8);
+    const uint32_t dirtOffset = UintAt(layered->mBytes, 12);
+    CHECK(sandOffset == 16);
+    CHECK(dirtOffset == 32);
+    CHECK(std::equal(sand->mBytes.begin(), sand->mBytes.end(), layered->mBytes.begin() + sandOffset));
+    CHECK(std::equal(dirt->mBytes.begin(), dirt->mBytes.end(), layered->mBytes.begin() + dirtOffset));
+}
+
+TEST_CASE("A failed layered child fails the whole layered material and names the layer",
+    "[renderer][material][async][layered]")
+{
+    LayeredFixture f;
+    f.mHost.rejectStem = "test_dirt";
+    f.Cook();
+    f.Use();
+    const SurfaceMaterialResolution resolution = f.Settle();
+    CHECK(resolution.status == SurfaceMaterialStatus::Failed);
+    CHECK(resolution.error.find("dirt") != std::string::npos);
+    CHECK(f.mHost.createdMaterials.size() == 1);
+    CHECK(f.mHost.releasedMaterials == std::vector<MaterialHandle>{ MaterialHandle{ 0, 1 } });
+}
+
+TEST_CASE("Restarting a layered load releases its partially created children", "[renderer][material][async][layered]")
+{
+    LayeredFixture f;
+    f.mHost.stemLayouts["test_dirt"] = TextureLayout();
+    f.Cook();
+    f.Use();
+    REQUIRE(f.Resolve().status == SurfaceMaterialStatus::Pending);
+    for (int frame = 0; frame < 32 && f.mHost.createdMaterials.empty(); ++frame)
+        f.Frame();
+    REQUIRE(f.mHost.createdMaterials.size() == 1);
+    REQUIRE(f.mHost.createdMaterials.front().shaderName == "test_sand");
+    f.CookSand(0.9f);
+    f.mLibrary.CommitReload();
+    f.Frame();
+    CHECK(f.mHost.releasedMaterials == std::vector<MaterialHandle>{MaterialHandle{0, 1}});
+    for (int frame = 0; frame < 32 && !f.Resolve().binding; ++frame)
+    {
+        f.Frame();
+        for (const auto &[slot, upload] : f.mUploader.mEntries)
+            f.mUploader.Complete({slot, 1});
+    }
+    REQUIRE(f.Resolve().binding);
+    CHECK(f.mLibrary.Publication(kLayered).status == SurfaceMaterialPublicationStatus::Published);
+    const auto composite = f.RecordFor("test_layered");
+    REQUIRE(composite);
+    CHECK(FloatAt(composite->mBytes, UintAt(composite->mBytes, 8)) == Catch::Approx(0.9f));
+}
+
+TEST_CASE("A layer failing the terrain parameter rules fails the layered material and names the layer",
+    "[renderer][material][async][layered]")
+{
+    LayeredFixture f;
+    MaterialLayout sandLayout = TintLayout();
+    sandLayout.fields.push_back(
+        { .name = "tileSizeMeters", .kind = MaterialFieldKind::Float, .offset = 4, .size = 4 });
+    f.mHost.stemLayouts["test_sand"] = sandLayout;
+    f.mLibrary.SetMaterialValidator([](const SurfaceMaterialBinding &binding, std::string &error)
+    {
+        if (binding.tilePeriodMeters)
+        {
+            error = "tileSizeMeters is not a supported terrain period";
+            return false;
+        }
+        return true;
+    });
+    f.CookSandTilePeriod(3.0f);
+    f.Use();
+    const SurfaceMaterialResolution resolution = f.Settle();
+    CHECK(resolution.status == SurfaceMaterialStatus::Failed);
+    CHECK(resolution.error.find("sand") != std::string::npos);
+    CHECK_FALSE(resolution.binding.has_value());
+    CHECK(f.mHost.createdMaterials.empty());
+}
+
+TEST_CASE("Republishing a layered child rebuilds the layered record", "[renderer][material][async][layered]")
+{
+    LayeredFixture f;
+    f.Cook();
+    f.Use();
+    const SurfaceMaterialResolution initial = f.Settle();
+    REQUIRE(initial.binding);
+    const MaterialHandle first = initial.binding->material;
+
+    f.CookSand(0.9f);
+    f.mLibrary.CommitReload();
+    SurfaceMaterialResolution next;
+    for (int frame = 0; frame < 32; ++frame)
+    {
+        f.Frame();
+        next = f.Resolve();
+        if (next.binding && next.binding->material != first)
+            break;
+    }
+    REQUIRE(next.binding);
+    CHECK(next.binding->material != first);
+
+    const auto sand = f.RecordFor("test_sand");
+    const auto layered = f.RecordFor("test_layered");
+    REQUIRE(sand);
+    REQUIRE(layered);
+    CHECK(FloatAt(sand->mBytes, 0) == Catch::Approx(0.9f));
+    const uint32_t sandOffset = UintAt(layered->mBytes, 8);
+    CHECK(FloatAt(layered->mBytes, sandOffset) == Catch::Approx(0.9f));
 }

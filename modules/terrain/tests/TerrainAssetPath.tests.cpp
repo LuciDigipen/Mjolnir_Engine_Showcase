@@ -133,6 +133,11 @@ TEST_CASE("Recipes and release files are excluded from raw cooking", "[terrain][
              "x/terrain/releases/a/b/notes.txt",
              "loose/chunk_0_0.tpack",
              "loose/release.TINDEX",
+             "games/G/assets/terrain/hills.terrain.layers/layers.json",
+             "games/G/assets/terrain/hills.terrain.layers/L2/tile_-1_3.tedit",
+             "Terrain\\Hills.TERRAIN.LAYERS\\L0\\TILE_0_0.TEDIT",
+             "loose/hills.terrain.layers",
+             "loose/EDIT.TEDIT",
          })
     {
         INFO(path);
@@ -145,6 +150,9 @@ TEST_CASE("Recipes and release files are excluded from raw cooking", "[terrain][
              "terrain/notes/releases/x.txt",
              "scripts/terrain.lua",
              "textures/terrain.png",
+             "games/G/assets/terrain/hills.terrain.layers.txt",
+             "games/G/assets/terrain/hills.terrain.layers.backup/layers.json",
+             "games/G/assets/terrain/hills.layers/layers.json",
          })
     {
         INFO(path);

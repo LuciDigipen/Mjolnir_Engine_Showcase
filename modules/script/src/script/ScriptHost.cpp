@@ -22,6 +22,7 @@
 #include <sol/sol.hpp>
 
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -128,20 +129,21 @@ namespace mir
             mInstances.erase(instanceRef);
         }
 
+        // false only when the callback ran and failed
         template <typename... Args>
-        void CallCallback(int32_t instanceRef, const char *callbackName, Args &&...args)
+        bool CallCallback(int32_t instanceRef, const char *callbackName, Args &&...args)
         {
             const auto it = mInstances.find(instanceRef);
             if (it == mInstances.end())
-                return; // destroyed or never created - routine, not an error
+                return true; // destroyed or never created - routine, not an error
 
             const auto scriptIt = mLoadedScripts.find(it->second.scriptName);
             if (scriptIt == mLoadedScripts.end() || !scriptIt->second.is<sol::table>())
-                return; // unloaded out from under this instance - routine, not an error
+                return true; // unloaded out from under this instance - routine, not an error
 
             const sol::object callback = scriptIt->second.as<sol::table>()[callbackName];
             if (!callback.is<sol::protected_function>())
-                return;
+                return true;
 
             const sol::protected_function fn = callback;
             try
@@ -152,7 +154,9 @@ namespace mir
                     const sol::error err = result;
                     MIR_LOG_ERROR("script: {} failed: {}", callbackName, err.what());
                     ++mErrors;
+                    return false;
                 }
+                return true;
             }
             catch (...)
             {
@@ -260,6 +264,24 @@ namespace mir
     {
         const sol::optional<void *> impl = lua.registry()[kRunningRegistryKey];
         return impl ? static_cast<ScriptHostImpl *>(*impl)->mRunning : kNullEntity;
+    }
+
+    sol::state_view LuaState(ScriptHost &host) { return host.Impl().mLua; }
+
+    bool CallScriptCallback(ScriptHost &host, World &world, Entity entity, int32_t instanceRef, const char *name,
+        const std::vector<sol::object> &args)
+    {
+        ScriptHostImpl &impl = host.Impl();
+        const RunningScope running(impl, world, entity);
+        try
+        {
+            return impl.CallCallback(instanceRef, name, std::ref(world), Entity{ entity }, sol::as_args(args));
+        }
+        catch (const std::exception &e)
+        {
+            MIR_LOG_ERROR("script: entity {} threw in {}: {}", entity.mIndex, name, e.what());
+            return false;
+        }
     }
 
     void ScriptHost::CallOnStart(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)

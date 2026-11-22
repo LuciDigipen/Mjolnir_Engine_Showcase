@@ -8,6 +8,7 @@
  */
 #include "TerrainValidate.h"
 #include "TerrainDerivatives.h"
+#include "TerrainIncremental.h"
 #include "TerrainRegions.h"
 
 #include "TerrainCandidate.h"
@@ -18,6 +19,7 @@
 #include <core/fs/FileIO.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainPackWriter.h>
+#include <terrain/TerrainRegionWeights.h>
 #include <terrain/TerrainRelease.h>
 
 #include <algorithm>
@@ -29,6 +31,8 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -185,6 +189,62 @@ namespace mir::terrainbake
                                         std::nullopt,
                                         "release source spacing differs from the tile's recipe assignment"});
                     }
+
+                auto join = [](const std::vector<std::string> &names)
+                {
+                    std::string text;
+                    for (const std::string &name : names)
+                        text += (text.empty() ? "" : ", ") + name;
+                    return text;
+                };
+                std::vector<std::string> wantWeights;
+                if (recipe->hasMaterialsSection)
+                    for (const TerrainMaterialLayer &layer : recipe->materials)
+                        wantWeights.push_back(layer.name);
+                if (index.weightLayers != wantWeights)
+                    report.Add({std::string(check::kIdentity),
+                                "weight.layers",
+                                {},
+                                std::nullopt,
+                                std::format("the recipe's material layer table is [{}], the release's is [{}]",
+                                            join(wantWeights), join(index.weightLayers))});
+                const uint64_t wantWeightsFingerprint =
+                    wantWeights.empty() ? 0 : FingerprintWeights(*recipe, fingerprint).value;
+                if (index.weightsFingerprint != wantWeightsFingerprint)
+                    report.Add({std::string(check::kIdentity),
+                                "weight.fingerprint",
+                                {},
+                                std::nullopt,
+                                std::format("the recipe's weight fingerprint is {}, the release recorded {}",
+                                            TerrainIdHex(wantWeightsFingerprint),
+                                            TerrainIdHex(index.weightsFingerprint))});
+                size_t sources = 0;
+                for (const TerrainTileRecord &record : index.tiles)
+                    if (record.source)
+                        ++sources;
+                if (!wantWeights.empty())
+                {
+                    if (index.weights.size() != sources)
+                        report.Add({std::string(check::kIdentity),
+                                    "weight.tiles",
+                                    {},
+                                    std::nullopt,
+                                    std::format("{} source tiles need a weight payload, the release holds {}",
+                                                sources, index.weights.size())});
+                    for (const TerrainTileRecord &record : index.tiles)
+                        if (record.source && !index.FindWeight(record.tile))
+                            report.Add({std::string(check::kIdentity),
+                                        "weight.tiles",
+                                        {record.tile},
+                                        std::nullopt,
+                                        "the source tile has no weight payload"});
+                }
+                else if (!index.weights.empty() || !index.weightPacks.empty())
+                    report.Add({std::string(check::kIdentity),
+                                "weight.tiles",
+                                {},
+                                std::nullopt,
+                                "the recipe has no materials section, the release holds weight payloads"});
             }
             if (!manifest && !recipe)
                 report.Skip(check::kIdentity, "no candidate.json or recipe to compare with");
@@ -455,8 +515,33 @@ namespace mir::terrainbake
                     }
                 if (allSources)
                 {
+                    const TerrainReleaseHandle *base = options.baseRelease;
+                    std::string ignoredBase;
+                    std::unordered_set<TileCoord> affected;
+                    if (base)
+                    {
+                        TerrainRegionSettings settings;
+                        if (index.regionGrid)
+                        {
+                            settings.regionTiles = index.regionGrid->RegionTiles();
+                            settings.cells = index.regionGrid->Cells();
+                        }
+                        if (base->Info().asset != index.release.asset)
+                            ignoredBase = "the base release belongs to another asset";
+                        else if (const std::optional<std::string> mismatch =
+                                     TerrainBaseMismatch(*base, derivedRecipe, sourceTiles, settings))
+                            ignoredBase = *mismatch;
+                        else
+                        {
+                            std::size_t changed = 0;
+                            const std::vector<TileCoord> tiles = TerrainAffectedTiles(*base, sourceTiles, changed);
+                            affected.insert(tiles.begin(), tiles.end());
+                        }
+                    }
+                    const bool reuseBase = base && ignoredBase.empty();
                     std::string why;
-                    auto expected = BakeTerrainDerivatives(derivedRecipe, sourceTiles, why);
+                    auto expected = BakeTerrainDerivatives(derivedRecipe, sourceTiles, why, nullptr, std::nullopt,
+                                                           reuseBase ? &affected : nullptr);
                     if (!expected)
                         report.Add({std::string(check::kPayloads), "derived", {}, std::nullopt, why});
                     else if (expected->layers.size() != index.layers.size() ||
@@ -474,6 +559,15 @@ namespace mir::terrainbake
                                     "derived layer coverage differs from final-source derivation"});
                     else
                     {
+                        std::set<std::tuple<int32_t, int32_t, uint32_t, uint32_t, uint32_t>> expectedKeys;
+                        for (const auto &v : expected->payloads)
+                            expectedKeys.emplace(v.record.tile.x, v.record.tile.z, v.record.layer,
+                                                 static_cast<uint32_t>(v.record.kind), v.record.level);
+                        for (size_t i = 0; i < expected->queryHeights.size(); ++i)
+                            expectedKeys.emplace(expected->queryHeights[i].Tile().x,
+                                                 expected->queryHeights[i].Tile().z, expected->queryLayers[i],
+                                                 static_cast<uint32_t>(TerrainPayloadKind::Height), 0);
+                        size_t rederived = 0;
                         for (const auto &v : expected->payloads)
                         {
                             const auto &key = v.record;
@@ -487,6 +581,7 @@ namespace mir::terrainbake
                                             std::nullopt,
                                             "LOD topology/error or normal order/neighbourhood differs from "
                                             "final-source derivation"});
+                            ++rederived;
                         }
                         for (size_t i = 0; i < expected->queryHeights.size(); ++i)
                         {
@@ -512,10 +607,50 @@ namespace mir::terrainbake
                                             {tile.Tile()},
                                             std::nullopt,
                                             "regular query derivative/error differs from final-source derivation"});
+                            ++rederived;
                         }
+                        size_t reused = 0;
+                        if (reuseBase)
+                        {
+                            for (const TerrainTileRecord &r : index.tiles)
+                            {
+                                if (r.source || r.kind == TerrainPayloadKind::Region || affected.contains(r.tile))
+                                    continue;
+                                const TerrainTileRecord *baseRecord =
+                                    base->Index().Find(r.tile, r.layer, r.kind, r.level);
+                                const TerrainResult<std::vector<std::byte>> baseBytes =
+                                    baseRecord ? base->ReadPayload(*baseRecord)
+                                               : TerrainResult<std::vector<std::byte>>{};
+                                const TerrainResult<std::vector<std::byte>> bytes = handle.ReadPayload(r);
+                                if (!baseRecord || !baseBytes || !bytes || *bytes.value != *baseBytes.value)
+                                    report.Add({std::string(check::kPayloads),
+                                                "derived",
+                                                {r.tile},
+                                                std::nullopt,
+                                                "a reused payload differs from the base release for an unchanged "
+                                                "tile"});
+                                ++reused;
+                            }
+                            for (const TerrainTileRecord &r : index.tiles)
+                            {
+                                if (r.source || r.kind == TerrainPayloadKind::Region || !affected.contains(r.tile))
+                                    continue;
+                                if (!expectedKeys.contains({r.tile.x, r.tile.z, r.layer,
+                                                            static_cast<uint32_t>(r.kind), r.level}))
+                                    report.Add({std::string(check::kPayloads),
+                                                "derived",
+                                                {r.tile},
+                                                std::nullopt,
+                                                "an affected tile has a payload the derivation does not produce"});
+                            }
+                        }
+                        const std::string note =
+                            reuseBase ? std::format(", {} reused from the base release", reused)
+                                      : (base ? "; the base release was ignored: " + ignoredBase
+                                              : " from final source");
                         report.Ran(check::kPayloads,
-                                   std::format("{} decoded payloads; {} LOD/normal records rederived from final source",
-                                               decodedCount, expected->payloads.size()));
+                                   std::format("{} decoded payloads; {} LOD/normal/query records rederived{}",
+                                               decodedCount, rederived, note));
                     }
                 }
             }
@@ -536,6 +671,77 @@ namespace mir::terrainbake
                 };
                 CheckMixedTileContinuity(layout, sources, report);
             }
+        }
+
+        void CheckRegionWeights(const TerrainReleaseHandle &handle, TerrainReport &report)
+        {
+            const TerrainIndex &index = handle.Index();
+            if (index.regionWeights.empty() || !index.regionGrid)
+                return;
+            std::vector<TerrainWeightTile> tiles;
+            std::unordered_map<TileCoord, const TerrainWeightTile *> byTile;
+            tiles.reserve(index.weights.size());
+            for (const TerrainWeightRecord &record : index.weights)
+            {
+                TerrainResult<TerrainDecodedWeights> decoded = handle.ReadWeights(record.tile);
+                if (!decoded)
+                {
+                    report.Add({std::string(check::kRegions),
+                                "weights",
+                                {record.tile},
+                                std::nullopt,
+                                decoded.error.message});
+                    return;
+                }
+                tiles.push_back(ExpandTerrainWeights(*decoded.value));
+            }
+            for (const TerrainWeightTile &tile : tiles)
+                byTile.emplace(tile.tile, &tile);
+            const TerrainWeightTileLookup lookup = [&byTile](TileCoord at) -> const TerrainWeightTile *
+            {
+                const auto it = byTile.find(at);
+                return it == byTile.end() ? nullptr : it->second;
+            };
+
+            TerrainResult<std::vector<TerrainRegionWeightImage>> expected = BuildTerrainRegionWeights(
+                *index.regionGrid, index.weightLayers, lookup,
+                {.side = kTerrainRegionWeightSide, .workers = std::max(1u, std::thread::hardware_concurrency())});
+            if (!expected)
+            {
+                report.Add({std::string(check::kRegions), "weights", {}, std::nullopt, expected.error.message});
+                return;
+            }
+            for (size_t i = 0; i < expected.value->size(); ++i)
+            {
+                const TerrainRegionWeightImage &image = (*expected.value)[i];
+                const TerrainRegionWeightRecord &record = index.regionWeights[i];
+                const std::string differs =
+                    std::format("{} weight image differs from the derivation of the release's tile weights",
+                                Describe(record.region));
+                if (image.region != record.region || image.side != record.side || image.slots != record.slots ||
+                    index.FindRegionWeight(record.region) != &record)
+                {
+                    report.Add({std::string(check::kRegions),
+                                "weights",
+                                {{record.region.x, record.region.z}},
+                                std::nullopt,
+                                differs});
+                    return;
+                }
+                TerrainResult<TerrainDecodedWeights> actual = handle.ReadRegionWeights(record.region);
+                if (!actual || actual.value->bytes != image.bytes)
+                {
+                    report.Add({std::string(check::kRegions),
+                                "weights",
+                                {{record.region.x, record.region.z}},
+                                std::nullopt,
+                                actual ? differs : actual.error.message});
+                    return;
+                }
+            }
+            if (report.Status(check::kRegions) == CheckStatus::Passed)
+                report.Ran(check::kRegions, std::format("{} Region weight images match the tile-weight derivation",
+                                                       index.regionWeights.size()));
         }
     }
 
@@ -633,14 +839,20 @@ namespace mir::terrainbake
         std::vector<std::string> packNames;
         for (const TerrainPackRecord &pack : index.packs)
             packNames.push_back(TerrainPackFileName(pack.chunk));
+        std::vector<std::string> weightPackNames;
+        for (const TerrainPackRecord &pack : index.weightPacks)
+            weightPackNames.push_back(TerrainWeightPackFileName(pack.chunk));
         std::vector<TerrainFileSummary> files;
         if (const std::optional<std::vector<std::byte>> bytes = handle.Source().ReadAll(kTerrainIndexFileName))
             files.push_back({std::string(kTerrainIndexFileName), bytes->size(), Fnv1a64(*bytes)});
         for (size_t p = 0; p < index.packs.size(); ++p)
             files.push_back({packNames[p], index.packs[p].fileSize, index.packs[p].checksum});
+        for (size_t p = 0; p < index.weightPacks.size(); ++p)
+            files.push_back({weightPackNames[p], index.weightPacks[p].fileSize, index.weightPacks[p].checksum});
         report.files = files;
 
         std::set<std::string> known(packNames.begin(), packNames.end());
+        known.insert(weightPackNames.begin(), weightPackNames.end());
         known.insert(std::string(kTerrainIndexFileName));
         known.insert(std::string(kCandidateManifestFileName));
         for (const fs::directory_entry &entry : fs::directory_iterator(dir, ec))
@@ -674,7 +886,10 @@ namespace mir::terrainbake
                      check::kRegions},
                     std::string(kIntegrityOnlyReason));
         else
+        {
             CheckContents(handle, packNames, options, mixed, report);
+            CheckRegionWeights(handle, report);
+        }
         const bool requiresSeams = (options.recipe && options.recipe->recipeVersion == 2) || mixed ||
                                    std::any_of(index.tiles.begin(), index.tiles.end(),
                                                [&](const auto &r)
@@ -805,11 +1020,14 @@ namespace mir::terrainbake
                 recipe = std::move(parsed.recipe);
                 report.recipeFingerprint = FingerprintRecipe(*recipe);
             }
-            report.Ran(check::kRecipe, recipe ? "fingerprint " + TerrainIdHex(report.recipeFingerprint->value)
+            report.Ran(check::kRecipe, recipe ? DescribeRecipeFingerprint(*recipe, *report.recipeFingerprint)
                                               : std::string("invalid"));
         }
 
-        ValidateTerrainCandidate(request.candidateDir, {recipe ? &*recipe : nullptr, true}, report);
+        ValidateTerrainCandidate(request.candidateDir,
+                                 {recipe ? &*recipe : nullptr, true, false,
+                                  request.baseRelease ? &*request.baseRelease : nullptr},
+                                 report);
         return report;
     }
 }

@@ -22,6 +22,8 @@ namespace mir
         mTextBuffer.clear();
         mClipStack.clear();
         mClipStack.push_back(UIRect{0.0f, 0.0f, std::max(width, 0.0f), std::max(height, 0.0f)});
+        mOpacityStack.clear();
+        mOpacityStack.push_back(1.0f);
     }
 
     void UIDrawList::Rect(const UIRect &rect, UIColor color, float rounding)
@@ -33,8 +35,8 @@ namespace mir
         mCommands.push_back(UIDrawCommand{
                             .mKind = UIDrawCommandKind::Rect, 
                             .mRect = rect, 
-                            .mClip = clip, 
-                            .mColor = color, 
+                            .mClip = clip,
+                            .mColor = Faded(color),
                             .mRounding = rounding});
     }
 
@@ -47,8 +49,8 @@ namespace mir
         mCommands.push_back(UIDrawCommand{
                                     .mKind = UIDrawCommandKind::Texture, 
                                     .mRect = rect, 
-                                    .mClip = clip, 
-                                    .mColor = tint, 
+                                    .mClip = clip,
+                                    .mColor = Faded(tint),
                                     .mTexture = texture,
                                     .mUV = uv});
     }
@@ -93,7 +95,7 @@ namespace mir
         }
     }
 
-    void UIDrawList::Text(float x, float y, std::string_view text, UIColor color, float fontSize)
+    void UIDrawList::Text(float x, float y, std::string_view text, UIColor color, float fontSize, UIFont font)
     {
 
         const UIRect clip = CurrentClip();
@@ -106,8 +108,9 @@ namespace mir
         mCommands.push_back(UIDrawCommand{.mKind = UIDrawCommandKind::Text,
                                           .mRect = UIRect{x, y, 0.0f, 0.0f},
                                           .mClip = clip,
-                                          .mColor = color,
+                                          .mColor = Faded(color),
                                           .mFontSize = fontSize,
+                                          .mFont = font,
                                           .mTextOffset = offset,
                                           .mTextLength = static_cast<uint32_t>(text.size())});
     }
@@ -126,6 +129,27 @@ namespace mir
     }
 
     UIRect UIDrawList::CurrentClip() const { return mClipStack.empty() ? UIRect{} : mClipStack.back(); }
+
+    void UIDrawList::PushOpacity(float opacity)
+    {
+        // NaN reads as fully faded rather than reaching the backend
+        const float clamped = opacity > 0.0f ? std::min(opacity, 1.0f) : 0.0f;
+        mOpacityStack.push_back(CurrentOpacity() * clamped);
+    }
+
+    void UIDrawList::PopOpacity()
+    {
+        MIR_ASSERT(mOpacityStack.size() > 1, "UIDrawList::PopOpacity without a matching PushOpacity");
+
+        if (mOpacityStack.size() > 1)
+            mOpacityStack.pop_back();
+    }
+
+    UIColor UIDrawList::Faded(UIColor color) const
+    {
+        color.a *= CurrentOpacity();
+        return color;
+    }
 
     std::string_view UIDrawList::TextOf(const UIDrawCommand &command) const
     {

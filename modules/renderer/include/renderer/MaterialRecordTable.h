@@ -29,8 +29,7 @@ namespace mir
     inline constexpr MaterialRecordId kNullMaterialRecord{};
     inline constexpr uint32_t kInvalidMaterialRecordOffset = UINT32_MAX;
 
-    // What set 0 carries for a material. The record's bytes are opaque here;
-    // only their location and size belong to the renderer.
+    // Where one material's bytes sit in the shared table.
     struct MaterialRecordRef
     {
         uint32_t mOffset = kInvalidMaterialRecordOffset;
@@ -38,7 +37,7 @@ namespace mir
         uint32_t mFlags = 0;
         uint32_t mReserved = 0;
     };
-    static_assert(sizeof(MaterialRecordRef) == 16, "MaterialRecordRef must stay one aligned set-0 row");
+    static_assert(sizeof(MaterialRecordRef) == 16, "MaterialRecordRef must stay one aligned row");
 
     struct MaterialRecordTableDesc
     {

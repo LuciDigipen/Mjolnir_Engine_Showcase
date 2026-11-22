@@ -14,8 +14,10 @@
 
 #include <assets/AssetId.h>
 #include <core/fs/FileIO.h>
+#include <terrain/TerrainEditStore.h>
 #include <terrain/TileHeights.h>
 #include <terrain/TerrainPackFormat.h>
+#include <terrain/TerrainRecipeMaterials.h>
 
 #include <nlohmann/json.hpp>
 
@@ -23,6 +25,7 @@
 #include <bit>
 #include <charconv>
 #include <cmath>
+#include <format>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -30,13 +33,13 @@
 
 namespace mir::terrainbake
 {
+    static_assert(kMaxNoiseOctaves == kMaxTerrainMaterialNoiseOctaves);
+
     namespace
     {
         using Json = nlohmann::json;
 
         constexpr double kMaxAmplitude = 10000.0;
-        constexpr double kMinWavelength = 0.01;
-        constexpr double kMaxWavelength = 1.0e6;
         constexpr double kMaxTilt = 1.0;
         constexpr double kMaxPlainsBlend = 1000.0;
 
@@ -189,6 +192,15 @@ namespace mir::terrainbake
                 return &*it;
             }
 
+            // Null when absent, without reporting it.
+            const Json *OptionalField(std::string_view key) const
+            {
+                if (!mObject)
+                    return nullptr;
+                const auto it = mObject->find(key);
+                return it == mObject->end() ? nullptr : &*it;
+            }
+
             ObjectReader Object(std::string_view key, std::initializer_list<std::string_view> keys) const
             {
                 return ObjectReader(mChecker, Field(key), Path(key), keys);
@@ -326,7 +338,7 @@ namespace mir::terrainbake
         {
             const ObjectReader term = parameters.Object(name, {"amplitude", "wavelength", "octaves"});
             return {term.Number("amplitude", 0.0, kMaxAmplitude, "m"),
-                    term.Number("wavelength", kMinWavelength, kMaxWavelength, "m"),
+                    term.Number("wavelength", kMinTerrainNoiseWavelength, kMaxTerrainNoiseWavelength, "m"),
                     term.Integer("octaves", 1, kMaxNoiseOctaves)};
         }
 
@@ -398,7 +410,8 @@ namespace mir::terrainbake
         }
 
         const ObjectReader top(checker, &root, "",
-                               {"recipeVersion", "generator", "seed", "layout", "parameters", "precision"});
+                               {"recipeVersion", "generator", "seed", "layout", "parameters", "precision",
+                                "materials"});
 
         const std::optional<int64_t> recipeVersion =
             top.Integer("recipeVersion", 0, std::numeric_limits<uint32_t>::max());
@@ -429,6 +442,13 @@ namespace mir::terrainbake
             checker.Add("generator.id", "\"" + std::string(kHeightmapGeneratorId) + "\" requires recipeVersion 2");
 
         const std::optional<uint64_t> seed = top.Unsigned("seed");
+
+        const Json *materialsJson = top.OptionalField("materials");
+        const bool hasMaterialsSection = materialsJson != nullptr;
+        TerrainRecipeMaterialsParseResult materialSection = ParseTerrainRecipeMaterials(materialsJson);
+        for (const TerrainRecipeMaterialIssue &issue : materialSection.issues)
+            checker.Add(issue.path, issue.message);
+        std::vector<TerrainMaterialLayer> materials = std::move(materialSection.layers);
 
         const ObjectReader layoutReader = top.Object("layout", {"sampleSpacing", "intervalsPerTile", "bounds"});
         std::optional<double> spacing = layoutReader.FiniteNumber("sampleSpacing");
@@ -639,7 +659,7 @@ namespace mir::terrainbake
         return {TerrainRecipe{static_cast<uint32_t>(*recipeVersion), *generatorId,
                               static_cast<uint32_t>(*generatorVersion), *seed, *layout, relief.value_or(ReliefParameters{}),
                               defaultSpacing, std::move(rules), heightmapPath.value_or(std::string{}),
-                              heightmapHash.value_or(0)},
+                              heightmapHash.value_or(0), std::move(materials), hasMaterialsSection},
                 {}};
     }
 
@@ -719,8 +739,49 @@ namespace mir::terrainbake
         if (!text)
             return {std::nullopt, {{"", "cannot read " + PathUtf8(path)}}};
         RecipeParseResult result = ParseTerrainRecipe(*text);
-        if (result.recipe)
-            result.recipe->recipeDir = path.parent_path();
+        if (!result.recipe)
+            return result;
+        TerrainRecipe &recipe = *result.recipe;
+        recipe.recipeDir = path.parent_path();
+
+        TerrainResult<std::vector<TerrainEditLayer>> loaded = LoadTerrainEditStack(TerrainEditLayersDir(path));
+        if (!loaded)
+            return {std::nullopt, {{"edits", loaded.error.message}}};
+
+        struct StrayTile
+        {
+            TileCoord tile;
+            const TerrainEditLayer *layer = nullptr;
+            std::optional<TerrainLayout> source;
+        };
+        std::optional<StrayTile> stray;
+        for (const TerrainEditLayer &layer : *loaded.value)
+            for (const auto &entry : layer.tiles)
+            {
+                const auto source = recipe.SourceLayout(entry.first);
+                const TerrainEditTile &tile = entry.second;
+                if (source && (tile.values.empty() || tile.intervals == source->IntervalsPerTile()) &&
+                    (tile.weights.empty() || tile.WeightIntervals() == recipe.layout.IntervalsPerTile()))
+                    continue;
+                if (!stray || std::pair(entry.first.z, entry.first.x) <
+                                  std::pair(stray->tile.z, stray->tile.x))
+                    stray = StrayTile{entry.first, &layer, source};
+            }
+        if (stray)
+            return {std::nullopt,
+                    {{"edits",
+                      stray->source ? std::format("layer \"{}\" tile ({}, {}) requires heights on its {} m source "
+                                                   "grid and paint on the {} m reference grid",
+                                                   stray->layer->info.name, stray->tile.x, stray->tile.z,
+                                                   stray->source->SampleSpacing(), recipe.layout.SampleSpacing())
+                                     : std::format("layer \"{}\" stores tile ({}, {}), which is outside the map",
+                                                   stray->layer->info.name, stray->tile.x, stray->tile.z)}}};
+
+        std::shared_ptr<const std::vector<TerrainEditLayer>> stack =
+            std::make_shared<const std::vector<TerrainEditLayer>>(std::move(*loaded.value));
+        recipe.editStackHash = TerrainEditStackHash(*stack);
+        recipe.editWeightStackHash = TerrainEditWeightStackHash(*stack);
+        recipe.editStack = std::move(stack);
         return result;
     }
 
@@ -772,6 +833,9 @@ namespace mir::terrainbake
                 fields["precision.tile." + std::to_string(rule.tile.z) + "." + std::to_string(rule.tile.x)] =
                     Bits(rule.spacing);
         }
+        // Absent while no enabled layer stores a tile, so an unedited recipe's text stays as it was.
+        if (recipe.editStackHash != 0)
+            fields["edits.stackHash"] = std::format("{:016x}", recipe.editStackHash);
 
         std::string text;
         for (const auto &[key, value] : fields)
@@ -784,5 +848,21 @@ namespace mir::terrainbake
         const uint64_t hash = Fnv1a64(CanonicalRecipeText(recipe));
         // Zero means "unknown"; a recipe hashing to it takes 1 instead.
         return TerrainSourceFingerprint(hash == 0 ? 1 : hash);
+    }
+
+    std::string DescribeRecipeFingerprint(const TerrainRecipe &recipe, TerrainSourceFingerprint fingerprint)
+    {
+        std::string text = std::format("fingerprint {:016x}", fingerprint.value);
+        if (recipe.editStackHash == 0 || !recipe.editStack)
+            return text;
+        size_t layers = 0;
+        size_t tiles = 0;
+        for (const TerrainEditLayer *layer : TerrainEditCompositingOrder(*recipe.editStack))
+        {
+            ++layers;
+            tiles += layer->tiles.size();
+        }
+        return std::format("{}; edits: {} enabled layers, {} stored edit tiles, stack hash {:016x}", text, layers,
+                           tiles, recipe.editStackHash);
     }
 }

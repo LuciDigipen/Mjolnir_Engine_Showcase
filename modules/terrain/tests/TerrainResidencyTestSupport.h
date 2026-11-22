@@ -39,6 +39,8 @@ namespace mir::test
         struct Mesh
         {
             TerrainPayloadKey geometry;
+            std::shared_ptr<const TerrainOverlay> overlay;
+            std::vector<TerrainMeshVertex> meshVertices;
             uint64_t bytes = 0;
             size_t vertices = 0;
             Stage stage = Stage::Queued;
@@ -68,7 +70,8 @@ namespace mir::test
             if (refuse)
                 return 0;
             const TerrainGpuMeshId id = nextId++;
-            meshes[id] = {data.geometry, Footprint(uint32_t(data.vertices.size()), uint32_t(data.indices.size())),
+            meshes[id] = {data.geometry, data.overlay, data.vertices,
+                          Footprint(uint32_t(data.vertices.size()), uint32_t(data.indices.size())),
                           data.vertices.size()};
             return id;
         }
@@ -99,6 +102,12 @@ namespace mir::test
         uint64_t RetiringBytes() const override
         {
             return retiring;
+        }
+
+        uint64_t Bytes(TerrainGpuMeshId id) const override
+        {
+            const auto found = meshes.find(id);
+            return found == meshes.end() ? 0 : found->second.bytes;
         }
 
         // A frame: what was recorded completes when complete holds, and everything queued is recorded.
@@ -145,6 +154,7 @@ namespace mir::test
         float quantizationMin = 0.0f;
         float quantizationMax = 0.0f;
         TerrainReleaseInfo release;
+        std::vector<float> heights;
     };
 
     // Shapes are counted, colliders recorded by id.
@@ -166,6 +176,7 @@ namespace mir::test
             shape->quantizationMin = quantizationMin;
             shape->quantizationMax = quantizationMax;
             shape->release = samples.release;
+            shape->heights = samples.heights;
             TerrainBuiltCollider built;
             built.shape = shape;
             built.quantizationError = 0.001;
@@ -179,12 +190,14 @@ namespace mir::test
                                 const TerrainPlacement &placement) override
         {
             placed[next] = {static_cast<const FakeShape *>(&shape), origin, placement};
+            ops.push_back({true, next});
             return next++;
         }
 
         void Remove(TerrainColliderId collider) override
         {
             REQUIRE(placed.erase(collider) == 1);
+            ops.push_back({false, collider});
             ++removed;
         }
 
@@ -196,6 +209,7 @@ namespace mir::test
         };
 
         mutable std::atomic<int> builds = 0;
+        std::vector<std::pair<bool, TerrainColliderId>> ops;
         std::atomic<bool> refuse = false;
         std::map<TerrainColliderId, Placed> placed;
         int removed = 0;

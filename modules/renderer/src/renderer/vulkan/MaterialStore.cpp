@@ -24,8 +24,6 @@
 
 #include <core/log/Log.h>
 
-#include <vk_mem_alloc.h>
-
 #include <glm/glm.hpp>
 
 #include <algorithm>
@@ -41,7 +39,6 @@ namespace mir::vk
     namespace
     {
         constexpr std::string_view kModelShaderName = "model";
-        constexpr uint32_t kRecordRefBinding = 2;
 
         std::optional<std::vector<std::byte>> BuildMigrationDefaults(const MaterialLayout &candidateLayout,
                                                                      std::string_view parametersJson,
@@ -56,22 +53,107 @@ namespace mir::vk
             return PackMaterialRecord(candidateLayout, *defaults, error);
         }
 
-        std::optional<MaterialLayout> LoadLayout(const SurfaceMaterialRegistration &registration, std::string *error)
+        std::optional<MaterialLayout> LoadLayout(const SurfaceMaterialRegistration &registration, std::string *error,
+            const std::filesystem::path &root = ShaderPath(""))
         {
-            const std::filesystem::path path = ShaderPath(registration.reflectionFile);
+            const std::filesystem::path path = root / std::filesystem::u8path(registration.reflectionFile);
             const std::optional<std::string> text = ReadText(path);
             if (!text)
             {
                 if (error != nullptr)
-                    *error = "material reflection is missing: " + path.string();
+                    *error = "material reflection is missing: " + GenericPathUtf8(path);
                 return std::nullopt;
             }
             return ParseMaterialLayout(*text, error);
         }
+
+        const MaterialFieldLayout *LayerOffsetField(const MaterialLayout &header, size_t index)
+        {
+            const auto field = std::ranges::find(header.fields, "layerOffset" + std::to_string(index),
+                &MaterialFieldLayout::name);
+            return field != header.fields.end() && field->kind == MaterialFieldKind::Uint &&
+                field->size == sizeof(uint32_t) && field->offset <= header.size &&
+                sizeof(uint32_t) <= header.size - field->offset ? &*field : nullptr;
+        }
+
+        bool MigrateLayerRecords(const GpuMaterial &material, const SurfaceMaterialCatalog &accepted,
+            const std::filesystem::path &acceptedRoot, const SurfaceMaterialCatalog &candidate,
+            const SurfaceMaterialRegistration &registration, const MaterialLayout &header,
+            std::vector<std::byte> &record, const MaterialRecordValidator &validate, std::string &error)
+        {
+            const auto *previous = accepted.Find(material.mDesc.shaderName, material.mDesc.surfaceAsset);
+            if (!previous)
+            {
+                error = "the accepted layered material registration is missing";
+                return false;
+            }
+            const auto &old = material.mCurrentRecordBytes;
+            for (size_t index = 0; index < registration.layerAssets.size(); ++index)
+            {
+                const auto &asset = registration.layerAssets[index];
+                const auto *child = candidate.FindByAsset(asset, "terrain");
+                const auto *offsetField = LayerOffsetField(header, index);
+                if (!child || !offsetField)
+                {
+                    error = "the layered shader has no child registration or reflected offset for " + asset;
+                    return false;
+                }
+                const auto layout = LoadLayout(*child, &error);
+                if (!layout) return false;
+                auto bytes = BuildMigrationDefaults(*layout, child->parametersJson, &error);
+                if (!bytes) return false;
+
+                auto match = std::ranges::find(previous->layerAssets, asset);
+                if (index < previous->layerAssets.size() && previous->layerAssets[index] == asset)
+                    match = previous->layerAssets.begin() + index;
+                if (match != previous->layerAssets.end())
+                {
+                    const auto *oldChild = accepted.FindByAsset(asset, "terrain");
+                    const auto *oldField = LayerOffsetField(material.mAcceptedLayout,
+                        static_cast<size_t>(match - previous->layerAssets.begin()));
+                    if (!oldChild || !oldField || old.size() < material.mAcceptedLayout.size)
+                    {
+                        error = "the accepted layered record has no child layout or offset for " + asset;
+                        return false;
+                    }
+                    const auto oldLayout = LoadLayout(*oldChild, &error, acceptedRoot);
+                    if (!oldLayout) return false;
+                    uint32_t offset;
+                    std::memcpy(&offset, old.data() + oldField->offset, sizeof(offset));
+                    if (offset < material.mAcceptedLayout.size || offset > old.size() ||
+                        oldLayout->size > old.size() - offset)
+                    {
+                        error = "the accepted child record is outside the layered material: " + asset;
+                        return false;
+                    }
+                    const auto slice = std::span(old).subspan(offset, oldLayout->size);
+                    if (MaterialLayoutRevision(*oldLayout) == MaterialLayoutRevision(*layout))
+                        bytes->assign(slice.begin(), slice.end());
+                    else
+                    {
+                        auto migrated = MigrateMaterialRecord(*oldLayout, *layout, slice, *bytes);
+                        if (!migrated.ok)
+                        {
+                            error = asset + ": " + migrated.error;
+                            return false;
+                        }
+                        *bytes = std::move(migrated.bytes);
+                    }
+                }
+                if (validate && !validate(child->frontend, *layout, *bytes, error))
+                    return false;
+                // Each reflected layout is rounded to the shared record alignment.
+                const auto offset = static_cast<uint32_t>(record.size());
+                std::memcpy(record.data() + offsetField->offset, &offset, sizeof(offset));
+                record.insert(record.end(), bytes->begin(), bytes->end());
+            }
+            return true;
+        }
     }
 
     bool MaterialStore::Initialize(Device &device, ResourceStore &resources, MaterialTable *table, VkFormat colorFormat,
-                                   const std::array<VkDescriptorSetLayout, 3> &sharedLayouts)
+                                   const std::array<VkDescriptorSetLayout, 3> &sharedLayouts,
+                                   VkDescriptorSetLayout drawRecordSetLayout)
     {
         mDevice = &device;
         mTable = table;
@@ -86,17 +168,10 @@ namespace mir::vk
         }
         mSurfaceMaterials = *catalog;
 
-        const uint64_t alignment = std::max<uint64_t>(mDevice->Properties().limits.minUniformBufferOffsetAlignment, 1);
-        mRecordRefStride = static_cast<uint32_t>((sizeof(MaterialRecordRef) + alignment - 1) / alignment * alignment);
-        mRecordRefFrameStride = mRecordRefStride * kMaxMaterials;
-
-        if (!CreatePipelineLayout(sharedLayouts))
+        if (!CreatePipelineLayout(sharedLayouts, drawRecordSetLayout))
             return false;
 
         if (!CreateSkyPipeline(sharedLayouts[0]))
-            return false;
-
-        if (mTable != nullptr && !CreateRecordRefBuffer())
             return false;
 
         mDefaultMaterial = CreateMaterial(MaterialDesc{}, resources, colorFormat);
@@ -130,7 +205,6 @@ namespace mir::vk
         mTextureWaiting.clear();
         mDefaultMaterial = kNullMaterial;
         mErrorMaterial = kNullMaterial;
-        DestroyRecordRefBuffer();
 
         if (mDescriptorPool != VK_NULL_HANDLE)
         {
@@ -171,12 +245,11 @@ namespace mir::vk
         mTable = nullptr;
     }
 
-    bool MaterialStore::CreatePipelineLayout(const std::array<VkDescriptorSetLayout, 3> &sharedLayouts)
+    bool MaterialStore::CreatePipelineLayout(const std::array<VkDescriptorSetLayout, 3> &sharedLayouts,
+                                             VkDescriptorSetLayout drawRecordSetLayout)
     {
-        // binding 0 = base color, binding 1 = normal map, binding 2 = the
-        // record reference. Legacy shaders still sample 0 and 1; shared-table
-        // shaders find their bytes through 2.
-        std::array<VkDescriptorSetLayoutBinding, 3> setBindings{
+        // Legacy shaders sample 0 and 1; shared-table shaders find their bytes in set 4.
+        const std::array<VkDescriptorSetLayoutBinding, 2> setBindings{
             {{.binding = 0,
               .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               .descriptorCount = 1,
@@ -184,16 +257,11 @@ namespace mir::vk
              {.binding = 1,
               .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               .descriptorCount = 1,
-              .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-             {.binding = kRecordRefBinding,
-              .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-              .descriptorCount = 1,
-              .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT}}};
-        const uint32_t setBindingCount = mTable != nullptr ? static_cast<uint32_t>(setBindings.size()) : 2u;
+              .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}}};
 
         const VkDescriptorSetLayoutCreateInfo setLayoutInfo{.sType =
                                                                 VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                                                            .bindingCount = setBindingCount,
+                                                            .bindingCount = static_cast<uint32_t>(setBindings.size()),
                                                             .pBindings = setBindings.data()};
 
         if (vkCreateDescriptorSetLayout(mDevice->Handle(), &setLayoutInfo, nullptr, &mSetLayout) != VK_SUCCESS)
@@ -203,18 +271,14 @@ namespace mir::vk
         }
 
         // One active set per material, plus room for an old set retained while a texture binding changes.
-        std::array<VkDescriptorPoolSize, 2> poolSizes{
-            {{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-              .descriptorCount = 2 * kMaxMaterials * kMaterialSetCombinedImages},
-             {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-              .descriptorCount = 2 * kMaxMaterials * kMaterialSetRecordUniformBuffers}}};
-        const uint32_t poolSizeCount = mTable != nullptr ? static_cast<uint32_t>(poolSizes.size()) : 1u;
+        const VkDescriptorPoolSize poolSize{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                            .descriptorCount = 2 * kMaxMaterials * kMaterialSetCombinedImages};
 
         const VkDescriptorPoolCreateInfo poolInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                                   .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
                                                   .maxSets = 2 * kMaxMaterials,
-                                                  .poolSizeCount = poolSizeCount,
-                                                  .pPoolSizes = poolSizes.data()};
+                                                  .poolSizeCount = 1,
+                                                  .pPoolSizes = &poolSize};
 
         if (vkCreateDescriptorPool(mDevice->Handle(), &poolInfo, nullptr, &mDescriptorPool) != VK_SUCCESS)
         {
@@ -225,13 +289,17 @@ namespace mir::vk
         const VkPushConstantRange pushConstantRange{
             .stageFlags = kRasterPushConstantStages, .offset = 0, .size = sizeof(RasterPushConstants)};
 
-        // set 0 = material (textures and record reference), set 1 = per-view camera UBO,
-        // set 2 = per-draw model data, set 3 = shadow maps, set 4 = shared table.
-        static_assert(kRasterPipelineSetCount == 5);
+        // set 0 = material textures, set 1 = per-view camera UBO, set 2 = per-draw model data,
+        // set 3 = shadow maps, set 4 = shared table, set 5 = draw records.
+        static_assert(kRasterPipelineSetCount == kDrawRecordSetIndex + 1);
         const std::array<VkDescriptorSetLayout, kRasterPipelineSetCount> setLayouts{
-            mSetLayout, sharedLayouts[0], sharedLayouts[1], sharedLayouts[2],
-            mTable != nullptr ? mTable->SetLayout() : VK_NULL_HANDLE};
-        const uint32_t setLayoutCount = mTable != nullptr ? kRasterPipelineSetCount : kRasterPipelineSetCount - 1;
+            mSetLayout,
+            sharedLayouts[0],
+            sharedLayouts[1],
+            sharedLayouts[2],
+            mTable != nullptr ? mTable->SetLayout() : VK_NULL_HANDLE,
+            drawRecordSetLayout};
+        const uint32_t setLayoutCount = mTable != nullptr ? kRasterPipelineSetCount : kMaterialTableSetIndex;
 
         const VkPipelineLayoutCreateInfo layoutInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                                     .setLayoutCount = setLayoutCount,
@@ -657,7 +725,6 @@ namespace mir::vk
             material.mHasAcceptedLayout = true;
         }
 
-        VkDescriptorBufferInfo recordRefInfo{};
         if (mTable != nullptr)
         {
             material.mRecordId = mTable->CreateRecord(record, desc.recordAlignment);
@@ -670,8 +737,6 @@ namespace mir::vk
 
             material.mRecordOffset = mTable->RecordOffset(material.mRecordId);
             material.mCurrentRecordBytes.assign(record.begin(), record.end());
-            recordRefInfo =
-                VkDescriptorBufferInfo{.buffer = mRecordRefBuffer, .offset = 0, .range = sizeof(MaterialRecordRef)};
         }
 
         const VkDescriptorImageInfo baseColorInfo{
@@ -679,7 +744,7 @@ namespace mir::vk
         const VkDescriptorImageInfo normalInfo{
             .sampler = sampler, .imageView = normal->mView, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 
-        std::array<VkWriteDescriptorSet, 3> writes{{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        std::array<VkWriteDescriptorSet, 2> writes{{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                                                      .dstSet = descriptorSet,
                                                      .dstBinding = 0,
                                                      .descriptorCount = 1,
@@ -690,21 +755,12 @@ namespace mir::vk
                                                      .dstBinding = 1,
                                                      .descriptorCount = 1,
                                                      .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                                     .pImageInfo = &normalInfo},
-                                                    {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                                     .dstSet = descriptorSet,
-                                                     .dstBinding = kRecordRefBinding,
-                                                     .descriptorCount = 1,
-                                                     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-                                                     .pBufferInfo = &recordRefInfo}}};
-        const uint32_t writeCount = mTable != nullptr ? static_cast<uint32_t>(writes.size()) : 2u;
+                                                     .pImageInfo = &normalInfo}}};
 
-        vkUpdateDescriptorSets(mDevice->Handle(), writeCount, writes.data(), 0, nullptr);
+        vkUpdateDescriptorSets(mDevice->Handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
         const uint32_t index = PlaceSlot(mMaterials, mFreeIndices, material);
         mMaterials[index].mMaterialIndex = index;
-        if (mTable != nullptr)
-            WriteRecordRefEverywhere(index);
 
         const bool pendingModelTexture =
             material.mModelShader &&
@@ -721,77 +777,11 @@ namespace mir::vk
         return MaterialHandle{index, mMaterials[index].mGeneration};
     }
 
-    bool MaterialStore::CreateRecordRefBuffer()
+    MaterialRecordRef MaterialStore::RecordRef(const GpuMaterial &material) const
     {
-        const VkDeviceSize bytes = VkDeviceSize{kFramesInFlight} * mRecordRefFrameStride;
-        VmaAllocationInfo info{};
-        const VkBufferCreateInfo bufferInfo{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                                            .size = bytes,
-                                            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                            .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
-        const VmaAllocationCreateInfo allocationInfo{
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO,
-            .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
-        if (vmaCreateBuffer(mDevice->Allocator(), &bufferInfo, &allocationInfo, &mRecordRefBuffer,
-                            &mRecordRefAllocation, &info) != VK_SUCCESS)
-        {
-            MIR_LOG_CRITICAL("CreateRecordRefBuffer: allocation failed");
-            return false;
-        }
-
-        mRecordRefMapped = static_cast<std::byte *>(info.pMappedData);
-        mDevice->NameObject(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(mRecordRefBuffer),
-                            "Material record references");
-        return true;
-    }
-
-    void MaterialStore::DestroyRecordRefBuffer()
-    {
-        if (mRecordRefBuffer != VK_NULL_HANDLE)
-        {
-            vmaDestroyBuffer(mDevice->Allocator(), mRecordRefBuffer, mRecordRefAllocation);
-            mRecordRefBuffer = VK_NULL_HANDLE;
-            mRecordRefAllocation = VK_NULL_HANDLE;
-            mRecordRefMapped = nullptr;
-        }
-    }
-
-    void MaterialStore::WriteRecordRef(uint32_t frame, uint32_t material)
-    {
-        if (mRecordRefMapped == nullptr || material >= mMaterials.size())
-            return;
-
-        const GpuMaterial &entry = mMaterials[material];
-        if (entry.mPipeline == VK_NULL_HANDLE)
-            return;
-
-        const MaterialRecordRef ref{
-            .mOffset = entry.mRecordOffset,
-            .mSize = mTable != nullptr && !entry.mRecordId.IsNull() ? mTable->RecordSize(entry.mRecordId) : 0};
-        std::memcpy(mRecordRefMapped + RecordRefDynamicOffset(frame, material), &ref, sizeof(ref));
-    }
-
-    void MaterialStore::WriteRecordRefEverywhere(uint32_t material)
-    {
-        if (mRecordRefMapped == nullptr)
-            return;
-
-        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
-            WriteRecordRef(frame, material);
-        vmaFlushAllocation(mDevice->Allocator(), mRecordRefAllocation, 0, VK_WHOLE_SIZE);
-    }
-
-    void MaterialStore::RefreshRecordRefs(uint32_t frame)
-    {
-        if (mRecordRefMapped == nullptr)
-            return;
-
-        for (uint32_t i = 0; i < mMaterials.size(); ++i)
-            WriteRecordRef(frame, i);
-
-        const VkDeviceSize offset = VkDeviceSize{frame} * mRecordRefFrameStride;
-        vmaFlushAllocation(mDevice->Allocator(), mRecordRefAllocation, offset, mRecordRefFrameStride);
+        return MaterialRecordRef{
+            .mOffset = material.mRecordOffset,
+            .mSize = mTable != nullptr && !material.mRecordId.IsNull() ? mTable->RecordSize(material.mRecordId) : 0};
     }
 
     void MaterialStore::RefreshTextures(ResourceStore &resources, uint64_t completed, uint64_t lastUse)
@@ -823,7 +813,7 @@ namespace mir::vk
                 MIR_LOG_ERROR("Material {}: texture descriptor allocation failed, keeping the fallback", handle.mIndex);
                 return true;
             }
-            std::array<VkCopyDescriptorSet, 3> copies{};
+            std::array<VkCopyDescriptorSet, 2> copies{};
             for (uint32_t i = 0; i < copies.size(); ++i)
                 copies[i] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
                              .srcSet = material.mDescriptorSet,
@@ -831,7 +821,7 @@ namespace mir::vk
                              .dstSet = replacement,
                              .dstBinding = i,
                              .descriptorCount = 1};
-            vkUpdateDescriptorSets(mDevice->Handle(), 0, nullptr, mTable != nullptr ? 3u : 2u, copies.data());
+            vkUpdateDescriptorSets(mDevice->Handle(), 0, nullptr, static_cast<uint32_t>(copies.size()), copies.data());
             const auto resolve = [&resources](TextureHandle requested, TextureHandle fallback) {
                 if (resources.FindTexture(requested))
                     return requested;
@@ -1024,7 +1014,7 @@ namespace mir::vk
         mRecordValidator = std::move(validator);
     }
 
-    void MaterialStore::PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex)
+    void MaterialStore::PublishRecords(uint64_t completedFrame, uint64_t frame)
     {
         if (mTable == nullptr)
             return;
@@ -1040,17 +1030,31 @@ namespace mir::vk
                 }
             }
         }
-
-        RefreshRecordRefs(frameIndex);
     }
 
-    bool MaterialStore::PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry, std::string *error)
+    bool MaterialStore::PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry,
+        const std::filesystem::path &acceptedRoot, std::string *error)
     {
         if (material.mPipeline == VK_NULL_HANDLE)
             return true;
 
         entry.mIndex = material.mMaterialIndex;
-        entry.mPipeline = BuildPipeline(material.mDesc, mColorFormat);
+        auto desc = material.mDesc;
+        const SurfaceMaterialCatalog &catalog = mReloadCatalogStaged ? mReloadCatalog : mSurfaceMaterials;
+        const SurfaceMaterialRegistration *registration = nullptr;
+        if (material.mSurfaceMaterial)
+        {
+            const auto *accepted = mSurfaceMaterials.Find(desc.shaderName, desc.surfaceAsset);
+            if (accepted) registration = catalog.FindByAsset(accepted->asset, accepted->frontend);
+            if (!registration)
+            {
+                if (error) *error = "surface material '" + desc.shaderName + "' lost its registration";
+                return false;
+            }
+            desc.shaderName = registration->stem;
+            entry.mShaderName = desc.shaderName;
+        }
+        entry.mPipeline = BuildPipeline(desc, mColorFormat);
         if (entry.mPipeline == VK_NULL_HANDLE)
         {
             if (error != nullptr)
@@ -1062,7 +1066,7 @@ namespace mir::vk
         // replacement generation here, so it never mixes old and new modules.
         if (material.mSurfacePipeline != VK_NULL_HANDLE)
         {
-            entry.mSurfacePipeline = BuildPipeline(material.mDesc, mColorFormat, PipelineTarget::OpaqueSsgi);
+            entry.mSurfacePipeline = BuildPipeline(desc, mColorFormat, PipelineTarget::OpaqueSsgi);
             if (entry.mSurfacePipeline == VK_NULL_HANDLE)
             {
                 if (error != nullptr)
@@ -1080,15 +1084,6 @@ namespace mir::vk
             return true;
         }
 
-        const SurfaceMaterialCatalog &catalog = mReloadCatalogStaged ? mReloadCatalog : mSurfaceMaterials;
-        const SurfaceMaterialRegistration *const registration =
-            catalog.Find(material.mDesc.shaderName, material.mDesc.surfaceAsset);
-        if (registration == nullptr)
-        {
-            if (error != nullptr)
-                *error = "surface material '" + material.mDesc.shaderName + "' lost its registration";
-            return false;
-        }
         const uint32_t registrationIndex = catalog.IndexOf(registration);
         if (registrationIndex == UINT32_MAX)
         {
@@ -1127,6 +1122,13 @@ namespace mir::vk
             return false;
         }
 
+        if (!registration->layerAssets.empty() && !MigrateLayerRecords(material, mSurfaceMaterials, acceptedRoot,
+                catalog, *registration, *candidateLayout, migrated.bytes, mRecordValidator, candidateError))
+        {
+            if (error != nullptr) *error = material.mDesc.shaderName + ": " + candidateError;
+            return false;
+        }
+
         if (mRecordValidator &&
             !mRecordValidator(registration->frontend, *candidateLayout, migrated.bytes, candidateError))
         {
@@ -1135,6 +1137,9 @@ namespace mir::vk
             return false;
         }
 
+        if (!registration->layerAssets.empty() && migrated.bytes == material.mCurrentRecordBytes &&
+            MaterialLayoutRevision(*candidateLayout) == MaterialLayoutRevision(material.mAcceptedLayout))
+            return true;
         entry.mRecordId = mTable->CreateRecord(migrated.bytes, material.mDesc.recordAlignment);
         if (entry.mRecordId.IsNull())
         {
@@ -1163,7 +1168,8 @@ namespace mir::vk
         return true;
     }
 
-    bool MaterialStore::PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog, std::string *error)
+    bool MaterialStore::PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog,
+        const std::filesystem::path &acceptedRoot, std::string *error)
     {
         DiscardShaderReload();
         mReloadCatalog = candidateCatalog;
@@ -1172,7 +1178,7 @@ namespace mir::vk
         for (GpuMaterial &material : mMaterials)
         {
             ReloadEntry &entry = mReloadEntries.emplace_back();
-            if (!PrepareMaterialReloadEntry(material, entry, error))
+            if (!PrepareMaterialReloadEntry(material, entry, acceptedRoot, error))
             {
                 DiscardShaderReload();
                 return false;
@@ -1204,6 +1210,8 @@ namespace mir::vk
             if (entry.mIndex >= mMaterials.size())
                 continue;
             GpuMaterial &material = mMaterials[entry.mIndex];
+            if (!entry.mShaderName.empty())
+                material.mDesc.shaderName = std::move(entry.mShaderName);
             if (entry.mPipeline != VK_NULL_HANDLE)
             {
                 if (material.mPipeline != VK_NULL_HANDLE)
@@ -1259,9 +1267,6 @@ namespace mir::vk
             mReloadCatalogStaged = false;
         }
         mReloadPrepared = false;
-        if (mTable != nullptr)
-            for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
-                RefreshRecordRefs(frame);
     }
 
     void MaterialStore::DiscardShaderReload()
@@ -1337,11 +1342,6 @@ namespace mir::vk
         mFreeIndices.clear();
         mDefaultMaterial = MaterialHandle{0, keptDefault.mGeneration};
         mErrorMaterial = MaterialHandle{1, keptError.mGeneration};
-        if (mTable != nullptr)
-        {
-            for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
-                RefreshRecordRefs(frame);
-        }
         return released;
     }
 

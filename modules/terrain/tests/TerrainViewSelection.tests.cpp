@@ -12,6 +12,8 @@
 
 #include <terrain/TerrainExecutor.h>
 #include <terrain/TerrainLod.h>
+#include <terrain/TerrainOverlay.h>
+#include <terrain/TerrainOverlayMesh.h>
 #include <terrain/TerrainRegion.h>
 #include <terrain/TerrainScene.h>
 #include <terrain/TerrainStreamer.h>
@@ -919,4 +921,107 @@ TEST_CASE("A far placement selects the same units as one near the origin", "[ter
     const auto a = select(near), b = select(far);
     CHECK(!a.empty());
     CHECK(a == b);
+}
+
+namespace
+{
+    std::shared_ptr<const TerrainOverlay> OverlayAt(const Fixture &f, TileCoord tile)
+    {
+        const TerrainTileRecord *source = f.Index().Find(tile);
+        REQUIRE(source);
+        const TerrainLayout &layout = f.Index().layers[source->layer];
+        const int32_t n = layout.IntervalsPerTile();
+        std::optional<TileHeights> heights = TileHeights::Create(tile, n);
+        REQUIRE(heights);
+        for (int32_t k = 0; k <= n; ++k)
+            for (int32_t i = 0; i <= n; ++i)
+                heights->Set(i, k, Relief(layout.TileFirstSample(tile.x) + i, layout.TileFirstSample(tile.z) + k) + 2.0f);
+        std::unordered_map<TileCoord, std::shared_ptr<const TileHeights>> held;
+        held.emplace(tile, std::make_shared<const TileHeights>(std::move(*heights)));
+        return std::make_shared<const TerrainOverlay>(f.asset, 1, std::move(held));
+    }
+
+    TerrainLocalBounds TileArea(const Fixture &f, TileCoord tile)
+    {
+        const TerrainLayout &layout = f.Index().layout;
+        return {layout.SamplePosition(layout.TileFirstSample(tile.x)),
+                layout.SamplePosition(layout.TileFirstSample(tile.z)),
+                layout.SamplePosition(layout.TileFirstSample(tile.x) + layout.IntervalsPerTile()),
+                layout.SamplePosition(layout.TileFirstSample(tile.z) + layout.IntervalsPerTile())};
+    }
+
+    bool Overlaps(const TerrainLocalBounds &a, const TerrainLocalBounds &b)
+    {
+        return a.minX < b.maxX && a.maxX > b.minX && a.minZ < b.maxZ && a.maxZ > b.minZ;
+    }
+
+    std::optional<TerrainDrawUnit> Covering(const Fixture &f, std::span<const TerrainDrawUnit> draws, glm::dvec2 point)
+    {
+        for (const TerrainDrawUnit &unit : draws)
+        {
+            const TerrainLocalBounds area = f.Area(unit);
+            if (point.x > area.minX && point.x < area.maxX && point.y > area.minZ && point.y < area.maxZ)
+                return unit;
+        }
+        return std::nullopt;
+    }
+} // namespace
+
+TEST_CASE("An overlay tile selects at level 0 and refines its Regions", "[terrain][selection][overlay]")
+{
+    const Fixture f;
+    const TileCoord overlaid{0, 0};
+    const std::shared_ptr<const TerrainOverlay> overlay = OverlayAt(f, overlaid);
+    const TerrainSelectionInstance withOverlay{f.release->SharedHandle(), f.placement, overlay};
+    const TerrainSelectionInstance withoutOverlay{f.release->SharedHandle(), f.placement};
+    const TerrainView view = LookingEverywhere(f.At({30.0, 45.0, 60.0}), 120.0);
+    const TerrainLocalBounds overlaidArea = TileArea(f, overlaid);
+
+    TerrainViewSelector selector(ViewSettings());
+    selector.Update({&withOverlay, 1}, view, AllReady());
+    const std::span<const TerrainDrawUnit> draws = selector.Draws();
+    REQUIRE_FALSE(draws.empty());
+
+    bool covered = false;
+    for (const TerrainDrawUnit &unit : draws)
+    {
+        if (!Overlaps(f.Area(unit), overlaidArea))
+            continue;
+        covered = true;
+        CHECK(unit.kind == Kind::Tile);
+        CHECK(unit.geometry.level == 0);
+    }
+    CHECK(covered);
+    CHECK(std::any_of(draws.begin(), draws.end(), [&](const TerrainDrawUnit &unit) {
+        return unit.kind == Kind::Tile && unit.geometry.coord == overlaid && unit.geometry.level == 0;
+    }));
+
+    std::unordered_set<TerrainPayloadKey> wants;
+    for (const TerrainPayloadWant &want : selector.Wants())
+        wants.insert(want.key);
+    const std::vector<TileCoord> sources = TerrainOverlaySourceTiles(f.Index(), overlaid);
+    REQUIRE_FALSE(sources.empty());
+    for (const TileCoord source : sources)
+        CHECK(wants.contains(TerrainPayloadKeyOf(f.info, *f.Index().Find(source))));
+    const TerrainTileRecord *normal = f.Index().Find(overlaid, f.Index().Find(overlaid)->layer,
+                                                     TerrainPayloadKind::Normal, 0);
+    if (normal)
+        CHECK_FALSE(wants.contains(TerrainPayloadKeyOf(f.info, *normal)));
+
+    TerrainViewSelector plain(ViewSettings());
+    plain.Update({&withoutOverlay, 1}, view, AllReady());
+    const TileRange tiles = f.Index().layout.Tiles();
+    const TileCoord away[]{{tiles.max.x, tiles.max.z}, {tiles.min.x, tiles.min.z}, {tiles.max.x, tiles.min.z}};
+    for (const TileCoord tile : away)
+    {
+        INFO("away tile " << tile.x << ", " << tile.z);
+        const TerrainLocalBounds valid = *f.Index().layout.ValidExtent(tile);
+        const glm::dvec2 centre{(valid.minX + valid.maxX) * 0.5, (valid.minZ + valid.maxZ) * 0.5};
+        const std::optional<TerrainDrawUnit> a = Covering(f, draws, centre);
+        const std::optional<TerrainDrawUnit> b = Covering(f, plain.Draws(), centre);
+        REQUIRE(a.has_value());
+        REQUIRE(b.has_value());
+        CHECK(a->kind == b->kind);
+        CHECK(a->geometry == b->geometry);
+    }
 }

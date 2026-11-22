@@ -33,8 +33,9 @@ namespace
             return UIBackendTexture{ reinterpret_cast<void *>(static_cast<uintptr_t>(mCreated)),
                                      [](void *) { ++gReleased; } };
         }
-        void Submit(const UIRect &, float, const UIDrawList &, const UITextures &) override {}
-        UISize MeasureText(std::string_view, float) const override { return {}; }
+        UIBackendFont MakeFont(std::span<const uint8_t>) override { return {}; }
+        void Submit(const UIRect &, float, const UIDrawList &, const UITextures &, const UIFonts &) override {}
+        UISize MeasureText(std::string_view, float, void *) const override { return {}; }
 
         int mCreated = 0;
     };

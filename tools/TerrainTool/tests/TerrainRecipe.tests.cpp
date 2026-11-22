@@ -6,6 +6,8 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include "TerrainBakeTestSupport.h"
+
 #include <TerrainRecipe.h>
 
 #include <terrain/TileHeights.h>
@@ -19,6 +21,7 @@
 
 using namespace mir;
 using namespace mir::terrainbake;
+using namespace mir::terrainbake::test;
 using Json = nlohmann::json;
 
 namespace
@@ -284,4 +287,99 @@ TEST_CASE("Malformed documents, non-finite numbers and duplicate keys are report
     CHECK(Parse(large).recipe);
 
     CHECK(HasIssue(LoadTerrainRecipe(std::string(TERRAIN_FIXTURE_DIR) + "/missing.terrain.json"), "", "cannot read"));
+}
+
+TEST_CASE("An enabled layer tile changes the fingerprint; a disabled one or none keeps it", "[terraintool][recipe][edits]")
+{
+    ScratchDir scratch("recipe_edits");
+    const fs::path recipePath = CopyExampleRecipe(scratch.path);
+    const TerrainRecipe plain = Valid(Example());
+    CHECK_FALSE(plain.editStack);
+    CHECK(plain.editStackHash == 0);
+    const uint64_t unedited = FingerprintRecipe(plain).value;
+
+    const RecipeParseResult absent = LoadTerrainRecipe(recipePath);
+    REQUIRE(absent.recipe);
+    REQUIRE(absent.recipe->editStack);
+    CHECK(absent.recipe->editStack->empty());
+    CHECK(absent.recipe->editStackHash == 0);
+    CHECK(FingerprintRecipe(*absent.recipe).value == unedited);
+
+    const GlobalSampleIndex sample{plain.layout.TileFirstSample(-1) + 4, plain.layout.TileFirstSample(-1) + 4};
+    TerrainEditLayer layer = AdditiveEditLayer("touch-up");
+    SetTerrainEditSample(layer, plain.layout, sample, 2.0f);
+    WriteEditLayers(recipePath, std::span(&layer, 1));
+
+    const RecipeParseResult edited = LoadTerrainRecipe(recipePath);
+    Dump(edited);
+    REQUIRE(edited.recipe);
+    CHECK(edited.recipe->editStackHash != 0);
+    const uint64_t changed = FingerprintRecipe(*edited.recipe).value;
+    CHECK(changed != unedited);
+    CHECK(CanonicalRecipeText(*edited.recipe).find("edits.stackHash=") != std::string::npos);
+
+    SetTerrainEditSample(layer, plain.layout, sample, 2.5f);
+    WriteEditLayers(recipePath, std::span(&layer, 1));
+    const RecipeParseResult moved = LoadTerrainRecipe(recipePath);
+    REQUIRE(moved.recipe);
+    CHECK(FingerprintRecipe(*moved.recipe).value != changed);
+
+    layer.info.enabled = false;
+    WriteEditLayers(recipePath, std::span(&layer, 1));
+    const RecipeParseResult disabled = LoadTerrainRecipe(recipePath);
+    REQUIRE(disabled.recipe);
+    CHECK(disabled.recipe->editStackHash == 0);
+    CHECK(FingerprintRecipe(*disabled.recipe).value == unedited);
+}
+
+TEST_CASE("A corrupt layer file or an edit tile off the reference grid is a recipe issue", "[terraintool][recipe][edits]")
+{
+    ScratchDir scratch("recipe_edits_refuse");
+    const TerrainRecipe plain = Valid(Example());
+    const fs::path recipePath = CopyExampleRecipe(scratch.path);
+
+    SECTION("corrupt tile file")
+    {
+        TerrainEditLayer layer = AdditiveEditLayer("touch-up");
+        SetTerrainEditSample(layer, plain.layout,
+                             {plain.layout.TileFirstSample(-1) + 3, plain.layout.TileFirstSample(-1) + 3}, 1.0f);
+        WriteEditLayers(recipePath, std::span(&layer, 1));
+        const fs::path tileFile = TerrainEditLayersDir(recipePath) /
+                                  TerrainEditLayerDirName(layer.info.sequence) / TerrainEditTileFileName({-1, -1});
+        REQUIRE(fs::exists(tileFile));
+        const std::vector<std::byte> junk{std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
+        WriteFile(tileFile, junk);
+
+        const RecipeParseResult result = LoadTerrainRecipe(recipePath);
+        Dump(result);
+        CHECK_FALSE(result.recipe);
+        REQUIRE(result.issues.size() == 1);
+        CHECK(result.issues[0].field == "edits");
+        CHECK(result.issues[0].message.find("tile_-1_-1.tedit") != std::string::npos);
+    }
+    SECTION("layer tile on a coarser source tile")
+    {
+        const fs::path mixedPath = CopyRecipeFixture("mixed-2x2.terrain.json", scratch.path / "mixed");
+        const RecipeParseResult mixed = LoadTerrainRecipe(mixedPath);
+        Dump(mixed);
+        REQUIRE(mixed.recipe);
+        REQUIRE(mixed.recipe->SourceSpacing({0, -1}) == 8.0);
+
+        TerrainEditLayer layer = AdditiveEditLayer("coarse");
+        SetTerrainEditSample(layer, mixed.recipe->layout,
+                             {mixed.recipe->layout.TileFirstSample(0) + 2,
+                              mixed.recipe->layout.TileFirstSample(-1) + 2},
+                             1.0f);
+        REQUIRE(layer.tiles.size() == 1);
+        WriteEditLayers(mixedPath, std::span(&layer, 1));
+
+        const RecipeParseResult result = LoadTerrainRecipe(mixedPath);
+        Dump(result);
+        CHECK_FALSE(result.recipe);
+        REQUIRE(result.issues.size() == 1);
+        CHECK(result.issues[0].field == "edits");
+        CHECK(result.issues[0].message.find("\"coarse\"") != std::string::npos);
+        CHECK(result.issues[0].message.find("(0, -1)") != std::string::npos);
+        CHECK(result.issues[0].message.find("8 m") != std::string::npos);
+    }
 }

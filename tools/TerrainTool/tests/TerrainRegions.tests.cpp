@@ -456,8 +456,8 @@ TEST_CASE("Sync republishes a current release without this tool's Region hierarc
         REQUIRE(RunTerrainBake(request).Ok());
         REQUIRE(RunTerrainPublish({candidate, releases, recipePath}).Ok());
         std::optional<TerrainReleaseId> current;
-        const std::optional<std::string> mismatch =
-            TerrainCurrentMismatch(releases, asset, FingerprintRecipe(recipe), current);
+        const std::optional<std::string> mismatch = TerrainCurrentMismatch(
+            releases, asset, FingerprintRecipe(recipe), TerrainSourceFingerprint(), current);
         if (settings == TerrainRegionSettings{})
             CHECK_FALSE(mismatch);
         else

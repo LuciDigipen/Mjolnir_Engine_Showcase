@@ -10,9 +10,15 @@
 #include "terrain/TerrainByteSource.h"
 
 #include <core/fs/FileIO.h>
+#include <terrain/TerrainReleaseLock.h>
 
 namespace mir
 {
+    std::shared_ptr<const TerrainReleaseLock> TerrainByteSource::Lock() const
+    {
+        return {};
+    }
+
     std::optional<std::vector<std::byte>> TerrainByteSource::ReadAll(std::string_view file) const
     {
         std::optional<std::vector<std::byte>> read = DoReadAll(file);
@@ -54,6 +60,16 @@ namespace mir
     std::string TerrainFileSource::Describe() const
     {
         return mDirectory.generic_string();
+    }
+
+    void TerrainFileSource::HoldLock(std::shared_ptr<const TerrainReleaseLock> lock)
+    {
+        mLock = std::move(lock);
+    }
+
+    std::shared_ptr<const TerrainReleaseLock> TerrainFileSource::Lock() const
+    {
+        return mLock;
     }
 
     std::optional<std::vector<std::byte>> TerrainFileSource::DoReadAll(std::string_view file) const

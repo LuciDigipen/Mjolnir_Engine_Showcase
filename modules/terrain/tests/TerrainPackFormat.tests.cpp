@@ -238,9 +238,12 @@ TEST_CASE("A newer minor with longer header, records and an extension section st
     const uint32_t tileCount = 9;
 
     std::vector<std::byte> v11(v10.begin(), v10.begin() + kTerrainIndexHeaderSize);
+    v11.insert(v11.end(), kTerrainWeightsIndexHeaderSize - kTerrainIndexHeaderSize, std::byte{0});
+    StoreU32(v11, terrainformat::index::kWeightPackRecordSize, kTerrainPackRecordSize);
+    StoreU32(v11, terrainformat::index::kWeightTileRecordSize, kTerrainWeightRecordSize);
     v11.insert(v11.end(), 16, std::byte{0xAB});
-    StoreU32(v11, 8, kTerrainFormatMinor + 1);
-    StoreU32(v11, 12, kTerrainIndexHeaderSize + 16);
+    StoreU32(v11, 8, kTerrainWeightsFormatMinor + 1);
+    StoreU32(v11, 12, kTerrainWeightsIndexHeaderSize + 16);
     StoreU32(v11, 100, kTerrainPackRecordSize + 8);
     StoreU32(v11, 108, kTerrainTileRecordSize + 8);
     for (uint32_t p = 0; p < packCount; ++p)
@@ -265,9 +268,11 @@ TEST_CASE("A newer minor with longer header, records and an extension section st
     newer.index = v11;
     auto [source, handle] = OpenInMemory(newer);
     auto [baseSource, base] = OpenInMemory(encoded);
-    CHECK(handle.Index().formatMinor == kTerrainFormatMinor + 1);
+    CHECK(handle.Index().formatMinor == kTerrainWeightsFormatMinor + 1);
     CHECK(handle.Info() == base.Info());
     CHECK(handle.Index().heightsHash == base.Index().heightsHash);
+    CHECK(handle.Index().weights.empty());
+    CHECK(handle.Index().weightLayers.empty());
     for (uint32_t t = 0; t < tileCount; ++t)
     {
         const TerrainTileRecord &a = handle.Index().tiles[t];
@@ -278,6 +283,20 @@ TEST_CASE("A newer minor with longer header, records and an extension section st
         CHECK(ReadOk(handle, a.tile) == ReadOk(base, b.tile));
     }
     CHECK(handle.VerifyAllPacks().code == Code::None);
+}
+
+TEST_CASE("An index of the weights minor with the shorter header is malformed", "[terrain][pack]")
+{
+    const AssetId asset = TerrainAsset("terrain/edge.terrain.json");
+    const TerrainEncodedRelease encoded = EncodeEdge(asset, 0xE1);
+    std::vector<std::byte> index(encoded.index);
+    StoreU32(index, terrainformat::index::kMinor, kTerrainWeightsFormatMinor);
+    ResealIndex(index);
+
+    const TerrainResult<TerrainIndex> parsed = ParseTerrainIndex(index);
+    REQUIRE_FALSE(parsed);
+    CHECK(parsed.error.code == Code::Malformed);
+    CHECK(Mentions(parsed.error, "header size"));
 }
 
 TEST_CASE("Release ids are minted per bake and never zero", "[terrain][pack]")

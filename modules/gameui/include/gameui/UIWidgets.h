@@ -34,6 +34,9 @@ namespace mir
 
     void Panel(UIContext &ui, const UIRect &rect);
 
+    // text with its top left at x, y in the style's font and size, over its shadow and outline
+    void StyledText(UIContext &ui, float x, float y, std::string_view text, UIColor color);
+
     UIWidgetResult Label(UIContext &ui, UIId id, const UIRect &rect, std::string_view text,
                          const UIDisplayOptions &options = {});
 

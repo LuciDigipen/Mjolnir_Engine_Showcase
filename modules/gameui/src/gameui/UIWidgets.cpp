@@ -31,7 +31,10 @@ namespace mir
             return Declare(ui, id, rect, widget);
         }
 
-        bool IsEnabled(const UIWidgetOptions &options) { return !options.mHidden && !options.mDisabled; }
+        bool IsEnabled(const UIContext &ui, const UIWidgetOptions &options)
+        {
+            return !options.mHidden && !options.mDisabled && !ui.WidgetsDisabled();
+        }
 
 
         struct Part
@@ -81,10 +84,24 @@ namespace mir
         UIColor TextColor(const UIStyle &style, bool enabled) { return enabled ? style.mTextColor : style.mDisabledTextColor; }
 
 
-        void DrawText(UIContext &ui, const UIRect &rect, float x, std::string_view text, UIColor color)
+        // centred down rect, and across from left to rect's padding by the style's alignment
+        void DrawText(UIContext &ui, const UIRect &rect, float left, std::string_view text, UIColor color)
         {
-            const float height = ui.MeasureText(text).height;
-            ui.DrawList().Text(x, rect.y + (rect.height - height) * 0.5f, text, color, ui.Style().mFontSize);
+            const UIStyle &style = ui.Style();
+            const UISize size = ui.MeasureText(text);
+            const float right = rect.Right() - style.mPadding;
+            float x = left;
+            if (style.mTextAlign == UITextAlign::Center)
+                x = left + (right - left - size.width) * 0.5f;
+            else if (style.mTextAlign == UITextAlign::Right)
+                x = right - size.width;
+            StyledText(ui, x, rect.y + (rect.height - size.height) * 0.5f, text, color);
+        }
+
+        UIColor FadedBy(UIColor color, float alpha)
+        {
+            color.a *= alpha;
+            return color;
         }
 
         float Clamp01(float value) { return std::clamp(value, 0.0f, 1.0f); }
@@ -94,6 +111,32 @@ namespace mir
     {
         const UIStyle &style = ui.Style();
         DrawPart(ui, rect, Part{style.mPanelColor, &style.mPanelSprite}, style.mPanelRounding);
+    }
+
+    void StyledText(UIContext &ui, float x, float y, std::string_view text, UIColor color)
+    {
+        const UIStyle &style = ui.Style();
+        UIDrawList &draw = ui.DrawList();
+        const auto pass = [&](float dx, float dy, UIColor passColor)
+        { draw.Text(x + dx, y + dy, text, passColor, style.mFontSize, style.mFont); };
+
+        if (style.mTextShadowColor.a > 0.0f)
+            pass(style.mTextShadowX, style.mTextShadowY, FadedBy(style.mTextShadowColor, color.a));
+
+        // eight copies round the text, the diagonals as far out as the sides
+        const float width = style.mTextOutlineWidth;
+        if (style.mTextOutlineColor.a > 0.0f && width > 0.0f)
+        {
+            const float diagonal = width * 0.70710678f;
+            const float offsets[8][2] = {{-width, 0.0f},      {width, 0.0f},      {0.0f, -width},    {0.0f, width},
+                                         {-diagonal, -diagonal}, {diagonal, -diagonal}, {-diagonal, diagonal},
+                                         {diagonal, diagonal}};
+            const UIColor outline = FadedBy(style.mTextOutlineColor, color.a);
+            for (const auto &offset : offsets)
+                pass(offset[0], offset[1], outline);
+        }
+
+        pass(0.0f, 0.0f, color);
     }
 
     UIWidgetResult Label(UIContext &ui, UIId id, const UIRect &rect, std::string_view text,
@@ -117,7 +160,7 @@ namespace mir
             return result;
 
         const UIStyle &style = ui.Style();
-        const bool enabled = IsEnabled(options);
+        const bool enabled = IsEnabled(ui, options);
         FocusRing(ui, rect, result);
         DrawPart(ui, rect, FacePart(style, result, enabled), style.mWidgetRounding);
         DrawText(ui, rect, rect.x + style.mPadding, text, TextColor(style, enabled));
@@ -168,7 +211,7 @@ namespace mir
             return result;
 
         const UIStyle &style = ui.Style();
-        const bool enabled = IsEnabled(options);
+        const bool enabled = IsEnabled(ui, options);
         FocusRing(ui, rect, result);
         DrawPart(ui, rect, FacePart(style, result, enabled), style.mWidgetRounding);
 
@@ -188,7 +231,7 @@ namespace mir
         adjusting.mAdjustsX = true;
         UIWidgetResult result = Declare(ui, id, rect, adjusting);
 
-        const bool enabled = IsEnabled(options);
+        const bool enabled = IsEnabled(ui, options);
         const float range = max - min;
         if (enabled && range > 0.0f && (result.mHeld || result.mAdjust != 0))
         {

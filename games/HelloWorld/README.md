@@ -31,6 +31,14 @@ ownership, and session data. The controller uses `find_scene_entity(instance, 1)
 to resolve the gold beacon after `scene_loaded(instance)` reports readiness.
 Status messages and the visit count appear in the engine log/console.
 
+`assets/scripts/ui_demo.lua`, on the `LuaUI` entity in `default`, draws game UI
+from Lua: a panel in the bottom-left corner that fades in, counts clicks, shows
+a toggle, a slider and a bar, and pauses and resumes the game with
+`world:pause()` and `world:resume()`. Its text is in Turret Road Bold,
+`assets/fonts/TurretRoad-Bold.ttf`, loaded with `ui:font`; the font is under the
+SIL Open Font License, in `TurretRoad-OFL.txt`. It lives in `default` only, so
+it goes when **N** swaps that scene out.
+
 The controls are project input actions `SceneDemoNext` and `SceneDemoAdditive`
 in `project_settings.json`. Scene IDs and directories are registered in
 `game.json`. The existing `newScene` scene remains available separately.

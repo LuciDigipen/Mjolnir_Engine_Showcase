@@ -9,9 +9,11 @@
 #pragma once
 
 #include <terrain_runtime/TerrainGroundBridge.h>
+#include <terrain_runtime/TerrainMaterialSlots.h>
 #include <terrain_runtime/TerrainRender.h>
 #include <terrain_runtime/TerrainJobExecutor.h>
 #include <terrain_runtime/TerrainRuntimeCache.h>
+#include <terrain_runtime/TerrainWeightResidency.h>
 
 #include <project/GameProject.h>
 #include <core/ecs/Entity.h>
@@ -22,6 +24,7 @@
 #include <terrain/TerrainExecutor.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainMeshResidency.h>
+#include <terrain/TerrainOverlayHandover.h>
 #include <terrain/TerrainReleaseSwitch.h>
 #include <terrain/TerrainScene.h>
 #include <terrain/TerrainStreamer.h>
@@ -46,6 +49,7 @@ namespace mir
     class PhysicsWorld;
     class TerrainGroundBridge;
     class SurfaceMaterialLibrary;
+    struct SurfaceMaterialUse;
     class TerrainStreamingConfiguration;
     class VulkanRenderer;
     class World;
@@ -82,6 +86,17 @@ namespace mir
         // After the Refresh that enters Play: Play runs on the loaded releases, and a switch still being checked or
         // prewarmed lets its work go until Stop.
         void BeginPlay();
+
+        // Applies an overlay snapshot to the live TerrainWorld; Play refuses it, and an applied snapshot restarts
+        // any ground snap. A null snapshot clears the overlay.
+        TerrainOverlayApplyResult SetTerrainOverlay(AssetId asset, std::shared_ptr<const TerrainOverlay> overlay);
+
+        // Edit's snapshots, handed over before Play's PlayBegin; BeginPlay applies the ones whose releases loaded.
+        void OfferPlayOverlays(const TerrainWorld &source);
+
+        // Which material layer each release weight layer becomes on one instance, named from the layered
+        // material. False when no loaded instance has that entity.
+        bool SetInstanceMaterialLayers(Entity entity, std::span<const uint8_t> layers);
 
         // On scene unload. Releases no other runtime holds retire their meshes, payloads and collision here.
         void Unload();
@@ -122,8 +137,11 @@ namespace mir
             std::string materialLogicalPath;
             AssetId materialAsset;
             std::vector<TerrainMaterialLayer> materialLayers;
+            std::vector<std::string> materialLayerNames;
             MaterialHandle material;
             uint64_t materialGeneration = 0;
+            TerrainMaterialSlotBinding materialSlots;
+            TerrainSlotTable slotTable;
         };
 
         struct ViewState
@@ -160,6 +178,7 @@ namespace mir
         }
         TerrainStreamer *Streamer() const;
         TerrainMeshResidency *Meshes() const;
+        TerrainWeightResidency *Weights() const;
         // Removes every viewport's streamer interest and drops its selector and draw list.
         void ClearViews();
 
@@ -173,12 +192,16 @@ namespace mir
         std::vector<InstanceResources> Build(TerrainWorld &next);
         // Binding edits never trigger Apply; this only refreshes render-side materials.
         void SyncBindings(const TerrainSceneSpec &spec);
+        void PublishMaterialUses(std::span<const SurfaceMaterialUse> uses);
         void SyncSpecMaterials(const TerrainSceneSpec &spec);
         void ResolveBinding(InstanceResources &instance);
+        void SyncMaterialSlots(InstanceResources &instance, const TerrainInstanceState &state);
         const TerrainInstanceSpec *SpecFor(const TerrainSceneSpec &spec, Entity entity) const;
         const TerrainInstanceSpec *SpecForPlacement(const TerrainSceneSpec &spec,
             const TerrainInstanceState &instance) const;
         bool HasMeshPayloads(const TerrainInstanceState &instance);
+        // The collision residency draws from the same snapshots as the TerrainWorld.
+        void SyncCollisionOverlays(const TerrainWorld &world);
         // The loaded and staged releases to the mesh and collision residencies.
         void ApplyResidencies();
         bool IsStaged(AssetId asset, TerrainReleaseId release) const;
@@ -204,6 +227,8 @@ namespace mir
         World *mWorld = nullptr;
         VulkanRenderer *mRenderer = nullptr;
         SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
+        // 0 while this runtime uses no material: an idle owner would hold back every retired handle.
+        uint64_t mMaterialUseOwner = 0;
         const AssetResolver *mResolver = nullptr;
         std::string mAssetIdRoot;
         std::filesystem::path mReleasesRoot;
@@ -223,11 +248,13 @@ namespace mir
 
         // Parallel to TerrainWorld::Instances().
         std::vector<InstanceResources> mResources;
+        // Edit's snapshots until Play's releases load and BeginPlay applies them.
+        TerrainOverlayHandover mPlayOverlays;
 
         // The World's GroundQuery source; registered before any scene terrain resolves.
         std::unique_ptr<TerrainGroundBridge> mGround;
 
-        // The shared job pool, payloads and GPU meshes; null without valid settings.
+        // The shared job pool, payloads, GPU meshes and weight textures; null without valid settings.
         std::shared_ptr<TerrainRuntimeCache> mCache;
         // Which releases this runtime holds, and whether another runtime draws the cache instead.
         TerrainCacheOwner mCacheOwner = 0;

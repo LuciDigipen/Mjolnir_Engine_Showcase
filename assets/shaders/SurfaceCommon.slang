@@ -30,6 +30,12 @@
 #ifndef MIR_SURFACE_RECORDS_BINDING
 #define MIR_SURFACE_RECORDS_BINDING 0
 #endif
+#ifndef MIR_DRAW_RECORDS_SET
+#define MIR_DRAW_RECORDS_SET 5
+#endif
+#ifndef MIR_DRAW_RECORDS_BINDING
+#define MIR_DRAW_RECORDS_BINDING 0
+#endif
 
 static const uint kMaxSurfaceImages = 1024;
 static const uint kMaxSurfaceSamplers = 256;
@@ -53,14 +59,53 @@ struct TextureRef
     uint sampler;
 };
 
-// Set 0 binding 2 in the raster pipeline; see MaterialStore::RecordRefDynamicOffset.
-struct MaterialRecordRef
+// Must match DrawRecord in modules/renderer/include/renderer/DrawRecord.h.
+struct DrawRecord
 {
-    uint offset;
-    uint size;
+    uint materialOffset;
+    uint materialSize;
     uint flags;
     uint reserved;
+    uint4 terrain;
 };
+
+// Mirrors mir::TerrainWeightUv and mir::AccumulateTerrainLayerWeights in
+// modules/renderer/include/renderer/TerrainDrawData.h.
+float2 TerrainWeightUv(float3 localPos, float invFootprint, uint side)
+{
+    const float span = float(side - 1);
+    return (localPos.xz * invFootprint * span + 0.5) / float(side);
+}
+
+// Word 0 is the weight image row plus one, 1 the sampler row, 2 the material
+// layer of each R..A channel (0xFF unused) and 3 the reciprocal tile size.
+float4 TerrainLayerWeights(uint4 terrain, float3 localPos)
+{
+    if (terrain.x == 0)
+        return float4(1.0, 0.0, 0.0, 0.0);
+    const uint image = terrain.x - 1;
+    const uint sampler = terrain.y;
+    const float invFootprint = asfloat(terrain.w);
+    uint width, height;
+    gSurfaceImages[NonUniformResourceIndex(image)].GetDimensions(width, height);
+    if (width == 0 || !(invFootprint > 0.0) || !isfinite(invFootprint))
+        return float4(1.0, 0.0, 0.0, 0.0);
+    const float2 uv = TerrainWeightUv(localPos, invFootprint, width);
+    const float4 channels = gSurfaceImages[NonUniformResourceIndex(image)].SampleLevel(
+        gSurfaceSamplers[NonUniformResourceIndex(sampler)], uv, 0.0);
+    const float channelWeights[4] = { channels.x, channels.y, channels.z, channels.w };
+    float layers[4] = { 0.0, 0.0, 0.0, 0.0 };
+    for (uint channel = 0; channel < 4; ++channel)
+    {
+        const uint layer = (terrain.z >> (8 * channel)) & 0xFFu;
+        if (layer != 0xFFu && layer < 4u)
+            layers[layer] += channelWeights[channel];
+    }
+    const float sum = layers[0] + layers[1] + layers[2] + layers[3];
+    if (!(sum > 0.0))
+        return float4(1.0, 0.0, 0.0, 0.0);
+    return float4(layers[0], layers[1], layers[2], layers[3]) / sum;
+}
 
 // World-space UV gradients on a triangle. The maximum singular value of the
 // 2x3 Jacobian is the largest UV change per meter, including rank-one UVs.
@@ -106,6 +151,9 @@ struct SurfaceInput
     bool frontFace;
     // UV units per meter at this point; ray tracing uses it for the mip level.
     float uvDensity;
+    // Weights of material layers 0..3, always summing to one. A material that
+    // does not read it keeps drawing as a single layer.
+    float4 layerWeights;
 };
 
 // Every field lerps, and height lets layered materials blend by height later.
@@ -146,6 +194,8 @@ struct MaterialContext
     float incidence;
     // UV units per meter for the coordinates the material samples.
     float uvDensity;
+    // Byte offset of the material record a layered material loads its children from.
+    uint recordOffset;
 
     float4 Sample(TextureRef texture, float2 uv)
     {
@@ -350,9 +400,12 @@ struct MeshFrontend
         input.vertexColor = vertexColor;
         input.frontFace = frontFace;
         input.uvDensity = 0.0;
+        input.layerWeights = float4(1.0, 0.0, 0.0, 0.0);
         return input;
     }
 };
+
+#include "SurfaceLayered.slang"
 
 struct TerrainFrontend
 {
@@ -372,6 +425,7 @@ struct TerrainFrontend
         input.vertexColor = vertexColor;
         input.frontFace = frontFace;
         input.uvDensity = uvDensity;
+        input.layerWeights = float4(1.0, 0.0, 0.0, 0.0);
         return input;
     }
 };

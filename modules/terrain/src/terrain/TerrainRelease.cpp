@@ -40,7 +40,8 @@ namespace mir
 
         // Payloads are checked by the caller.
         TerrainPackError CheckPackHeader(const TerrainIndex &index, const TerrainPackRecord &record,
-                                         std::span<const std::byte> bytes, uint32_t &headerSize)
+                                         std::span<const std::byte> bytes, uint32_t expectedContentVersion,
+                                         uint32_t &headerSize)
         {
             if (bytes.size() < kTerrainPackHeaderSize)
                 return Error(Code::Malformed, "{} bytes is too short for a pack header", bytes.size());
@@ -69,9 +70,9 @@ namespace mir
                 return Error(Code::Malformed,
                              "pack header says chunk {} with {} tiles, the index says chunk {} with {}",
                              Describe(chunk), tileCount, Describe(record.chunk), record.tileCount);
-            if (contentVersion != index.contentVersion)
-                return Error(Code::Unsupported, "pack content version {} differs from the index's {}", contentVersion,
-                             index.contentVersion);
+            if (contentVersion != expectedContentVersion)
+                return Error(Code::Unsupported, "pack content version {} is not the expected {}", contentVersion,
+                             expectedContentVersion);
             return {};
         }
     }
@@ -130,8 +131,9 @@ namespace mir
     }
 
     TerrainReleaseHandle::TerrainReleaseHandle(std::shared_ptr<const TerrainIndex> index,
-                                               std::shared_ptr<TerrainByteSource> source)
-        : mIndex(std::move(index)), mSource(std::move(source))
+                                               std::shared_ptr<TerrainByteSource> source,
+                                               std::shared_ptr<const TerrainReleaseLock> lock)
+        : mIndex(std::move(index)), mSource(std::move(source)), mLock(std::move(lock))
     {
     }
 
@@ -149,9 +151,10 @@ namespace mir
         if (!index)
             return Failure<TerrainReleaseHandle>(index.error, where);
 
+        std::shared_ptr<const TerrainReleaseLock> lock = source->Lock();
         TerrainResult<TerrainReleaseHandle> result;
-        result.value =
-            TerrainReleaseHandle(std::make_shared<const TerrainIndex>(std::move(*index.value)), std::move(source));
+        result.value = TerrainReleaseHandle(std::make_shared<const TerrainIndex>(std::move(*index.value)),
+                                            std::move(source), std::move(lock));
         return result;
     }
 
@@ -268,10 +271,53 @@ namespace mir
         return mesh;
     }
 
+    TerrainResult<TerrainDecodedWeights> TerrainReleaseHandle::ReadWeights(TileCoord tile) const
+    {
+        using R = TerrainDecodedWeights;
+        const TerrainWeightRecord *record = mIndex->FindWeight(tile);
+        if (!record)
+            return Fail<R>(Code::NotFound, "tile {} has no weights in release {}", Describe(tile),
+                           Hex(Info().release.value));
+        const std::string pack = TerrainWeightPackFileName(mIndex->weightPacks[record->pack].chunk);
+        const std::string where = std::format("{}/{}: ", mSource->Describe(), pack);
+        const std::optional<std::vector<std::byte>> bytes =
+            mSource->ReadRange(pack, record->offset, static_cast<size_t>(record->length));
+        if (!bytes)
+            return Fail<R>(Code::Io, "{}cannot read weight tile {} at [{}, {}) (missing or truncated pack)", where,
+                           Describe(tile), record->offset, record->offset + record->length);
+        TerrainResult<R> decoded = DecodeTerrainWeightPayload(*mIndex, *record, *bytes);
+        if (!decoded)
+            return Failure<R>(decoded.error, where);
+        return decoded;
+    }
+
+    TerrainResult<TerrainDecodedWeights> TerrainReleaseHandle::ReadRegionWeights(TerrainRegionCoord region) const
+    {
+        using R = TerrainDecodedWeights;
+        const TerrainRegionWeightRecord *record = mIndex->FindRegionWeight(region);
+        if (!record)
+            return Fail<R>(Code::NotFound, "Region L{} ({}, {}) has no weight image in release {}", region.level,
+                           region.x, region.z, Hex(Info().release.value));
+        const std::string pack = TerrainWeightPackFileName(mIndex->weightPacks[record->pack].chunk);
+        const std::string where = std::format("{}/{}: ", mSource->Describe(), pack);
+        const std::optional<std::vector<std::byte>> bytes =
+            mSource->ReadRange(pack, record->offset, static_cast<size_t>(record->length));
+        if (!bytes)
+            return Fail<R>(Code::Io, "{}cannot read Region L{} ({}, {}) weights at [{}, {}) (missing or truncated pack)",
+                           where, region.level, region.x, region.z, record->offset, record->offset + record->length);
+        TerrainResult<R> decoded = DecodeTerrainRegionWeightPayload(*mIndex, *record, *bytes);
+        if (!decoded)
+            return Failure<R>(decoded.error, where);
+        return decoded;
+    }
+
     TerrainPackError TerrainReleaseHandle::VerifyAllPacks() const
     {
         for (size_t p = 0; p < mIndex->packs.size(); ++p)
             if (TerrainPackError error = VerifyPack(p); error.code != Code::None)
+                return error;
+        for (size_t p = 0; p < mIndex->weightPacks.size(); ++p)
+            if (TerrainPackError error = VerifyWeightPack(p); error.code != Code::None)
                 return error;
         return {};
     }
@@ -308,7 +354,7 @@ namespace mir
                          Hex(record.checksum));
 
         uint32_t headerSize = 0;
-        const TerrainPackError header = CheckPackHeader(index, record, *bytes, headerSize);
+        const TerrainPackError header = CheckPackHeader(index, record, *bytes, index.contentVersion, headerSize);
         if (header.code != Code::None)
             return {header.code, where + header.message};
 
@@ -335,6 +381,69 @@ namespace mir
         return {};
     }
 
+    TerrainPackError TerrainReleaseHandle::VerifyWeightPack(size_t p) const
+    {
+        const TerrainIndex &index = *mIndex;
+        if (p >= index.weightPacks.size())
+            return Error(Code::InvalidInput, "weight pack {} is not in the index's {} weight packs", p,
+                         index.weightPacks.size());
+        std::vector<const TerrainWeightRecord *> members;
+        for (const TerrainWeightRecord &record : index.weights)
+            if (record.pack == p)
+                members.push_back(&record);
+
+        const TerrainPackRecord &record = index.weightPacks[p];
+        const std::string name = TerrainWeightPackFileName(record.chunk);
+        const std::string where = std::format("{}/{}: ", mSource->Describe(), name);
+
+        const std::optional<uint64_t> size = mSource->Size(name);
+        if (!size)
+            return Error(Code::Io, "{}missing weight pack", where);
+        if (*size != record.fileSize)
+            return Error(Code::Corrupt, "{}{} bytes, the index says {} (truncated or replaced)", where, *size,
+                         record.fileSize);
+        const std::optional<std::vector<std::byte>> bytes = mSource->ReadAll(name);
+        if (!bytes)
+            return Error(Code::Io, "{}cannot read the weight pack", where);
+        if (bytes->size() != record.fileSize)
+            return Error(Code::Corrupt, "{}read {} bytes, the index says {}", where, bytes->size(), record.fileSize);
+        const uint64_t checksum = Fnv1a64(*bytes);
+        if (checksum != record.checksum)
+            return Error(Code::Corrupt, "{}weight pack checksum {} does not match the index {}", where,
+                         Hex(checksum), Hex(record.checksum));
+
+        uint32_t headerSize = 0;
+        const TerrainPackError header =
+            CheckPackHeader(index, record, *bytes, kTerrainWeightsContentVersion, headerSize);
+        if (header.code != Code::None)
+            return {header.code, where + header.message};
+
+        const std::span<const std::byte> all(*bytes);
+        for (const TerrainWeightRecord *tile : members)
+        {
+            if (tile->offset < headerSize)
+                return Error(Code::Malformed, "{}weight tile {} starts at {}, inside the {}-byte header", where,
+                             Describe(tile->tile), tile->offset, headerSize);
+            const auto payload = all.subspan(static_cast<size_t>(tile->offset), static_cast<size_t>(tile->length));
+            const TerrainPackError error = DecodeTerrainWeightPayload(index, *tile, payload).error;
+            if (error.code != Code::None)
+                return {error.code, where + error.message};
+        }
+        for (const TerrainRegionWeightRecord &region : index.regionWeights)
+        {
+            if (region.pack != p)
+                continue;
+            if (region.offset < headerSize)
+                return Error(Code::Malformed, "{}Region L{} ({}, {}) weight image starts at {}, inside the {}-byte header",
+                             where, region.region.level, region.region.x, region.region.z, region.offset, headerSize);
+            const auto payload = all.subspan(static_cast<size_t>(region.offset), static_cast<size_t>(region.length));
+            const TerrainPackError error = DecodeTerrainRegionWeightPayload(index, region, payload).error;
+            if (error.code != Code::None)
+                return {error.code, where + error.message};
+        }
+        return {};
+    }
+
     TerrainResult<TerrainReleaseHandle> OpenTerrainRelease(const std::filesystem::path &releasesRoot, AssetId asset,
                                                            TerrainReleaseId release)
     {
@@ -342,8 +451,20 @@ namespace mir
             return Fail<TerrainReleaseHandle>(Code::InvalidInput, "asset and release ids must be set");
 
         const std::filesystem::path dir = TerrainReleaseDir(releasesRoot, asset, release);
-        TerrainResult<TerrainReleaseHandle> opened =
-            TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(dir));
+        std::shared_ptr<TerrainFileSource> source = std::make_shared<TerrainFileSource>(dir);
+        std::shared_ptr<const TerrainReleaseLock> lock;
+        const TerrainReleaseLockStatus status = TerrainReleaseLock::AcquireShared(
+            TerrainAssetReleasesDir(releasesRoot, asset), release, lock);
+        if (status == TerrainReleaseLockStatus::Busy)
+            return Fail<TerrainReleaseHandle>(Code::NotFound,
+                                              "{}: release {} is being removed (a pruner holds its lock)",
+                                              dir.generic_string(), Hex(release.value));
+        if (status == TerrainReleaseLockStatus::Unavailable)
+            return Fail<TerrainReleaseHandle>(Code::Io, "{}: cannot acquire the reader lock for release {}",
+                                              dir.generic_string(), Hex(release.value));
+        source->HoldLock(std::move(lock));
+
+        TerrainResult<TerrainReleaseHandle> opened = TerrainReleaseHandle::Open(source);
         if (!opened)
             return opened;
 

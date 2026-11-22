@@ -360,3 +360,56 @@ TEST_CASE("Prepared texture mips filter RGB in linear light and alpha linearly",
     CHECK(source.desc.mips[0].pixels[3] == std::byte{ 42 });
     CHECK(PrepareTextureUpload({ .width = 2, .height = 2, .pixels = image }).desc.width == 0);
 }
+
+TEST_CASE("Compaction selection takes nothing when no BLAS is ready", "[renderer][streaming][compaction]")
+{
+    CHECK(SelectBlasCompactions({}, 0, 100000, 1000, 0) == 0);
+}
+
+TEST_CASE("Compaction selection takes every entry that fits the cap", "[renderer][streaming][compaction]")
+{
+    const std::vector<BlasCompactionCandidate> ready{ { 100, 40 }, { 200, 80 }, { 300, 120 } };
+    CHECK(SelectBlasCompactions(ready, 0, 100000, 1000, 0) == 3);
+    CHECK(SelectBlasCompactions(ready, 0, 100000, 600, 0) == 3);
+}
+
+TEST_CASE("Compaction selection stops before the entry that passes the cap", "[renderer][streaming][compaction]")
+{
+    const std::vector<BlasCompactionCandidate> ready{ { 400, 1 }, { 300, 1 }, { 300, 1 }, { 100, 1 } };
+    CHECK(SelectBlasCompactions(ready, 0, 100000, 1000, 0) == 3);
+    CHECK(SelectBlasCompactions(ready, 0, 100000, 700, 0) == 2);
+    CHECK(SelectBlasCompactions(ready, 0, 100000, 399, 0) == 1);
+}
+
+TEST_CASE("A single entry larger than the cap is still taken with nothing in flight",
+    "[renderer][streaming][compaction]")
+{
+    const std::vector<BlasCompactionCandidate> ready{ { 5000, 2000 }, { 10, 4 } };
+    CHECK(SelectBlasCompactions(ready, 0, 100000, 1000, 0) == 1);
+    CHECK(SelectBlasCompactions(std::span(ready).first(1), 0, 100000, 1000, 0) == 1);
+}
+
+TEST_CASE("Compactions still in flight count against the cap", "[renderer][streaming][compaction]")
+{
+    const std::vector<BlasCompactionCandidate> ready{ { 300, 100 }, { 300, 100 } };
+    CHECK(SelectBlasCompactions(ready, 400, 100000, 1000, 0) == 2);
+    CHECK(SelectBlasCompactions(ready, 500, 100000, 1000, 0) == 1);
+    CHECK(SelectBlasCompactions(ready, 800, 100000, 1000, 0) == 0);
+    CHECK(SelectBlasCompactions(ready, 1000, 100000, 1000, 0) == 0);
+}
+
+TEST_CASE("Compaction selection keeps the headroom free", "[renderer][streaming][compaction]")
+{
+    const std::vector<BlasCompactionCandidate> ready{ { 100, 300 }, { 100, 300 }, { 100, 300 } };
+    CHECK(SelectBlasCompactions(ready, 0, 1600, 100000, 1000) == 2);
+    CHECK(SelectBlasCompactions(ready, 0, 1599, 100000, 1000) == 1);
+    CHECK(SelectBlasCompactions(ready, 1, 1300, 100000, 1000) == 1);
+    CHECK(SelectBlasCompactions(ready, 1, 1299, 100000, 1000) == 0);
+}
+
+TEST_CASE("Low memory compacts one entry at a time", "[renderer][streaming][compaction]")
+{
+    const std::vector<BlasCompactionCandidate> ready{ { 100, 300 }, { 100, 300 } };
+    CHECK(SelectBlasCompactions(ready, 0, 0, 100000, 1000) == 1);
+    CHECK(SelectBlasCompactions(ready, 100, 0, 100000, 1000) == 0);
+}

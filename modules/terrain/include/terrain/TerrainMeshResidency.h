@@ -12,6 +12,7 @@
 #include <core/math/WorldCoordinates.h>
 #include <terrain/TerrainExecutor.h>
 #include <terrain/TerrainIdentity.h>
+#include <terrain/TerrainOverlay.h>
 #include <terrain/TerrainStreamer.h>
 #include <terrain/TerrainStreamingSettings.h>
 #include <terrain/TerrainTileMesh.h>
@@ -31,6 +32,8 @@ namespace mir
     struct TerrainMeshData
     {
         TerrainPayloadKey geometry;
+        // The overlay snapshot its heights came from; null for the release's own mesh.
+        std::shared_ptr<const TerrainOverlay> overlay;
         TerrainLocalPosition origin;
         std::vector<TerrainMeshVertex> vertices;
         std::vector<uint32_t> indices;
@@ -65,6 +68,8 @@ namespace mir
         virtual void Retire(TerrainGpuMeshId mesh) = 0;
         // Retired and not freed yet.
         virtual uint64_t RetiringBytes() const = 0;
+        // GPU bytes an upload holds now; less than its footprint once the renderer compacts it.
+        virtual uint64_t Bytes(TerrainGpuMeshId mesh) const = 0;
     };
 
     enum class TerrainMeshState : uint8_t
@@ -125,6 +130,8 @@ namespace mir
     // Main-thread object. A unit's mesh is built by a worker once its payloads are resident, handed to the
     // uploader while a frame's upload has room, and counts as ready only once the uploader says the GPU copy is
     // usable. Meshes are keyed by their geometry payload, so viewports and instances of one release share them.
+    // A tile an instance's overlay snapshot holds is built from the snapshot, keyed additionally by the snapshot:
+    // while that one builds, an older snapshot's ready mesh stays drawable, and it retires once the newer is ready.
     class TerrainMeshResidency
     {
       public:
@@ -145,17 +152,20 @@ namespace mir
         // Every viewport's wants this frame. Builds wanted units whose payloads are resident, Visible before
         // Prefetch and lower rank first; hands built ones over within a frame's upload; retires what nobody
         // wanted or drew for meshRetainSeconds, and Prefetch or unwanted meshes a Visible one needs room for.
+        // An instance's overlay decides which tiles are rebuilt from its heights.
         void Request(std::span<const TerrainSelectionInstance> instances, std::span<const TerrainPayloadWant> wants,
                      const TerrainStreamer &streamer, double now);
 
+        // The mesh of the snapshot the last Request asked for; Acquire and Ready fall back to an older snapshot's
+        // mesh while that one is not usable yet.
         TerrainMeshState State(const TerrainPayloadKey &geometry) const;
         bool Ready(const TerrainPayloadKey &geometry) const;
-        // Null unless Ready; marks the mesh drawn.
+        // Null unless a mesh for the geometry is Ready; marks the mesh drawn.
         const TerrainResidentMesh *Acquire(const TerrainPayloadKey &geometry, double now);
-        // Null unless Ready; does not extend mesh retention.
+        // Null unless a mesh for the geometry is Ready; does not extend mesh retention.
         const TerrainResidentMesh *FindReady(const TerrainPayloadKey &geometry) const;
 
-        // Every mesh of a release not in keep, built, building or uploading.
+        // Every mesh of a release not in keep, built, building or uploading, overlay snapshots included.
         void RetireReleases(std::span<const TerrainReleaseInfo> keep);
         void RetireAll();
         // After the uploader dropped every mesh on its own.

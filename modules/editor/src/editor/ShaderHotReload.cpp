@@ -11,6 +11,7 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <renderer/VulkanRenderer.h>
+#include <renderer/TerrainMaterialAsset.h>
 #include <jobs/BackgroundJobQueue.h>
 
 #include <nlohmann/json.hpp>
@@ -40,7 +41,103 @@ namespace mir
             const auto relative = path.lexically_relative(root);
             return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
         }
+        std::filesystem::path FindAsset(std::string_view logical, const std::vector<std::filesystem::path> &roots)
+        {
+            const auto relative = std::filesystem::u8path(logical);
+            if (!relative.is_absolute() && std::none_of(relative.begin(), relative.end(),
+                [](const auto &part) { return part == ".."; }))
+                for (const auto &root : roots)
+                {
+                    const auto candidate = std::filesystem::weakly_canonical(root / relative);
+                    if (Within(candidate, root) && std::filesystem::is_regular_file(candidate)) return candidate;
+                }
+            throw std::runtime_error("asset is missing under approved roots: " + std::string(logical));
+        }
         std::string Name(const std::string &path) { return Utf8(std::filesystem::u8path(path).filename()); }
+        std::string ResolveLayerShaders(Json &layers, const Json &materials, const ShaderManifest &manifest,
+            const std::vector<std::filesystem::path> &roots, std::vector<std::string> &shaders)
+        {
+            std::string type = "Layered" + std::to_string(layers.size()) + "<";
+            for (auto &layer : layers)
+            {
+                const auto &asset = layer.at("asset").get_ref<const std::string &>();
+                const auto child = std::find_if(materials.begin(), materials.end(), [&](const auto &entry)
+                    { return entry.at("asset") == asset && entry.at("frontend") == "terrain"; });
+                if (child == materials.end())
+                    throw std::runtime_error("Layer '" + layer.at("name").get<std::string>() +
+                        "' has no terrain shader registration: " + asset);
+                layer["type"] = child->at("type");
+                layer["shader"] = child->at("shader");
+                const auto path = Resolve(layer.at("shader").get<std::string>(), manifest.workingDirectory);
+                if (std::ranges::none_of(roots, [&](const auto &root) { return Within(path, root); }))
+                    throw std::runtime_error("Layer shader is outside approved roots: " + Utf8(path));
+                if (!shaders.empty()) type += ", ";
+                type += layer.at("type").get_ref<const std::string &>();
+                const auto shader = Utf8(path);
+                if (std::ranges::find(shaders, shader) == shaders.end()) shaders.push_back(shader);
+            }
+            return type + ">";
+        }
+        void AppendMaterialOutputs(const ShaderManifest &manifest, const std::string &frontend,
+            const std::string &stem, const std::string &type, const std::vector<std::string> &shaders,
+            bool layered, std::vector<ShaderManifestOutput> &outputs)
+        {
+            const auto templateIt = std::find_if(manifest.frontendTemplates.begin(), manifest.frontendTemplates.end(),
+                [&](const auto &candidate) { return candidate.frontend == frontend; });
+            if (templateIt == manifest.frontendTemplates.end()) throw std::runtime_error("no registered frontend template for " + frontend);
+            const auto replace = [&](std::string argument)
+                {
+                    const std::pair<std::string, std::string> tokens[]{
+                        {"{type}", type}, {"{stem}", stem}};
+                    for (const auto &[token, value] : tokens)
+                        for (auto position = argument.find(token); position != std::string::npos; position = argument.find(token))
+                            argument.replace(position, token.size(), value);
+                    if (argument.find('{') != std::string::npos) throw std::runtime_error("unknown frontend placeholder");
+                    return argument;
+                };
+            const std::array<const std::vector<std::string> *, 7> stages{
+                &templateIt->vertex, &templateIt->fragment, &templateIt->raytracing,
+                &templateIt->layout, &templateIt->surfaceFragment, &templateIt->giRaytracing, &templateIt->probeRaytracing};
+            const std::array<std::string, 7> entries{"vertexMain", "fragmentMain", "closestHitSurface", "layout", "fragmentMain", "closestHitSurface", "closestHitSurface"};
+            const std::array<std::string, 7> kinds{"vertex", "fragment", "closesthit", "compute", "fragment", "closesthit", "closesthit"};
+            for (size_t stage = 0; stage < stages.size(); ++stage)
+            {
+                if (stages[stage]->empty()) continue;
+                ShaderManifestOutput output;
+                output.type = "surface";
+                output.frontend = frontend;
+                output.output = stem + (stage == 4 ? ".surface." : stage == 5 ? ".gi." : stage == 6 ? ".probe." : ".") + entries[stage] + ".spv";
+                output.reflection = output.output + ".reflection.json";
+                output.depfile = output.output + ".d";
+                output.stage = kinds[stage];
+                output.entry = stage == 3 ? "layoutMain" : entries[stage];
+                output.specialize = stage == 0 ? "" : type;
+                output.arguments = {Utf8(manifest.slangc)};
+                output.arguments.insert(output.arguments.end(), manifest.commonArguments.begin(), manifest.commonArguments.end());
+                bool materialSource = false;
+                for (const auto &argument : *stages[stage])
+                {
+                    if (argument == "{materialSource}")
+                    {
+                        materialSource = true;
+                        if (stage != 0 || !layered)
+                        {
+                            output.sources.insert(output.sources.end(), shaders.begin(), shaders.end());
+                            output.arguments.insert(output.arguments.end(), shaders.begin(), shaders.end());
+                        }
+                        continue;
+                    }
+                    auto expanded = replace(argument);
+                    if (expanded.ends_with(".slang")) output.sources.push_back(Utf8(Resolve(expanded, manifest.workingDirectory)));
+                    output.arguments.push_back(std::move(expanded));
+                }
+                if (!materialSource) throw std::runtime_error("frontend template omits material source");
+                const std::vector<std::string> tail{"-reflection-json", output.reflection, "-depfile", output.depfile, "-o", output.output};
+                output.arguments.insert(output.arguments.end(), tail.begin(), tail.end());
+                if (std::none_of(outputs.begin(), outputs.end(), [&](const auto &existing) { return existing.output == output.output; }))
+                    outputs.push_back(std::move(output));
+            }
+        }
         void RemoveJob(const std::filesystem::path &path)
         {
             if (path.empty()) return;
@@ -95,6 +192,8 @@ namespace mir
         DropReady();
         mPendingSources.clear();
         mPendingMaterials.clear();
+        while (!mMaterialRequests.empty())
+            CompleteMaterial(mMaterialRequests.begin()->first, "Shader publication stopped.");
         mMaterialFiles.clear();
         mMaterialsScanned = false;
         mMaterialEpoch = 0;
@@ -128,6 +227,24 @@ namespace mir
     void ShaderHotReload::RebuildDependencies(const std::filesystem::path &directory)
     {
         auto readView = mManifest;
+        // A changed material type may leave its old immutable outputs in the generation.
+        // Watch the specializations the current catalog still uses.
+        if (const auto text = ReadText(directory / "surface_materials.json"))
+        {
+            const auto catalog = Json::parse(*text, nullptr, false);
+            if (catalog.contains("materials") && catalog.at("materials").is_array())
+            {
+                std::set<std::string> stems;
+                for (const auto &material : catalog.at("materials"))
+                    if (material.contains("stem") && material.at("stem").is_string())
+                        stems.insert(material.at("stem").get<std::string>() + ".");
+                std::erase_if(readView.outputs, [&](const auto &output) {
+                    if (output.type != "surface") return false;
+                    const auto name = Name(output.output);
+                    return std::ranges::none_of(stems, [&](const auto &stem) { return name.starts_with(stem); });
+                });
+            }
+        }
         for (auto &output : readView.outputs)
             output.depfile = Utf8(directory / std::filesystem::u8path(Name(output.depfile)));
         mDependencies.RebuildFromManifest(readView, &mLastDiagnostic);
@@ -181,6 +298,34 @@ namespace mir
                 }
         mMaterialFiles = std::move(found);
         mMaterialsScanned = true;
+    }
+    void ShaderHotReload::QueueTerrainMaterial(const std::filesystem::path &path,
+        std::function<void(std::string)> completion)
+    {
+        if (!mEnabled || !mBackend.available())
+        {
+            completion("Shader publication is unavailable. " + mLastDiagnostic);
+            return;
+        }
+        std::error_code error;
+        const auto canonical = std::filesystem::weakly_canonical(path, error);
+        if (error || !IsTerrainMaterialPath(Utf8(canonical)) ||
+            !std::ranges::any_of(ApprovedRoots(), [&](const auto &root) { return Within(canonical, root); }))
+        {
+            completion("The layered material is outside the shader manifest's asset roots.");
+            return;
+        }
+        const auto key = Utf8(canonical);
+        mMaterialRequests[key].push_back(std::move(completion));
+        mPendingMaterials.insert(key);
+        ++mMaterialEpoch;
+        mPendingSince = std::chrono::steady_clock::now();
+    }
+    void ShaderHotReload::CompleteMaterial(const std::string &name, const std::string &error)
+    {
+        auto requests = mMaterialRequests.extract(name);
+        if (!requests.empty())
+            for (auto &complete : requests.mapped()) complete(error);
     }
     void ShaderHotReload::Requeue(const Job &job)
     {
@@ -238,12 +383,17 @@ namespace mir
         {
             mLastDiagnostic = job.error.substr(0, 4000);
             MIR_LOG_ERROR("Shader reload rejected: {}", mLastDiagnostic);
+            CompleteMaterial(job.materialName, mLastDiagnostic);
             DropReady();
             return;
         }
         mPublishBusy = false;
         if (PublishJob(job)) mLastDiagnostic.clear();
-        if (!mPublishBusy) DropReady();
+        if (!mPublishBusy)
+        {
+            if (!mPendingMaterials.contains(job.materialName)) CompleteMaterial(job.materialName, mLastDiagnostic);
+            DropReady();
+        }
     }
     void ShaderHotReload::Update()
     {
@@ -274,7 +424,11 @@ namespace mir
             {
                 job.materialName = *mPendingMaterials.begin();
                 mPendingMaterials.erase(mPendingMaterials.begin());
-                if (!ExpandMaterial(std::filesystem::u8path(job.materialName), job)) return;
+                if (!ExpandMaterial(std::filesystem::u8path(job.materialName), job))
+                {
+                    CompleteMaterial(job.materialName, mLastDiagnostic);
+                    return;
+                }
             }
             else
             {
@@ -287,9 +441,10 @@ namespace mir
             std::set<std::string> sources;
             for (auto &output : job.outputs)
             {
-                for (const auto &dependency : mDependencies.DependenciesOf(output.output))
-                    if (std::find(output.sources.begin(), output.sources.end(), dependency) == output.sources.end())
-                        output.sources.push_back(dependency);
+                if (job.materialName.empty())
+                    for (const auto &dependency : mDependencies.DependenciesOf(output.output))
+                        if (std::find(output.sources.begin(), output.sources.end(), dependency) == output.sources.end())
+                            output.sources.push_back(dependency);
                 sources.insert(output.sources.begin(), output.sources.end());
             }
             for (const auto &source : sources)
@@ -373,11 +528,6 @@ namespace mir
             job.inputs.push_back(*source);
             const auto material = Json::parse(*text);
             if (material.at("version") != 1) throw std::runtime_error("unsupported material version");
-            const auto type = material.at("shader").at("type").get<std::string>();
-            const auto shaderFile = material.at("shader").at("file").get<std::string>();
-            const auto shaderRelative = std::filesystem::u8path(shaderFile);
-            if (shaderRelative.is_absolute() || std::any_of(shaderRelative.begin(), shaderRelative.end(),
-                [](const auto &part) { return part == ".."; })) throw std::runtime_error("shader path leaves approved roots");
             const auto roots = ApprovedRoots();
             std::filesystem::path owner;
             std::string nameSpace;
@@ -388,13 +538,6 @@ namespace mir
                 if (Resolve(Utf8(root.root), mManifest.workingDirectory) == owner) nameSpace = root.nameSpace;
             std::vector<std::filesystem::path> search{owner};
             for (const auto &root : roots) if (root != owner) search.push_back(root);
-            std::filesystem::path shader;
-            for (const auto &root : search)
-            {
-                const auto candidate = std::filesystem::weakly_canonical(root / shaderRelative);
-                if (Within(candidate, root) && std::filesystem::is_regular_file(candidate)) { shader = candidate; break; }
-            }
-            if (shader.empty()) throw std::runtime_error("material shader is missing under approved roots");
             const auto catalogPath = mReadDirectory / "surface_materials.json";
             const auto catalogSnapshot = SnapshotShaderFile(catalogPath, Utf8(catalogPath));
             const auto catalogText = ReadText(catalogPath);
@@ -402,65 +545,58 @@ namespace mir
             job.inputs.push_back(*catalogSnapshot);
             auto catalog = Json::parse(*catalogText);
             const auto asset = Utf8(path.lexically_relative(mManifest.workingDirectory));
-            const auto shaderIdentity = Utf8(shader.lexically_relative(mManifest.workingDirectory));
-            for (const auto &frontendValue : material.at("frontends"))
+            std::string type, shaderIdentity;
+            std::vector<std::string> shaders;
+            Json layers = Json::array(), parameters = Json::object(), frontends;
+            if (IsTerrainMaterialPath(asset))
+            {
+                std::string diagnostic;
+                const auto layered = ReadTerrainMaterial(*text, asset, nullptr, &diagnostic);
+                if (!layered) throw std::runtime_error(diagnostic);
+                shaderIdentity = asset;
+                frontends = Json::array({"terrain"});
+                parameters = {{"blendMode", TerrainLayerBlendModeValue(layered->blend)},
+                    {"heightContrast", layered->heightContrast}};
+                for (const auto &layer : layered->layers)
+                {
+                    const auto child = FindAsset(layer.material, search);
+                    const auto logical = Utf8(child.lexically_relative(mManifest.workingDirectory));
+                    parameters["layerOffset" + std::to_string(layers.size())] = 0;
+                    layers.push_back({{"name", layer.name}, {"asset", logical}});
+                }
+                type = ResolveLayerShaders(layers, catalog.at("materials"), mManifest, roots, shaders);
+            }
+            else
+            {
+                type = material.at("shader").at("type").get<std::string>();
+                const auto shader = FindAsset(material.at("shader").at("file").get<std::string>(), search);
+                shaderIdentity = Utf8(shader.lexically_relative(mManifest.workingDirectory));
+                shaders.push_back(Utf8(shader));
+                parameters = material.value("parameters", Json::object());
+                frontends = material.at("frontends");
+            }
+            for (const auto &frontendValue : frontends)
             {
                 const auto frontend = frontendValue.get<std::string>();
-                const auto templateIt = std::find_if(mManifest.frontendTemplates.begin(), mManifest.frontendTemplates.end(),
-                    [&](const auto &candidate) { return candidate.frontend == frontend; });
-                if (templateIt == mManifest.frontendTemplates.end()) throw std::runtime_error("no registered frontend template for " + frontend);
                 auto stem = MaterialShaderStem(nameSpace, type, shaderIdentity, frontend);
                 for (const auto &existing : catalog.at("materials"))
-                    if (existing.value("type", "") == type && existing.value("frontend", "") == frontend &&
-                        Resolve(existing.at("shader").get<std::string>(), mManifest.workingDirectory) == shader)
-                    { stem = existing.at("stem").get<std::string>(); break; }
-                const auto replace = [&](std::string argument)
-                    {
-                        const std::pair<std::string, std::string> tokens[]{
-                            {"{materialSource}", Utf8(shader)}, {"{type}", type}, {"{stem}", stem}};
-                        for (const auto &[token, value] : tokens)
-                            for (auto position = argument.find(token); position != std::string::npos; position = argument.find(token))
-                                argument.replace(position, token.size(), value);
-                        if (argument.find('{') != std::string::npos) throw std::runtime_error("unknown frontend placeholder");
-                        return argument;
-                    };
-                const std::array<const std::vector<std::string> *, 7> stages{
-                    &templateIt->vertex, &templateIt->fragment, &templateIt->raytracing,
-                    &templateIt->layout, &templateIt->surfaceFragment, &templateIt->giRaytracing, &templateIt->probeRaytracing};
-                const std::array<std::string, 7> entries{"vertexMain", "fragmentMain", "closestHitSurface", "layout", "fragmentMain", "closestHitSurface", "closestHitSurface"};
-                const std::array<std::string, 7> kinds{"vertex", "fragment", "closesthit", "compute", "fragment", "closesthit", "closesthit"};
-                for (size_t stage = 0; stage < stages.size(); ++stage)
                 {
-                    if (stages[stage]->empty()) continue;
-                    ShaderManifestOutput output;
-                    output.type = "surface";
-                    output.frontend = frontend;
-                    output.output = stem + (stage == 4 ? ".surface." : stage == 5 ? ".gi." : stage == 6 ? ".probe." : ".") + entries[stage] + ".spv";
-                    output.reflection = output.output + ".reflection.json";
-                    output.depfile = output.output + ".d";
-                    output.stage = kinds[stage];
-                    output.entry = stage == 3 ? "layoutMain" : entries[stage];
-                    output.specialize = stage == 0 ? "" : type;
-                    output.sources = {Utf8(shader)};
-                    output.arguments = {Utf8(mManifest.slangc)};
-                    output.arguments.insert(output.arguments.end(), mManifest.commonArguments.begin(), mManifest.commonArguments.end());
-                    bool materialSource = false;
-                    for (const auto &argument : *stages[stage])
+                    if (existing.value("frontend", "") != frontend) continue;
+                    const bool sameShader = existing.value("type", "") == type &&
+                        Resolve(existing.at("shader").get<std::string>(), mManifest.workingDirectory) ==
+                            Resolve(shaderIdentity, mManifest.workingDirectory);
+                    // A live layered pipeline retains its stem when the editor changes its child types.
+                    if (sameShader || (!layers.empty() && existing.value("asset", "") == asset))
                     {
-                        materialSource |= argument == "{materialSource}";
-                        auto expanded = replace(argument);
-                        if (expanded.ends_with(".slang")) output.sources.push_back(Utf8(Resolve(expanded, mManifest.workingDirectory)));
-                        output.arguments.push_back(std::move(expanded));
+                        stem = existing.at("stem").get<std::string>();
+                        break;
                     }
-                    if (!materialSource) throw std::runtime_error("frontend template omits material source");
-                    const std::vector<std::string> tail{"-reflection-json", output.reflection, "-depfile", output.depfile, "-o", output.output};
-                    output.arguments.insert(output.arguments.end(), tail.begin(), tail.end());
-                    if (std::none_of(job.outputs.begin(), job.outputs.end(), [&](const auto &existing) { return existing.output == output.output; }))
-                        job.outputs.push_back(std::move(output));
                 }
+                AppendMaterialOutputs(mManifest, frontend, stem, type, shaders, !layers.empty(), job.outputs);
                 Json entry{{"stem", stem}, {"type", type}, {"frontend", frontend}, {"asset", asset},
-                    {"shader", shaderIdentity}, {"parameters", material.value("parameters", Json::object())},
+                    {"shader", shaderIdentity}, {"parameters", parameters},
                     {"reflection", stem + ".layout.spv.reflection.json"}};
+                if (!layers.empty()) entry["layers"] = layers;
                 auto &materials = catalog.at("materials");
                 auto existing = std::find_if(materials.begin(), materials.end(), [&](const auto &candidate)
                     { return candidate.value("asset", "") == asset && candidate.value("frontend", "") == frontend; });
@@ -471,9 +607,26 @@ namespace mir
             materials.erase(std::remove_if(materials.begin(), materials.end(), [&](const auto &entry)
                 {
                     return entry.value("asset", "") == asset &&
-                        std::find(material.at("frontends").begin(), material.at("frontends").end(), entry.at("frontend")) ==
-                            material.at("frontends").end();
+                        std::find(frontends.begin(), frontends.end(), entry.at("frontend")) == frontends.end();
                 }), materials.end());
+            // The published catalog is the dependency graph, including parents in other games of an engine material.
+            for (auto &parent : materials)
+            {
+                const auto childLayers = parent.find("layers");
+                if (childLayers == parent.end() || !std::any_of(childLayers->begin(), childLayers->end(),
+                    [&](const auto &layer) { return layer.at("asset") == asset; })) continue;
+                auto updated = *childLayers;
+                std::vector<std::filesystem::path> manifestRoots;
+                for (const auto &root : mManifest.assetRoots)
+                    manifestRoots.push_back(Resolve(Utf8(root.root), mManifest.workingDirectory));
+                std::vector<std::string> parentShaders;
+                const auto parentType = ResolveLayerShaders(updated, materials, mManifest, manifestRoots, parentShaders);
+                if (updated == *childLayers) continue;
+                parent["layers"] = std::move(updated);
+                parent["type"] = parentType;
+                AppendMaterialOutputs(mManifest, "terrain", parent.at("stem").get<std::string>(),
+                    parentType, parentShaders, true, job.outputs);
+            }
             job.catalogText = catalog.dump(2);
             return true;
         }

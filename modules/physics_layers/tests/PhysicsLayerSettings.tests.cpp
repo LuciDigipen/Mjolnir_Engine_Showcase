@@ -9,9 +9,11 @@
 #include <physics_layers/PhysicsLayerSettings.h>
 
 #include <core/log/SetupError.h>
+#include <core/platform/Process.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -21,9 +23,16 @@ namespace
 {
     struct SettingsFile
     {
-        std::filesystem::path path = std::filesystem::temp_directory_path() / "mir_physics_layers_settings.json";
+        std::filesystem::path path;
 
-        SettingsFile() { std::filesystem::remove(path); }
+        SettingsFile()
+        {
+            static std::atomic<int> counter{ 0 };
+            path = std::filesystem::temp_directory_path() /
+                ("mir_physics_layers_settings_" + std::to_string(mir::CurrentProcessId()) + "_" +
+                    std::to_string(counter.fetch_add(1)) + ".json");
+            std::filesystem::remove(path);
+        }
         ~SettingsFile() { std::filesystem::remove(path); }
 
         void Write(const std::string &text) const

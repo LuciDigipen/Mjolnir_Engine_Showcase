@@ -37,17 +37,17 @@ namespace
 TEST_CASE("The shared raster budget counts legacy and table descriptors", "[renderer][material]")
 {
     const DescriptorUsage usage = SharedRasterDescriptorUsage();
-    CHECK(usage.mBoundSets == 5);
+    CHECK(usage.mBoundSets == 6);
     CHECK(usage.mPerStageSamplers == 261);
     CHECK(usage.mPerStageSampledImages == 1029);
-    CHECK(usage.mPerStageUniformBuffers == 2);
-    CHECK(usage.mPerStageStorageBuffers == 4);
+    CHECK(usage.mPerStageUniformBuffers == 1);
+    CHECK(usage.mPerStageStorageBuffers == 5);
     CHECK(usage.mPerStageResources == 1036);
     CHECK(usage.mLayoutSamplers == 261);
     CHECK(usage.mLayoutSampledImages == 1029);
-    CHECK(usage.mLayoutUniformBuffers == 2);
-    CHECK(usage.mLayoutDynamicUniformBuffers == 2);
-    CHECK(usage.mLayoutStorageBuffers == 4);
+    CHECK(usage.mLayoutUniformBuffers == 1);
+    CHECK(usage.mLayoutDynamicUniformBuffers == 1);
+    CHECK(usage.mLayoutStorageBuffers == 5);
 
     const DescriptorLimits exact = LimitsFor(usage);
     CHECK(DescriptorLayoutFits(exact, usage));

@@ -8,8 +8,12 @@
  */
 #pragma once
 
+#include "TerrainMaterial.h"
+
+#include <terrain/TerrainEditLayer.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
+#include <terrain/TerrainRecipeMaterials.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -31,7 +35,7 @@ namespace mir::terrainbake
     // Bump when anything changes the samples.
     inline constexpr uint32_t kHeightmapGeneratorVersion = 1;
     // float32 still resolves ~1 mm here.
-    inline constexpr double kMaxHeightMagnitude = 10000.0;
+    inline constexpr double kMaxHeightMagnitude = mir::kMaxTerrainHeightMagnitude;
 
     class TerrainHeightSource;
 
@@ -84,9 +88,19 @@ namespace mir::terrainbake
         // "mir.heightmap" only. The hash, not the path, identifies the samples, so only it is fingerprinted.
         std::string heightmapPath;    // as written; relative to the recipe's directory
         uint64_t heightmapHash = 0;   // FNV-1a 64 of the whole file
+        // Material layers; one named "base" when the recipe has no materials section.
+        std::vector<TerrainMaterialLayer> materials;
+        // True when the JSON had a materials section; the implicit base layer publishes no weights.
+        bool hasMaterialsSection = false;
         std::filesystem::path recipeDir; // set by LoadTerrainRecipe
         // Loaded only when a bake runs, so a current release needs no source file.
         std::shared_ptr<const TerrainHeightSource> heightSource;
+        // The stack beside the recipe; null for a recipe parsed from text.
+        std::shared_ptr<const std::vector<TerrainEditLayer>> editStack;
+        // TerrainEditStackHash of the enabled layers; 0 when none of them stores a tile.
+        uint64_t editStackHash = 0;
+        // TerrainEditWeightStackHash of the enabled layers; 0 when none stores a weight channel.
+        uint64_t editWeightStackHash = 0;
 
         bool IsHeightmap() const { return generatorId == kHeightmapGeneratorId; }
         std::optional<double> SourceSpacing(TileCoord tile) const;
@@ -115,4 +129,6 @@ namespace mir::terrainbake
     // Sorted "key=value" lines; doubles as bit patterns, so JSON spelling does not matter.
     std::string CanonicalRecipeText(const TerrainRecipe &recipe);
     TerrainSourceFingerprint FingerprintRecipe(const TerrainRecipe &recipe);
+    // The recipe check's line: the fingerprint, then the edit stack when an enabled layer stores a tile.
+    std::string DescribeRecipeFingerprint(const TerrainRecipe &recipe, TerrainSourceFingerprint fingerprint);
 }

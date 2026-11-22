@@ -7,6 +7,8 @@
 
 # Published terrain releases: TerrainTool sync writes them on every build
 /games/*/terrain/releases/
+# The Terrain panel's Bake writes its candidate and report here
+/games/*/terrain/editor-bake/
 *.tpack
 *.tindex
 

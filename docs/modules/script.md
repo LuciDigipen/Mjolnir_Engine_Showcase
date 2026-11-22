@@ -82,6 +82,7 @@ return Spin
 | `ScriptResolveSystem`, `MakeScriptAssetLoader`, `ReleaseScriptInstance` | `script/ScriptResolveSystem.h` | Gives every `ScriptRef` its instance; loads a script from the cooked assets; drops an instance |
 | `ScriptModule` | `script/ScriptModule.h` | The host, the watcher, both systems, the hook and the stage functions |
 | `AddBindings`, `LuaBindings` | `script/BindingApi.h` | How a bridge adds its bindings; behind the `script_bindings` target, the only header with sol2 in it |
+| `CallScriptCallback`, `LuaState` | `script/BindingApi.h` | Calls a callback a bridge defines, such as `gameui_script`'s `OnUI`, isolated and counted like `OnUpdate`; the host's Lua state, for the values a bridge passes it |
 | `ScriptReloadWatcher` | `script/ScriptReloadWatcher.h` | Polls a tracked script's cooked file and reloads on change |
 | `RegisterScriptComponents` | `script/ComponentRegistration.h` | Registers `ScriptRef`, mirroring `core` and `renderer` |
 
@@ -92,6 +93,12 @@ physics, flight, audio, terrain and post-processing bindings live in the
 bridges, and each extends that same `World` usertype rather than adding one of
 its own. The host binds `Entity` and `World` when it builds its state, so every
 bridge's bindings run after them.
+
+`world:pause()`, `world:resume()`, `world:restart()` and `world:quit()` push
+the pause menu's requests, for a game that draws its own: `restart` is Stop then
+Play, and `quit` stops Play in the editor and closes a game build. Each returns
+`true` when queued, and outside Play does nothing and returns `false`.
+`world:is_paused()` says whether Play is paused.
 
 `world:load_scene("sceneId")` queues a swap of the running Play scene to a
 scene registered in `game.json`. It returns `true` when the request is queued.
@@ -268,6 +275,40 @@ Missing heights never become zero; a real zero remains a number. Tile and
 layer fields retain C++ defaults on failures and are meaningful with the
 corresponding status. There is no sample/cell field in `TerrainHeightResult`.
 
+### Terrain layer weight query
+
+`world:terrain_layer_weights_at({x=..., y=..., z=...})` queries the resident
+`TerrainWorld` for the material layer weights of the ground at a world
+position. Its arguments follow `terrain_height_at`: all three coordinates must
+be Lua numbers, finite and fit `WorldReal`. Missing fields, wrong types,
+missing or extra arguments log an error and return `failed` / `InvalidInput`,
+even without terrain. The binding performs no file IO: the first call at a
+point returns `loading` while the streamer reads that tile's weight payload,
+and later calls answer from the resident payload. Overlay heights do not
+change the weights; answers come from the loaded release.
+
+```lua
+local ground = world:terrain_layer_weights_at({x=150000.500123, y=10, z=-150000.250321})
+if ground.status == 'ready' then
+    for _, layer in ipairs(ground.layers) do
+        print(layer.name, layer.weight)
+    end
+end
+```
+
+| Result field | Meaning |
+|---|---|
+| `status` | `ready`, `loading`, `outside_map`, `no_weights`, or `failed` |
+| `failure` | `None`, `WrongRelease`, `InvalidInput`, or `LoadFailed` |
+| `layers` | Array of `{name, weight}` with nonzero weight, heaviest first, then by name; weights sum to one |
+| `releaseId` | Lowercase 16-digit hexadecimal release id |
+| `release` | Full identity: hexadecimal `assetId`, `sourceFingerprint`, `releaseId`, numeric `formatVersion` |
+| `tile` | `{x,z}` signed tile containing the point, exactly as returned by C++ |
+
+`outside_map` means no instance contains the point. `no_weights` means the
+release has no weight record for that tile, or no weights at all, and it never
+queues a read.
+
 Each call looks up the World resource again; it caches no release and performs
 no IO. A loading state enqueues the C++ query's deduplicated payload request,
 which the terrain `TerrainStreamer` reads on a worker after its next per-frame
@@ -438,6 +479,13 @@ made the `ScriptRef`.
    flavour underneath.
 
 ## Changed
+
+*2026-11-20* — **Bridges can call callbacks of their own, and scripts control
+the session.** Was: a script got `OnStart`, `OnUpdate`, `OnFixedUpdate` and
+`OnStop` only, and could not pause or quit. Now: `CallScriptCallback` and
+`LuaState` in `BindingApi.h`, which `gameui_script` uses for `OnUI`, and
+`world:pause/resume/restart/quit/is_paused`. Because: a game draws its own UI
+and pause menu from Lua. `IScriptHost` is unchanged.
 
 *2026-10-27* — **Exposure, focus distance, aperture and shutter strength
 left the post-processing bindings (#231).** Was: `set_hdr`/`get_hdr` carried

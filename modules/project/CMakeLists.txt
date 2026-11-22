@@ -1,4 +1,4 @@
-engine_add_module(project)
+engine_add_module(project PCH_HEADERS nlohmann/json.hpp)
 
 target_sources(engine_project PRIVATE
     src/project/GameProject.cpp

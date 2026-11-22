@@ -53,6 +53,12 @@ namespace mir
         }
     }
 
+    std::string GenericPathUtf8(const std::filesystem::path &path)
+    {
+        const auto text = path.generic_u8string();
+        return {reinterpret_cast<const char *>(text.data()), text.size()};
+    }
+
     const std::filesystem::path &ExecutablePath()
     {
         static const std::filesystem::path path = QueryExecutablePath();

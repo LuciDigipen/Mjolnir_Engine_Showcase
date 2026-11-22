@@ -41,6 +41,28 @@
       "blend": 4.0
     }
   },
+  "materials": {
+    "layers": [
+      {
+        "name": "sand"
+      },
+      {
+        "name": "dark_sand",
+        "rules": {
+          "slope": {
+            "min": 20.0,
+            "max": 90.0,
+            "blend": 4.0
+          },
+          "noise": {
+            "wavelength": 96.0,
+            "octaves": 2,
+            "strength": 0.35
+          }
+        }
+      }
+    ]
+  },
   "precision": {
     "defaultSpacing": null,
     "tiles": [

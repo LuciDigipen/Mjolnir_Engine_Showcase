@@ -37,8 +37,9 @@ Everything a module registers comes back as a `Registration`, a move-only token
 that undoes the registration when it dies. Component hooks, stage functions,
 frame-slot functions, ImGui drawers and Lua bindings all work this way.
 
-A *stage* is a transition `App` runs: `SceneEnd`, `SceneUnload`, `SceneLoad`, `SceneSaved`,
-`PlayBegin`, `PlayEnd`, `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. `RunStage` calls the
+A *stage* is a transition `App` runs: `SceneEnd`, `SceneUnload`, `SceneUnloaded`, `SceneLoad`,
+`SceneSaved`, `PlayBegin`, `PlayEnd`, `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. `App` runs
+`SceneUnloaded` right after each `SceneUnload`, once every holder has let go. `RunStage` calls the
 stage's functions in registration order, then flushes the command buffer. A
 *frame slot* is host work once per rendered frame, outside the phases; today the
 only one is `FrameBegin`. The scheduler holds both lists next to its phases.

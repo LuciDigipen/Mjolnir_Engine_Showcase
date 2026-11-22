@@ -1,8 +1,10 @@
-engine_add_module(app)
+engine_add_module(app PCH_HEADERS glm/glm.hpp nlohmann/json.hpp)
 
 # PUBLIC: App.h holds every module as a member
 target_link_libraries(engine_app
-    PUBLIC mir::animation
+    PUBLIC mir::actions
+           mir::actions_script
+           mir::animation
            mir::jobs
            mir::assets
            mir::camera
@@ -13,6 +15,7 @@ target_link_libraries(engine_app
            mir::gameshell
            mir::gameui
            mir::gameui_imgui
+           mir::gameui_script
            mir::imguiruntime
            mir::input
            mir::input_script
@@ -56,7 +59,7 @@ target_compile_definitions(engine_app PUBLIC MIR_WITH_EDITOR=$<BOOL:${MJOLNIR_WI
 
 # the editor, and the asset import queue that only its panel drives
 if(MJOLNIR_WITH_EDITOR)
-    target_link_libraries(engine_app PUBLIC mir::editor)
+    target_link_libraries(engine_app PUBLIC mir::editor mir::terrain_editor)
 endif()
 
 # App.h exposes audio members only when audio is built.

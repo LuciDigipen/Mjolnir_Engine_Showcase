@@ -449,6 +449,7 @@ TEST_CASE("Submission carries the linear part and draw data through", "[renderer
     item.pose.linear = glm::mat3(glm::vec3(2.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.5f));
     item.normalMatrix = glm::mat3(glm::vec3(0.5f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 2.0f));
     item.tint = glm::vec4(0.1f, 0.2f, 0.3f, 0.4f);
+    item.terrain = { 5u, 3u, 0x00010203u, 0x3f800000u };
     const glm::vec4 deformation[2]{};
     item.deformation = deformation;
 
@@ -459,6 +460,7 @@ TEST_CASE("Submission carries the linear part and draw data through", "[renderer
     CHECK(view[0].model[3] == glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     CHECK(view[0].normalMatrix == item.normalMatrix);
     CHECK(view[0].tint == item.tint);
+    CHECK(view[0].terrain == item.terrain);
     CHECK(view[0].deformation.data() == deformation);
     CHECK(view[0].deformation.size() == 2);
 }

@@ -513,3 +513,23 @@ TEST_CASE("Invalid scene catalogs fail before packaging", "[game-build]")
         CHECK_FALSE(fs::exists(fixture.mOut));
     }
 }
+
+TEST_CASE("game.json's shell section turns the engine's HUD and pause menu off, and a wrong type is refused", "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Demo";
+    const GameProject defaults = LoadGameProject(game);
+    CHECK(defaults.mShellHud);
+    CHECK(defaults.mShellMenu);
+
+    Touch(game / "game.json", R"({ "shell": { "menu": false } })");
+    const GameProject menuOff = LoadGameProject(game);
+    CHECK(menuOff.mShellHud);
+    CHECK_FALSE(menuOff.mShellMenu);
+
+    for (const std::string_view manifest : { R"({ "shell": { "hud": "no" } })", R"({ "shell": true })" })
+    {
+        Touch(game / "game.json", std::string(manifest));
+        CHECK_THROWS_AS(LoadGameProject(game), SetupError);
+    }
+}
