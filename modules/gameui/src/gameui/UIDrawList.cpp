@@ -95,7 +95,7 @@ namespace mir
         }
     }
 
-    void UIDrawList::Text(float x, float y, std::string_view text, UIColor color, float fontSize)
+    void UIDrawList::Text(float x, float y, std::string_view text, UIColor color, float fontSize, UIFont font)
     {
 
         const UIRect clip = CurrentClip();
@@ -110,6 +110,7 @@ namespace mir
                                           .mClip = clip,
                                           .mColor = Faded(color),
                                           .mFontSize = fontSize,
+                                          .mFont = font,
                                           .mTextOffset = offset,
                                           .mTextLength = static_cast<uint32_t>(text.size())});
     }

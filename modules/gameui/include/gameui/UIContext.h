@@ -3,7 +3,7 @@
  * @author Quy Dong Ta
  * @brief The game UI's frame: the area it draws into, the input it reads, the
  *        widgets' hot and active state, the draw list that is submitted
- *        when the frame ends, and the textures it draws.
+ *        when the frame ends, and the textures and fonts it draws.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -12,6 +12,7 @@
 
 #include "UIBackend.h"
 #include "UIDrawList.h"
+#include "UIFonts.h"
 #include "UIId.h"
 #include "UILayout.h"
 #include "UINavInput.h"
@@ -121,9 +122,11 @@ namespace mir
         //only between BeginFrame and EndFrame
         UIPrompt Prompt(std::string_view action) const;
 
-        //in UI units at the style's font size, measured by the backend's font at this frame's scale; an estimate
+        //in UI units in the style's font and size, measured by the backend at this frame's scale; an estimate
         //without a backend
         UISize MeasureText(std::string_view text) const;
+        // in @p font at @p fontSize UI units, 0 the backend's own size
+        UISize MeasureText(std::string_view text, UIFont font, float fontSize) const;
         float TextWidth(std::string_view text) const { return MeasureText(text).width; }
 
         UIStyle &Style() { return mStyle; }
@@ -132,16 +135,21 @@ namespace mir
         UITextures &Textures() { return mTextures; }
         const UITextures &Textures() const { return mTextures; }
 
+        UIFonts &Fonts() { return mFonts; }
+        const UIFonts &Fonts() const { return mFonts; }
+
         // what EndFrame submits to; without one a frame runs and draws nothing.
-        // Null before the backend goes; the textures it made stay
+        // Null before the backend goes; the textures and fonts it made stay
         void SetBackend(IUIBackend *backend)
         {
             mBackend = backend;
             mTextures.SetBackend(backend);
+            mFonts.SetBackend(backend);
         }
 
     private:
         UITextures mTextures;
+        UIFonts mFonts;
         IUIBackend *mBackend = nullptr;
         UIDrawList mDrawList;
         UIState mState;

@@ -1,8 +1,8 @@
 /**
  * @file UITypes.h
  * @author Quy Dong Ta
- * @brief Value types shared by the game UI: a rect, a color, a sprite and a
- *        style.
+ * @brief Value types shared by the game UI: a rect, a color, a sprite, a font
+ *        and a style.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -70,6 +70,22 @@ namespace mir
         constexpr bool operator==(const UITexture &) const = default;
     };
 
+    // a font held by UIFonts, 0 is the backend's default font
+    struct UIFont
+    {
+        uint32_t mId = 0;
+
+        constexpr bool IsValid() const { return mId != 0; }
+        constexpr bool operator==(const UIFont &) const = default;
+    };
+
+    enum class UITextAlign : uint8_t
+    {
+        Left,
+        Center,
+        Right,
+    };
+
     struct UIEdges
     {
         float mLeft = 0.0f;
@@ -112,6 +128,17 @@ namespace mir
 
 
         float mTextHeight = 16.0f;
+
+        UIFont mFont;
+        // where a widget's text sits across it, inside the padding
+        UITextAlign mTextAlign = UITextAlign::Left;
+
+        // drawn under the text while their alpha is above 0, and faded with it
+        UIColor mTextShadowColor{0.0f, 0.0f, 0.0f, 0.0f};
+        float mTextShadowX = 1.0f;
+        float mTextShadowY = 1.0f;
+        UIColor mTextOutlineColor{0.0f, 0.0f, 0.0f, 0.0f};
+        float mTextOutlineWidth = 1.0f;
 
         UIColor mWidgetColor{0.25f, 0.25f, 0.25f, 0.9f};
         UIColor mWidgetHoveredColor{0.35f, 0.35f, 0.35f, 0.9f};

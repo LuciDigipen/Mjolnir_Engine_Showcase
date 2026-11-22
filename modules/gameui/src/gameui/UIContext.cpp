@@ -3,7 +3,7 @@
  * @author Quy Dong Ta
  * @brief The game UI's frame: the area it draws into, the input it reads, the
  *        widgets' hot and active state, the draw list that is submitted
- *        when the frame ends, and the textures it draws.
+ *        when the frame ends, and the textures and fonts it draws.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -65,7 +65,7 @@ namespace mir
                    mDrawList.OpacityDepth());
 
         if (mInFrame && !mArea.IsEmpty() && mBackend != nullptr)
-            mBackend->Submit(mArea, mScale, mDrawList, mTextures);
+            mBackend->Submit(mArea, mScale, mDrawList, mTextures, mFonts);
 
         if (mInFrame)
         {
@@ -129,15 +129,22 @@ namespace mir
 
     UISize UIContext::MeasureText(std::string_view text) const
     {
+        return MeasureText(text, mStyle.mFont, mStyle.mFontSize);
+    }
+
+    UISize UIContext::MeasureText(std::string_view text, UIFont font, float fontSize) const
+    {
         if (mBackend == nullptr)
-            return EstimateTextSize(text, mStyle.mFontSize > 0.0f ? mStyle.mFontSize : mStyle.mTextHeight);
+            return EstimateTextSize(text, fontSize > 0.0f ? fontSize : mStyle.mTextHeight);
+
+        void *backendFont = mFonts.Find(font);
 
         // the backend's own size is not scaled when drawn, so it is already in UI units
-        if (mStyle.mFontSize <= 0.0f)
-            return mBackend->MeasureText(text, 0.0f);
+        if (fontSize <= 0.0f)
+            return mBackend->MeasureText(text, 0.0f, backendFont);
 
         // measured at the size it is drawn, since a font's widths do not scale exactly
-        const UISize pixels = mBackend->MeasureText(text, mStyle.mFontSize * mScale);
+        const UISize pixels = mBackend->MeasureText(text, fontSize * mScale, backendFont);
         return UISize{pixels.width / mScale, pixels.height / mScale};
     }
 } // namespace mir
