@@ -18,6 +18,7 @@ namespace mir
     class AssetResolver;
     class RendererModule;
     class TerrainRuntime;
+    class TerrainRuntimeCache;
     class JobExecutor;
     struct GameProject;
 
@@ -25,13 +26,17 @@ namespace mir
     {
     public:
         TerrainRuntimeModule(ModuleContext context, RendererModule &renderer, const GameProject &project, const AssetResolver &resolver,
-                             JobExecutor &jobs, bool updateInPlay = true);
+                             JobExecutor &jobs, bool updateInPlay = true,
+                             std::shared_ptr<TerrainRuntimeCache> cache = {});
         ~TerrainRuntimeModule();
 
         TerrainRuntimeModule(const TerrainRuntimeModule &) = delete;
         TerrainRuntimeModule &operator=(const TerrainRuntimeModule &) = delete;
 
         TerrainRuntime &Runtime() { return *mRuntime; }
+
+        // The payload and GPU mesh cache both Worlds share; null when the project streams no terrain.
+        std::shared_ptr<TerrainRuntimeCache> Cache() const;
 
     private:
         std::unique_ptr<TerrainRuntime> mRuntime;

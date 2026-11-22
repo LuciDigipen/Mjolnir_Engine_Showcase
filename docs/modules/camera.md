@@ -26,6 +26,11 @@ such as `AudioListenerSystem`.
   `stickLookRate` degrees per second from the right stick. Runs during Play,
   paused or not, so a frozen frame can be inspected.
 
+`offsetInTargetSpace` turns the offset with the target's rotation. With
+`offsetHeadingOnly` the offset follows only the target's yaw, so a rolling or
+pitching target does not swing the camera around it; it applies together with
+`offsetInTargetSpace`.
+
 `ToggleCameraMode` (F2, gamepad Back) flips every controller between the two.
 Setting `mode` from the Inspector or Lua works the same.
 

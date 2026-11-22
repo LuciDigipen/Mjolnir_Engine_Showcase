@@ -40,6 +40,17 @@ namespace mir
     // Each assert names its enum's last value; move it along when one is added.
     static_assert(std::size(kPhysicsMotionNames) == static_cast<std::size_t>(PhysicsMotion::Kinematic) + 1);
 
+    // How a moving body finds what it hits between two steps.
+    enum class PhysicsMotionQuality : int32_t
+    {
+        Discrete = 0,
+        LinearCast = 1,
+    };
+
+    // Index == underlying PhysicsMotionQuality value; for RigidBody's "motionQuality" inspector field.
+    inline constexpr std::string_view kPhysicsMotionQualityNames[] = { "Discrete", "LinearCast" };
+    static_assert(std::size(kPhysicsMotionQualityNames) == static_cast<std::size_t>(PhysicsMotionQuality::LinearCast) + 1);
+
     enum class PhysicsShape : int32_t
     {
         Box = 0,

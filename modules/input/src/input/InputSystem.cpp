@@ -33,6 +33,12 @@ namespace mir
             float y = 0.0f;
         };
 
+        // GLFW triggers rest at -1; remapped so 0 is released and 1 is fully pressed.
+        bool IsTriggerAxis(GamepadAxis axis)
+        {
+            return axis == GamepadAxis::LeftTrigger || axis == GamepadAxis::RightTrigger;
+        }
+
         float ReadBinding(const InputBinding &binding, const RawInputSnapshot &raw, MouseDelta mouseDelta,
                            bool suppressKeyboard, bool suppressMouse)
         {
@@ -56,7 +62,9 @@ namespace mir
 
                     if (binding.useGamepadAxis)
                     {
-                        const float value = pad.Axis(binding.gamepadAxis);
+                        float value = pad.Axis(binding.gamepadAxis);
+                        if (IsTriggerAxis(binding.gamepadAxis))
+                            value = (value + 1.0f) * 0.5f;
                         return std::abs(value) < binding.deadzone ? 0.0f : value;
                     }
                     return pad.IsDown(binding.gamepadButton) ? 1.0f : 0.0f;
@@ -76,12 +84,14 @@ namespace mir
         }
 
         // scale only applies to a digital source composited into an axis
-        // (e.g. D:+1/A:-1) - an analog gamepad axis is already signed.
+        // (e.g. D:+1/A:-1); an analog stick is already signed. A remapped
+        // trigger is unsigned, so it scales like a digital source.
         float ReadAxisContribution(const InputBinding &binding, const RawInputSnapshot &raw, MouseDelta mouseDelta,
                                     bool suppressKeyboard, bool suppressMouse, const ControlsSettings &controls)
         {
             const float sourceValue = ReadBinding(binding, raw, mouseDelta, suppressKeyboard, suppressMouse);
-            const float value = binding.useGamepadAxis ? sourceValue : sourceValue * binding.scale;
+            const bool signedSource = binding.useGamepadAxis && !IsTriggerAxis(binding.gamepadAxis);
+            const float value = signedSource ? sourceValue : sourceValue * binding.scale;
             return Inverted(binding, controls) ? -value : value;
         }
 

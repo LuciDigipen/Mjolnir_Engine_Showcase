@@ -15,13 +15,17 @@
 #include <core/ecs/World.h>
 #include <renderer/RendererModule.h>
 
+#include <utility>
+
 namespace mir
 {
     TerrainRuntimeModule::TerrainRuntimeModule(ModuleContext context, RendererModule &renderer,
-        const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs, bool updateInPlay)
+        const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs, bool updateInPlay,
+        std::shared_ptr<TerrainRuntimeCache> cache)
         : mRuntime(std::make_unique<TerrainRuntime>())
     {
-        mRuntime->Bind(context.world, renderer.Renderer(), renderer.SurfaceMaterials(), project, resolver, jobs);
+        mRuntime->Bind(context.world, renderer.Renderer(), renderer.SurfaceMaterials(), project, resolver, jobs,
+                       std::move(cache));
 
         // before any system runs: every mode installs finished work, and Edit picks up scene edits
         mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this, updateInPlay](SystemContext &frame)
@@ -51,4 +55,9 @@ namespace mir
     }
 
     TerrainRuntimeModule::~TerrainRuntimeModule() = default;
+
+    std::shared_ptr<TerrainRuntimeCache> TerrainRuntimeModule::Cache() const
+    {
+        return mRuntime->Cache();
+    }
 }

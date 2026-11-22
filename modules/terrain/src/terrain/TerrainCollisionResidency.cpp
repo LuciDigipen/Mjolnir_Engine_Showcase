@@ -1581,6 +1581,14 @@ namespace mir
         impl.stagedStatus.clear();
     }
 
+    void TerrainCollisionResidency::ReleaseInterest(TerrainStreamer &streamer)
+    {
+        if (!mImpl->interest)
+            return;
+        streamer.RemoveInterest(*mImpl->interest);
+        mImpl->interest.reset();
+    }
+
     double TerrainCollisionResidency::PredictionSeconds() const
     {
         return mImpl->Prediction();

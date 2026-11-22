@@ -553,7 +553,6 @@ TEST_CASE("Unloading retires every resident mesh to the renderer before it forge
     h.residency.Install();
     REQUIRE(h.residency.Ready(tile));
 
-    // what TerrainRuntime does on a scene unload
     h.residency.RetireAll();
     h.residency.Forget();
     CHECK(h.residency.State(tile) == TerrainMeshState::Absent);

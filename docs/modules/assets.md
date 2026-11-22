@@ -49,7 +49,7 @@ if (AssetCache *cache = app.Assets())
 | `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate. `ReloadEpoch` counts committed reloads |
 | `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `FailureReason`, `DrainCompletions`, `CancelAll`, `Idle` |
 | `AssetDecoder`, `AssetDependencies` | `assets/AssetDecoder.h` | A decode function with the type tags of the dependencies it reads, and the lookup it gets over the blobs already read |
-| `AssetResolver` | `assets/AssetResolver.h` | `Resolve` turns a path inside the game's assets folder into an `AssetId` through the manifest, `ResolveFull` does the same for an engine asset's full path, `PathOf` gives the path for a message |
+| `AssetResolver` | `assets/AssetResolver.h` | `Resolve` turns a path inside the game's assets folder into an `AssetId` through the manifest, `ResolveCandidate` through the manifest of the reload being prepared, `ResolveFull` does the same for an engine asset's full path, `PathOf` gives the path for a message |
 | `AssetSettings` | `assets/AssetSettings.h` | The `assets` section of `project_settings.json`, `loadThreads` |
 | `TextureAsset`, `TextureMip`, `SurfaceMaterialAsset` | `assets/ModelAsset.h` | Typed texture v2 (format, color space, level 0 and higher mip descriptors) and the generic `.material.json` surface material, distinct from the glTF `MaterialAsset` |
 | `ResolveAssetIdRoot` | `assets/AssetIdRoot.h` | Fills a `GameProject`'s asset id root; fails setup on an unusable `assetsRoot` |

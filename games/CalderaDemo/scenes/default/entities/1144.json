@@ -6,15 +6,15 @@
       "type": "Transform",
       "fields": {
         "position": [
-          -539.0086729866339,
-          23.57240954417677,
-          534.362258202911
+          -377.815,
+          24.15,
+          370.209
         ],
         "rotation": [
           0,
-          -0.4067286903285611,
+          0.92387953,
           0,
-          0.9135489983923213
+          0.38268343
         ],
         "scale": [
           1,
@@ -30,21 +30,35 @@
     {
       "type": "Name",
       "fields": {
-        "name": "Cirrus SF50 - Arrivee Stellar"
+        "name": "Aircraft"
       }
     },
     {
-      "type": "ModelPlayer",
+      "type": "RigidBody",
       "fields": {
-        "modelName": "models/sf50/sf50.glb",
-        "modelAsset": "",
-        "animationAsset": "",
-        "scene": -1,
-        "clip": 0,
-        "time": 4.625,
-        "playing": false,
-        "loop": false,
-        "speed": 1.0
+        "motion": 1,
+        "shape": 0,
+        "halfExtent": [
+          0.7,
+          0.8,
+          4.2
+        ],
+        "mass": 1100,
+        "interpolate": true
+      }
+    },
+    {
+      "type": "Aircraft",
+      "fields": {
+        "config": "aircraft/powered.aircraft.json",
+        "tier": 1,
+        "playerInput": true
+      }
+    },
+    {
+      "type": "ScriptRef",
+      "fields": {
+        "scriptName": "flight_dev"
       }
     }
   ]

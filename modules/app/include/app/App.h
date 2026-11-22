@@ -31,6 +31,9 @@
 #include <core/ecs/FixedTimestep.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
+#include <flight/FlightModule.h>
+#include <flight_debug/FlightDebugModule.h>
+#include <flight_script/FlightScriptModule.h>
 #include <gameshell/GameShellModule.h>
 #include <gameui/GameUIModule.h>
 #include <gameui_script/GameUIScriptModule.h>
@@ -373,6 +376,7 @@ namespace mir
                 ParticlesGpuModule &particlesGpu, RenderSystem &rendering, GameUIModule &gameUI);
 
             PhysicsModule physics;
+            FlightModule flight;
             TerrainModule terrainData;
             ScriptModule script;
             // after script: stages run in registration order, so scripts' OnStop at PlayEnd still reads action values
@@ -385,6 +389,7 @@ namespace mir
         #endif
             InputScriptModule inputScript;
             PhysicsScriptModule physicsScript;
+            FlightScriptModule flightScript;
             RendererScriptModule rendererScript;
             TerrainScriptModule terrainScript;
             ActionsScriptModule actionsScript;
@@ -394,6 +399,7 @@ namespace mir
         SimulationSystems mSimulation;
         TerrainRuntimeModule mTerrain;
         GameUIImGuiModule mGameUIImGui;
+        FlightDebugModule mFlightDebug;
 
         struct RuntimeSession;
         std::unique_ptr<RuntimeSession> mRuntime;

@@ -143,8 +143,9 @@ namespace
         ControlledRelease release;
 
         explicit Fixture(TerrainResidencyMode mode, uint64_t releaseId = 0xC011,
-                         TerrainStreamingSettings::Collision collision = StreamingSettings(1).collision)
-            : settings(StreamingSettings(uint64_t(1) << 30, mode)),
+                         TerrainStreamingSettings::Collision collision = StreamingSettings(1).collision,
+                         uint64_t cpuBudget = uint64_t(1) << 30)
+            : settings(StreamingSettings(cpuBudget, mode)),
               info(Info(TerrainAsset("terrain/collision.terrain.json"), releaseId))
         {
             settings.collision = collision;
@@ -466,6 +467,31 @@ TEST_CASE("Pieces nobody needs retire after retainSeconds, and needed pieces sta
     const std::vector<TerrainCollisionEvent> events = f.residency->TakeEvents();
     CHECK(std::any_of(events.begin(), events.end(),
                       [](const TerrainCollisionEvent &e) { return e.kind == TerrainCollisionEvent::Kind::Retired; }));
+    CHECK(f.residency->Answer(0).status.state == State::Ready);
+}
+
+TEST_CASE("A collision residency releases its streamer interest when the runtime holding it unloads",
+          "[terrain][collision]")
+{
+    Fixture f(TerrainResidencyMode::Interest, 0xC012, StreamingSettings(1).collision, 1024);
+    f.Place({{0.0, 0.0, 0.0}});
+    const std::vector<TerrainCollisionSource> sources{Falling({100.0, 13.0, 100.0})};
+    f.Run(8, sources);
+    REQUIRE(f.residency->Answer(0).status.state == State::Ready);
+    const TerrainStreamingStats held = f.streamer->Stats();
+    REQUIRE(held.ready > 0);
+    REQUIRE(held.overBudgetBytes > 0);
+    CHECK(held.evicted == 0);
+
+    f.residency->ReleaseInterest(*f.streamer);
+    f.streamer->Update();
+    CHECK(f.streamer->Stats().ready == 0);
+    CHECK(f.streamer->Stats().evicted > held.evicted);
+
+    const uint64_t reads = f.streamer->Stats().readsStarted;
+    f.Run(4, sources);
+    CHECK(f.streamer->Stats().readsStarted > reads);
+    CHECK(f.streamer->Stats().ready > 0);
     CHECK(f.residency->Answer(0).status.state == State::Ready);
 }
 

@@ -414,7 +414,8 @@ for it, `Required` (collision, Eager) > `Query` > `Visible` > `Prefetch`, and
 the lowest rank within that demand.
 
 ```cpp
-TerrainStreamer &streamer = world.Resource<TerrainStreamer>();
+// app's TerrainRuntimeCache owns it, shared by the Edit and Play runtimes
+TerrainStreamer &streamer = cache.Streamer();
 const TerrainInterestId view = streamer.AddInterest();
 const TerrainPayloadKey key = TerrainPayloadKeyOf(info, *index.FindRegion({0, 3, 1}));
 streamer.SetInterest(view, std::vector<TerrainPayloadWant>{{key, TerrainDemand::Visible, distance}});
@@ -811,7 +812,7 @@ resource, with inputs a body cannot give: a flight floor, a planned range, its
 own tolerance. It reads their status back from the same resource.
 
 ```cpp
-TerrainCollisionResidency collision(settings.collision, workerPool, colliders);  // one per app
+TerrainCollisionResidency collision(settings.collision, workerPool, colliders);  // one per runtime
 collision.SetInstances(instances);             // at a safe point: the TerrainWorld's releases and placements
 // before every fixed step:
 collision.Install(now);                        // finished builds become colliders, unused pieces retire
@@ -1009,7 +1010,11 @@ its key is discarded too).
 **Play.** Play never polls or switches. `PlayScene` adopts a B that is already
 ready; otherwise Play enters on A without waiting, and `Suspend` lets B's staged
 release go (its late reads and builds are discarded, its verification result is
-kept) and posts no further checks until `StopScene`.
+kept) and posts no further checks until `StopScene`. What the suspended Edit
+runtime still holds, A and a B it staged, is only `Retained` in the streamer: it
+demands nothing, is not counted against Auto residency and is evicted under
+pressure, so only the releases Play uses are Required. Stop makes A Loaded and B
+Staged again.
 
 **Diagnostics.** Logs only; the engine writes nothing into the releases tree.
 App logs Play's pinned release per asset, a candidate started, verified (worker
@@ -1318,7 +1323,7 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainLayerWeightQuery` | `terrain/TerrainLayerWeightQuery.h` | resident material layer weights of one release; `WeightsAt` (terrain-local, or world plus placement), `Insert`, `MarkFailed`, `Evict`, `Residency`, `ResidentTile`, `TileError`, `PayloadRequests`, `TakePayloadRequests`, `TakeUsedTiles` |
 | `TerrainLayerWeightsResult`, `TerrainLayerWeight`, `TerrainLayerWeightPayloadRequest`, `TerrainLayerWeightsStatus`, `TerrainLayerWeightsFailure` | `terrain/TerrainLayerWeightQuery.h` | status, failure, sorted nonzero layers, release and tile out; one named layer weight; a missing weight payload for a loader; the query's statuses and failures |
 | `PreloadTerrainTiles`, `PreloadAllTerrainTiles` | `terrain/TerrainHeightQuery.h` | synchronous fill of a query from its own release handle, recording per-tile failures; tools and tests |
-| `TerrainStreamer` | `terrain/TerrainStreamer.h` | asynchronous payload reads and CPU residency: `Add` (residency mode; staged for a release switch), `Find`, `ModeOf`, `AddInterest`/`SetInterest`/`RemoveInterest`, `Update` (the per-frame install point), `WaitForEager`, `WaitForCompletion`, `Status`, `Heights`/`Lod`/`Normals`/`Region`, `RetryFailed`, `Stats`, `Usage` |
+| `TerrainStreamer` | `terrain/TerrainStreamer.h` | asynchronous payload reads and CPU residency: `Add` (residency mode; staged for a release switch), `SetUse` (`TerrainReleaseUse`: Retained, Staged or Loaded), `Find`, `ModeOf`, `AddInterest`/`SetInterest`/`RemoveInterest`, `Update` (the per-frame install point), `WaitForEager`, `WaitForCompletion`, `Status`, `Heights`/`Lod`/`Normals`/`Region`, `RetryFailed`, `Stats`, `Usage` |
 | `TerrainReleaseUsage` | `terrain/TerrainStreamer.h` | one release's share of a residency (waiting, in flight, ready, failed, bytes, first failure); `Usage(release)` on the streamer, the mesh residency and the collision residency |
 | `TerrainPayloadKey`, `TerrainPayloadWant`, `TerrainDemand`, `TerrainPayloadState`, `TerrainPayloadStatus`, `TerrainStreamingStats` | `terrain/TerrainStreamer.h` | the key (asset, release, kind, level, layer, tile or Region), a want with demand and rank, the states, budget and counters; `TerrainPayloadKeyOf`, `TerrainPayloadFootprint`, `DescribeTerrainPayloadKey` |
 | `TerrainExecutor`, `TerrainWorkerPool`, `TerrainManualExecutor` | `terrain/TerrainExecutor.h` | where background jobs run: a pool of `std::jthread`s, or a queue a test runs by hand |
@@ -1326,7 +1331,7 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainStreamingSettings`, `TerrainResidencyMode`, `ReadTerrainStreamingFiles`, `ParseTerrainStreamingSettings`, `LoadTerrainStreamingSettings`, `ValidateTerrainStreamingSettings` | `terrain/TerrainStreamingSettings.h` | the CPU budget, IO, retry, residency, per-viewport detail (`view`), GPU mesh (`gpu`) and collision piece (`collision`) settings with no code defaults; the game file plus the machine-local override, every problem by path and file; `kTerrainSeamMarginCells` |
 | `TerrainCollisionPolicy`, `ValidTerrainCollisionPolicy`, `TerrainUniformSamples`, `TerrainCollisionError` | `terrain/TerrainCollision.h` | P2's collision spacings and error (from the `collision` settings; a World resource overrides them); a uniform block with its deviation, slope and height bound; the error sum |
 | `BuildTerrainUniformSamples`, `TerrainSourceTileLookup`, `TerrainCollisionErrorBudget`, `TerrainCollisionCovers` | `terrain/TerrainCollision.h` | a uniform block over the whole map from a height query, or over any bounds from a source lookup (any thread); its error for a placement and decoded shape; whether the decoded shape covers it |
-| `TerrainCollisionResidency` | `terrain/TerrainCollisionResidency.h` | height field pieces collision sources need: `SetInstances` (active, and staged ones built ahead but never placed), `SetPolicy`, `Install` (finished builds placed, unused retired; between fixed steps), `Update` (needs, reads, builds, answers), `Answer`, `StagedStatus`, `ForEachCollider`, `Clear`, `PredictionSeconds`, `TakeEvents`, `Stats`, `Usage` |
+| `TerrainCollisionResidency` | `terrain/TerrainCollisionResidency.h` | height field pieces collision sources need: `SetInstances` (active, and staged ones built ahead but never placed), `SetPolicy`, `Install` (finished builds placed, unused retired; between fixed steps), `Update` (needs, reads, builds, answers), `Answer`, `StagedStatus`, `ForEachCollider`, `Clear`, `ReleaseInterest` (a streamer shared with another World drops this residency's demand), `PredictionSeconds`, `TakeEvents`, `Stats`, `Usage` |
 | `TerrainCollisionSource`, `TerrainCollisionSources`, `TerrainCollisionState`, `TerrainCollisionStatus`, `TerrainCollisionAnswer` | `terrain/TerrainCollisionResidency.h` | a source's position, velocity, radius, acceleration, tolerance, floor and range; the World resource for a game's sources and their status; Ready, CoarseSufficient, Pending, Failed with counts and contact error; the colliders a source may touch and whether it has one owner |
 | `TerrainColliderPhysics`, `TerrainColliderShape`, `TerrainBuiltCollider`, `TerrainColliderId`, `kTerrainColliderHole` | `terrain/TerrainCollisionResidency.h` | the physics side a caller implements (`Build` on any thread with one quantization range, `Place` and `Remove` between steps); an opaque shared shape with its measured errors, extent and bytes |
 | `TerrainCollisionOwners`, `TerrainCollisionPieceArea`, `TerrainCollisionEvent`, `TerrainCollisionPieceName`, `TerrainCollisionStats` | `terrain/TerrainCollisionResidency.h` | which pieces a footprint may touch; placed, retired and failed pieces with spacing, error, build time, latency and bytes; held, peak and budget bytes, builds and latencies |

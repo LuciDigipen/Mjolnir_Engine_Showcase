@@ -1,4 +1,13 @@
 {
+  "input": {
+    "actions": [
+      {
+        "name": "FlightDevAirStart",
+        "type": "Button",
+        "bindings": [ { "device": "Keyboard", "key": "F5" } ]
+      }
+    ]
+  },
   "postProcessing": {
     "effects": {
       "Anti-Aliasing": {

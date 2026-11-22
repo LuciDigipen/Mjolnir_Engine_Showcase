@@ -1,0 +1,51 @@
+{
+  "id": 1145,
+  "parent": 1144,
+  "components": [
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          0,
+          -0.65,
+          0.35
+        ],
+        "rotation": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {}
+    },
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Model"
+      }
+    },
+    {
+      "type": "ModelPlayer",
+      "fields": {
+        "modelName": "models/sf50/sf50.glb",
+        "modelAsset": "",
+        "animationAsset": "",
+        "scene": -1,
+        "clip": 0,
+        "time": 4.625,
+        "playing": false,
+        "loop": false,
+        "speed": 1
+      }
+    }
+  ]
+}

@@ -62,6 +62,13 @@ namespace mir
         return *mCandidate;
     }
 
+    const AssetManifest &AssetsModule::CandidateManifest() const
+    {
+        MIR_ASSERT(mCandidateManifest != nullptr,
+            "AssetsModule::CandidateManifest: only between BeginReload and Commit/AbortReload");
+        return *mCandidateManifest;
+    }
+
     void AssetsModule::CommitReload()
     {
         MIR_ASSERT(mCandidate.has_value(), "AssetsModule::CommitReload: no BeginReload");

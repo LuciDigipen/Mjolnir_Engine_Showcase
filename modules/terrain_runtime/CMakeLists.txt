@@ -6,6 +6,7 @@ target_sources(engine_terrain_runtime PRIVATE
     src/terrain_runtime/TerrainMaterialSlots.cpp
     src/terrain_runtime/TerrainRender.cpp
     src/terrain_runtime/TerrainRuntime.cpp
+    src/terrain_runtime/TerrainRuntimeCache.cpp
     src/terrain_runtime/TerrainRuntimeModule.cpp
     src/terrain_runtime/TerrainWeightResidency.cpp
 )

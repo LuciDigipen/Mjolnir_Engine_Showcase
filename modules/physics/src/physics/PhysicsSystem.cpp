@@ -60,6 +60,15 @@ namespace mir
             desc.mFriction = rigidBody.friction;
             desc.mRestitution = rigidBody.restitution;
             desc.mAllowSleeping = rigidBody.allowSleeping;
+            desc.mLinearDamping = rigidBody.linearDamping;
+            desc.mAngularDamping = rigidBody.angularDamping;
+            desc.mGyroscopicForce = rigidBody.gyroscopicForce;
+            desc.mMotionQuality = rigidBody.motionQuality;
+            desc.mCustomInertia = rigidBody.customInertia;
+            desc.mInertiaDiagonal = rigidBody.inertiaDiagonal;
+            desc.mInertiaProducts = rigidBody.inertiaProducts;
+            desc.mCustomCenterOfMass = rigidBody.customCenterOfMass;
+            desc.mCenterOfMassOffset = rigidBody.centerOfMassOffset;
             return desc;
         }
 
@@ -107,11 +116,19 @@ namespace mir
         }
 
         // Spawns and teleports are already in the world, so they pass the gates like any move.
-        void RunStepGates(World &world, PhysicsWorld &physics, float dt)
+        void RunBeforeStepGates(World &world, PhysicsWorld &physics, float dt)
         {
             if (PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>())
                 for (PhysicsStepGate *gate : gates->mGates)
                     gate->BeforeStep(world, physics, dt);
+        }
+
+        // After the write-back, so a gate reads the body and the Transform as the step left them.
+        void RunAfterStepGates(World &world, PhysicsWorld &physics, float dt)
+        {
+            if (PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>())
+                for (PhysicsStepGate *gate : gates->mGates)
+                    gate->AfterStep(world, physics, dt);
         }
     }
 
@@ -132,9 +149,10 @@ namespace mir
 
         ApplyEdits(context.world, *physics);
         PushTransforms(context.world, *physics, context.dt);
-        RunStepGates(context.world, *physics, context.dt);
+        RunBeforeStepGates(context.world, *physics, context.dt);
         physics->Step(context.dt);
         PullPoses(context.world, *physics);
+        RunAfterStepGates(context.world, *physics, context.dt);
     }
 
     // An edit to a RigidBody, from the editor, Lua or code, reaches the live body here, before the step.
@@ -167,20 +185,36 @@ namespace mir
                 if (now.motion != applied.motion)
                 {
                     physics.SetBodyMotion(body, now.motion);
-                    // a mass edited while it could not apply is put on when the body starts to move by force
+                    // a mass or a damping edited while it could not apply is put on when the body starts to move by
+                    // force: a Static body has no motion state for them to live in
                     if (now.motion == PhysicsMotion::Dynamic)
-                        physics.SetBodyMass(body, now.mass);
+                    {
+                        physics.SetBodyMassProperties(
+                            body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
+                        physics.SetBodyDamping(body, now.linearDamping, now.angularDamping);
+                        physics.SetBodyGyroscopicForce(body, now.gyroscopicForce);
+                        physics.SetBodyMotionQuality(body, now.motionQuality);
+                    }
                 }
 
                 if (scaled || now.shape != applied.shape || now.halfExtent != applied.halfExtent
                     || now.radius != applied.radius || now.halfHeight != applied.halfHeight || now.axis != applied.axis
-                    || now.offset != applied.offset || now.rotationOffset != applied.rotationOffset)
+                    || now.offset != applied.offset || now.rotationOffset != applied.rotationOffset
+                    || now.customCenterOfMass != applied.customCenterOfMass
+                    || now.centerOfMassOffset != applied.centerOfMassOffset)
                 {
                     physics.SetBodyShape(body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
                     rigidBody.runtime.builtScale = scale;
                 }
-                else if (now.mass != applied.mass)
-                    physics.SetBodyMass(body, now.mass);
+                else
+                {
+                    if (now.mass != applied.mass)
+                        physics.SetBodyMass(body, now.mass);
+                    if (now.customInertia != applied.customInertia || now.inertiaDiagonal != applied.inertiaDiagonal
+                        || now.inertiaProducts != applied.inertiaProducts)
+                        physics.SetBodyMassProperties(
+                            body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
+                }
 
                 if (now.layer != applied.layer)
                     physics.SetBodyLayer(body, LayerOf(rigidBody, entity));
@@ -190,6 +224,12 @@ namespace mir
                     physics.SetBodyMaterial(body, now.friction, now.restitution);
                 if (now.gravityFactor != applied.gravityFactor)
                     physics.SetBodyGravityFactor(body, now.gravityFactor);
+                if (now.linearDamping != applied.linearDamping || now.angularDamping != applied.angularDamping)
+                    physics.SetBodyDamping(body, now.linearDamping, now.angularDamping);
+                if (now.gyroscopicForce != applied.gyroscopicForce)
+                    physics.SetBodyGyroscopicForce(body, now.gyroscopicForce);
+                if (now.motionQuality != applied.motionQuality)
+                    physics.SetBodyMotionQuality(body, now.motionQuality);
                 if (now.allowSleeping != applied.allowSleeping)
                     physics.SetBodyAllowSleeping(body, now.allowSleeping);
                 if (now.detectStay != applied.detectStay)

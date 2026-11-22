@@ -1,0 +1,46 @@
+{
+  "id": 1146,
+  "parent": 1144,
+  "components": [
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          -0.3,
+          0.55,
+          -1.95
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {}
+    },
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Cockpit Camera"
+      }
+    },
+    {
+      "type": "Camera",
+      "fields": {
+        "active": false,
+        "farZ": 0,
+        "fovYDegrees": 70,
+        "nearZ": 0.05
+      }
+    }
+  ]
+}

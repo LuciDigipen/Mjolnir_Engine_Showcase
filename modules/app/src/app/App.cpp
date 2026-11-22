@@ -97,6 +97,17 @@ namespace mir
             return project.mRootDir / "assets" / std::string(kPrefabDirectoryName);
         }
 
+        // Where the source assets live; the Flight Debug panel saves tuning there and only an editor build edits.
+        std::string SourceAssetsRoot(const GameProject &project)
+        {
+        #if MIR_WITH_EDITOR
+            return project.mAssetsDir.string();
+        #else
+            (void)project;
+            return {};
+        #endif
+        }
+
         // A game the build left out, as CMake does while its LFS files are pointers, has
         // source assets but none cooked: say so once, before each entity reports its own
         void ReportUncookedGame(const GameProject &project, const AssetManifest &manifest)
@@ -185,6 +196,12 @@ namespace mir
         AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
         ParticlesGpuModule &particlesGpu, RenderSystem &rendering, GameUIModule &gameUI)
         : physics(context, &jobs),
+    #if MIR_WITH_EDITOR
+        flight(context, MakeAircraftConfigSource(assets.Cache(), resolver),
+            [&assets, &resolver] { return MakeAircraftCandidateSource(assets, resolver); }),
+    #else
+        flight(context, MakeAircraftConfigSource(assets.Cache(), resolver)),
+    #endif
         terrainData(context),
         script(context, assets, resolver),
         actions(context),
@@ -195,6 +212,7 @@ namespace mir
     #endif
         inputScript(script),
         physicsScript(script),
+        flightScript(script),
         rendererScript(script),
         terrainScript(script),
         actionsScript(script),
@@ -220,7 +238,8 @@ namespace mir
         #endif
             simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
                 app.mParticlesGpu, rendering->Rendering(), state.gameUI),
-            terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
+            terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs, true,
+                app.mTerrain.Cache())
         {
             state.gameShell.SetControlsOptions(&app.mControlsOptions);
         #if MIR_WITH_AUDIO
@@ -301,6 +320,7 @@ namespace mir
             mParticlesGpu, mRenderer.Rendering(), mWorldState.gameUI),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
+        mFlightDebug(Context(), mImGui, SourceAssetsRoot(mProject)),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
         mWorldState.gameShell.SetControlsOptions(&mControlsOptions);
@@ -610,6 +630,8 @@ namespace mir
     #if MIR_WITH_EDITOR
         mEditor.PreparePlay();
     #endif
+        // Play draws the shared terrain cache; the authored World's demands would compete with it.
+        mTerrain.Runtime().Suspend();
         try
         {
             mRuntime = std::make_unique<RuntimeSession>(*this);
@@ -647,6 +669,7 @@ namespace mir
             mEditor.FinishPlay();
         #endif
             prefabs.SetFrozen(false);
+            mTerrain.Runtime().Resume();
             return;
         }
         // Standalone never updates the authoring terrain, so it could not acknowledge a retired material.
@@ -656,6 +679,7 @@ namespace mir
         SetEngineMode(mWorldState.world, EngineMode::Play);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
         mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mFlightDebug.ActivateWorld(&mRuntime->state.world);
         mImGui.SetInputWorld(&mRuntime->state.world);
     #if MIR_WITH_EDITOR
         mEditor.SetPlayWorld(&mRuntime->state.world);
@@ -674,9 +698,11 @@ namespace mir
         mEditor.SetPlayWorld(nullptr);
     #endif
         mGameUIImGui.ActivateWorld(nullptr, nullptr);
+        mFlightDebug.ActivateWorld(nullptr);
         mImGui.SetInputWorld(nullptr);
         mRenderer.ActivateWorld(nullptr);
         mRuntime.reset();
+        mTerrain.Runtime().Resume();
 
     #if MIR_WITH_EDITOR
         mEditor.FinishPlay();
@@ -794,6 +820,7 @@ namespace mir
         if (mRuntime->pendingPrimary == instance) SetPrimaryScene(instance);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
         mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mFlightDebug.ActivateWorld(&mRuntime->state.world);
         mImGui.SetInputWorld(&mRuntime->state.world);
     #if MIR_WITH_EDITOR
         mEditor.SetPlayWorld(&mRuntime->state.world);

@@ -67,14 +67,18 @@ namespace
         return desc;
     }
 
+    std::vector<mir::WorldDrawItem> TerrainDraws(const mir::World &world)
+    {
+        std::vector<mir::WorldDrawItem> draws;
+        if (const auto *sources = world.TryResource<mir::ViewDrawSources>())
+            for (mir::IViewDrawSource *source : sources->sources)
+                source->AppendRayTracingDraws(0, draws);
+        return draws;
+    }
+
     mir::MaterialHandle TerrainMaterial(const mir::World &world)
     {
-        const auto *sources = world.TryResource<mir::ViewDrawSources>();
-        if (!sources)
-            return mir::kNullMaterial;
-        std::vector<mir::WorldDrawItem> draws;
-        for (mir::IViewDrawSource *source : sources->sources)
-            source->AppendRayTracingDraws(0, draws);
+        const std::vector<mir::WorldDrawItem> draws = TerrainDraws(world);
         return draws.empty() ? mir::kNullMaterial : draws.front().material;
     }
 }
@@ -374,6 +378,7 @@ TEST_CASE("Stopping Play keeps the Edit terrain's material handle live", "[app][
     mir::MaterialHandle edit = mir::kNullMaterial;
     int stops = 0;
     int settled = 0;
+    bool redrawn = false;
     const auto checks = app.Systems().AddFrameSlot(mir::FrameSlot::FrameBegin, [&](mir::SystemContext &)
         {
             if (const mir::World *runtime = app.RuntimeWorld())
@@ -383,6 +388,7 @@ TEST_CASE("Stopping Play keeps the Edit terrain's material handle live", "[app][
                 requests.Push(mir::Request::Stop);
                 ++stops;
                 settled = 0;
+                redrawn = false;
                 return;
             }
             const mir::MaterialHandle current = TerrainMaterial(authored);
@@ -397,6 +403,10 @@ TEST_CASE("Stopping Play keeps the Edit terrain's material handle live", "[app][
             }
             if (stops == 0)
                 return;
+            // Play suspends Edit's views, so it has no draws until a render after Stop prepares them again.
+            if (!redrawn && TerrainDraws(authored).empty())
+                return;
+            redrawn = true;
             CHECK(current == edit);
             CHECK(app.Renderer().MaterialRecord(edit).has_value());
             if (++settled < kSettleFrames)
@@ -407,6 +417,7 @@ TEST_CASE("Stopping Play keeps the Edit terrain's material handle live", "[app][
     app.Run();
 
     CHECK(stops == kCycles);
+    CHECK(redrawn);
     CHECK(app.RuntimeWorld() == nullptr);
 }
 

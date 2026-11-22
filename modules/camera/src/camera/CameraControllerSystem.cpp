@@ -39,6 +39,23 @@ namespace mir
                 glm::vec3{ std::cos(yaw) * std::cos(pitch), std::sin(pitch), std::sin(yaw) * std::cos(pitch) });
         }
 
+        // Keeps the follow offset level with the target's heading. Near vertical the forward axis drops
+        // out, and the right axis still carries the heading.
+        glm::quat HeadingOnlyRotation(const glm::quat &targetRotation)
+        {
+            constexpr float kMinHorizontal = kMinLookDistance * kMinLookDistance;
+
+            const glm::vec3 forward = targetRotation * glm::vec3(0.0f, 0.0f, -1.0f);
+            if (forward.x * forward.x + forward.z * forward.z > kMinHorizontal)
+                return glm::angleAxis(std::atan2(-forward.x, -forward.z), kUp);
+
+            const glm::vec3 right = targetRotation * glm::vec3(1.0f, 0.0f, 0.0f);
+            if (right.x * right.x + right.z * right.z > kMinHorizontal)
+                return glm::angleAxis(std::atan2(-right.z, right.x), kUp);
+
+            return glm::quat{ 1.0f, 0.0f, 0.0f, 0.0f };
+        }
+
         FreeFlyInput ReadFreeFly(const InputState &input)
         {
             FreeFlyInput frame;
@@ -59,9 +76,11 @@ namespace mir
 
     WorldVec3 CameraFollowGoal(const CameraController &controller, const WorldVec3 &targetPosition, const glm::quat &targetRotation)
     {
+        if (!controller.mOffsetInTargetSpace)
+            return targetPosition + WorldVec3(controller.mOffset);
 
-        const glm::vec3 offset = controller.mOffsetInTargetSpace ? targetRotation * controller.mOffset : controller.mOffset;
-        return targetPosition + WorldVec3(offset);
+        const glm::quat basis = controller.mOffsetHeadingOnly ? HeadingOnlyRotation(targetRotation) : targetRotation;
+        return targetPosition + WorldVec3(basis * controller.mOffset);
     }
 
     CameraPose StepCameraFollow(const CameraController &controller, const CameraPose &camera, const WorldVec3 &goal, const WorldVec3 &lookAt, float dt, bool snap)

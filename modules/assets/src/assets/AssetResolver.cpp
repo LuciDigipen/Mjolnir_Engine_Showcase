@@ -23,6 +23,16 @@ namespace mir
 
     AssetId AssetResolver::Resolve(std::string_view path, std::string *error) const
     {
+        return ResolveIn(mAssets.Manifest(), path, error);
+    }
+
+    AssetId AssetResolver::ResolveCandidate(std::string_view path, std::string *error) const
+    {
+        return ResolveIn(mAssets.CandidateManifest(), path, error);
+    }
+
+    AssetId AssetResolver::ResolveIn(const AssetManifest &manifest, std::string_view path, std::string *error) const
+    {
         const AssetPathResult logical = MakeLogicalAssetPath(mIdRoot, path);
         if (!logical.Ok())
         {
@@ -31,7 +41,8 @@ namespace mir
             return kNullAssetId;
         }
 
-        const AssetId id = ResolveFull(logical.path);
+        const AssetManifestEntry *entry = manifest.FindByPath(logical.path);
+        const AssetId id = entry != nullptr ? entry->id : kNullAssetId;
         if (id.IsNull() && error != nullptr)
             *error = "no asset has the path '" + logical.path + "'";
         return id;

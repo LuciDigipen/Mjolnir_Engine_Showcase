@@ -37,6 +37,8 @@ namespace mir
         // Prepare replacements from Candidate() before applying the reload. An invalid manifest throws.
         void BeginReload();
         AssetCache &Candidate();
+        // The manifest behind Candidate(), which also lists what this reload adds.
+        const AssetManifest &CandidateManifest() const;
         void CommitReload();
         void AbortReload();
 

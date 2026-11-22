@@ -15,6 +15,7 @@
 #include <core/ecs/World.h>
 #include <window/Window.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 namespace
@@ -168,6 +169,41 @@ TEST_CASE("Removing an action from the map prunes it from state instead of freez
     f.Update();
 
     REQUIRE_FALSE(f.state.IsDown("Jump")); // pruned, not stuck at true
+}
+
+TEST_CASE("Gamepad triggers remap from -1..1 to 0..1 and honour scale", "[input]")
+{
+    Fixture f;
+    mir::InputAction &yaw = f.map.AddAction("Yaw", mir::InputActionType::Axis1D);
+    yaw.bindings.push_back(mir::InputBinding{ .device = mir::DeviceKind::Gamepad, .useGamepadAxis = true,
+        .gamepadAxis = mir::GamepadAxis::RightTrigger });
+    yaw.bindings.push_back(mir::InputBinding{ .device = mir::DeviceKind::Gamepad, .useGamepadAxis = true,
+        .gamepadAxis = mir::GamepadAxis::LeftTrigger, .scale = -1.0f });
+
+    mir::GamepadState &pad = f.window.mRaw.gamepads[0];
+    pad.connected = true;
+
+    pad.axes[static_cast<size_t>(mir::GamepadAxis::RightTrigger)] = -1.0f;
+    pad.axes[static_cast<size_t>(mir::GamepadAxis::LeftTrigger)] = -1.0f;
+    f.Update();
+    CHECK(f.state.Axis("Yaw") == 0.0f);
+
+    pad.axes[static_cast<size_t>(mir::GamepadAxis::RightTrigger)] = 1.0f;
+    f.Update();
+    CHECK(f.state.Axis("Yaw") == 1.0f);
+
+    pad.axes[static_cast<size_t>(mir::GamepadAxis::RightTrigger)] = 0.0f;
+    f.Update();
+    CHECK(f.state.Axis("Yaw") == Catch::Approx(0.5f));
+
+    pad.axes[static_cast<size_t>(mir::GamepadAxis::RightTrigger)] = -1.0f;
+    pad.axes[static_cast<size_t>(mir::GamepadAxis::LeftTrigger)] = 1.0f;
+    f.Update();
+    CHECK(f.state.Axis("Yaw") == -1.0f);
+
+    pad.axes[static_cast<size_t>(mir::GamepadAxis::LeftTrigger)] = -0.98f;
+    f.Update();
+    CHECK(f.state.Axis("Yaw") == 0.0f);
 }
 
 TEST_CASE("UiCapturesKeyboard suppresses a keyboard binding but not a gamepad one on the same action", "[input]")

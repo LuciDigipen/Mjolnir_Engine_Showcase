@@ -266,6 +266,10 @@ namespace mir
         // Every collider goes now and every piece is forgotten.
         void Clear();
 
+        // Removes the interest it registered with the streamer; the next Update registers a new one. Call when the
+        // runtime that owns it no longer collides, so a streamer shared with another World holds no demand of it.
+        void ReleaseInterest(TerrainStreamer &streamer);
+
         // Seconds of motion a source's range covers: the load latency estimate plus the margin.
         double PredictionSeconds() const;
 

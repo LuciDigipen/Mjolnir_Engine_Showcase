@@ -59,6 +59,21 @@ namespace mir
         float mFriction = 0.2f;
         float mRestitution = 0.0f;
         bool mAllowSleeping = true;
+        // Jolt's own defaults, so an authored body keeps the motion it had before they were exposed.
+        float mLinearDamping = 0.05f;
+        float mAngularDamping = 0.05f;
+        bool mGyroscopicForce = false;
+        PhysicsMotionQuality mMotionQuality = PhysicsMotionQuality::Discrete;
+        // Takes the inertia tensor from mInertiaDiagonal and mInertiaProducts instead of the shape's.
+        bool mCustomInertia = false;
+        // Moments about the body's own axes: Ixx, Iyy, Izz, in kg m^2.
+        glm::vec3 mInertiaDiagonal{1.0f, 1.0f, 1.0f};
+        // Products of inertia Ixy, Ixz, Iyz; the tensor is [[Ixx,-Ixy,-Ixz],[-Ixy,Iyy,-Iyz],[-Ixz,-Iyz,Izz]].
+        glm::vec3 mInertiaProducts{0.0f};
+        // Places the centre of mass away from the shape's centre, with the shape and the Transform staying where they are.
+        bool mCustomCenterOfMass = false;
+        // Centre of mass from the body's origin in its own axes, in metres; the shape's offset does not move it.
+        glm::vec3 mCenterOfMassOffset{0.0f};
     };
 
     struct ColliderView;
@@ -171,9 +186,26 @@ namespace mir
         void SetBodyLayer(BodyHandle body, int layer);
         void SetBodyMaterial(BodyHandle body, float friction, float restitution);
         void SetBodyGravityFactor(BodyHandle body, float factor);
-        // Scales the inertia with it; a mass at or below 0 is ignored.
+        // Scales the inertia with it; a mass at or below 0 is ignored. A supplied inertia tensor is absolute and
+        // does not scale, so only the mass changes.
         void SetBodyMass(BodyHandle body, float mass);
+        // Puts the mass rules of desc on the body's current shape, without rebuilding it. A supplied inertia tensor
+        // replaces the shape's; without one the shape's inertia is scaled to desc.mMass, as SetBodyMass does.
+        void SetBodyMassProperties(BodyHandle body, const BodyDesc &desc);
         void SetBodyAllowSleeping(BodyHandle body, bool allow);
+        // How fast a body loses velocity on its own; a negative value is taken as 0. A Static body has none until it
+        // moves.
+        void SetBodyDamping(BodyHandle body, float linear, float angular);
+        // Keeps a spinning body's angular momentum fixed in world space instead of letting its angular velocity drift.
+        void SetBodyGyroscopicForce(BodyHandle body, bool apply);
+        // LinearCast sweeps the body between steps instead of only sampling its ends.
+        void SetBodyMotionQuality(BodyHandle body, PhysicsMotionQuality quality);
+
+        // What the body holds now; a Static body has no motion state and answers the defaults.
+        float BodyLinearDamping(BodyHandle body) const;
+        float BodyAngularDamping(BodyHandle body) const;
+        bool BodyGyroscopicForce(BodyHandle body) const;
+        PhysicsMotionQuality BodyMotionQuality(BodyHandle body) const;
 
         // A Dynamic or Kinematic body that rests, or that has not been touched for a while, falls asleep.
         void WakeBody(BodyHandle body);
@@ -197,6 +229,7 @@ namespace mir
         bool AddTorque(BodyHandle body, const glm::vec3 &torque);
         bool AddImpulse(BodyHandle body, const glm::vec3 &impulse);
         bool AddAngularImpulse(BodyHandle body, const glm::vec3 &angularImpulse);
+        // The offset is in the body's own axes, measured from the centre of mass.
         bool AddForceAtOffset(BodyHandle body, const glm::vec3 &force, const glm::vec3 &localOffset);
         bool AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse, const glm::vec3 &localOffset);
 
