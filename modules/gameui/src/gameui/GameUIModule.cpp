@@ -48,6 +48,9 @@ namespace mir
         mUI.SetWidgetsDisabled(mShellHeldInput);
         mScreens[static_cast<std::size_t>(UIScreenLayer::Game)].Run(mUI, mFrameDt);
         mUI.SetWidgetsDisabled(false);
+        // a style a Game screen left pushed never reaches the shell
+        while (mUI.StyleDepth() > 0)
+            mUI.PopStyle();
         const uint32_t heldBefore = mUI.HoldInputCalls();
         mScreens[static_cast<std::size_t>(UIScreenLayer::Shell)].Run(mUI, mFrameDt);
         mShellHeldInput = mUI.HoldInputCalls() != heldBefore;

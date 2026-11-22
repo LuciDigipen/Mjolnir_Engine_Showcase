@@ -42,7 +42,8 @@ namespace mir
 
     // In Play, paused or not, calls OnUI(self, world, entity, ui, dt) on every script in world whose OnStart has
     // run. A failed OnUI is
-    // logged and counted like any script failure, and whatever clip or opacity it left pushed is popped
+    // logged and counted like any script failure, and whatever clip, opacity, transform or style it left pushed is
+    // popped
     void DrawScriptScreens(ScriptHost &host, World &world, const std::shared_ptr<UIScriptFrame> &frame,
         UIContext &ui, float dt);
 }

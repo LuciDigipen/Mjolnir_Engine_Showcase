@@ -2,8 +2,8 @@
  * @file UIContext.h
  * @author Quy Dong Ta
  * @brief The game UI's frame: the area it draws into, the input it reads, the
- *        widgets' hot and active state, the draw list that is submitted
- *        when the frame ends, and the textures and fonts it draws.
+ *        widgets' hot and active state, the style stack, the draw list that is
+ *        submitted when the frame ends, and the textures and fonts it draws.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -23,9 +23,11 @@
 #include <input/InputMap.h>
 #include <input/InputState.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace mir
 {
@@ -133,8 +135,19 @@ namespace mir
         UISize MeasureText(std::string_view text, UIFont font, float fontSize) const;
         float TextWidth(std::string_view text) const { return MeasureText(text).width; }
 
-        UIStyle &Style() { return mStyle; }
-        const UIStyle &Style() const { return mStyle; }
+        // what widgets draw in: the top of the style stack, the base style when nothing is pushed. Changing it at
+        // depth 0 changes the base style
+        UIStyle &Style() { return mStyles.back(); }
+        const UIStyle &Style() const { return mStyles.back(); }
+
+        const UIStyle &BaseStyle() const { return mStyles.front(); }
+        void SetBaseStyle(const UIStyle &style);
+
+        // until the matching pop, a reference from Style() may not survive a push
+        void PushStyle(const UIStyle &style);
+        void PopStyle();
+
+        size_t StyleDepth() const { return mStyles.size() - 1; }
 
         UITextures &Textures() { return mTextures; }
         const UITextures &Textures() const { return mTextures; }
@@ -167,7 +180,8 @@ namespace mir
         InputState *mInput = nullptr;
         const InputMap *mInputMap = nullptr;
         UINavInput mNav;
-        UIStyle mStyle;
+        // [0] is the base style
+        std::vector<UIStyle> mStyles{UIStyle{}};
         bool mInFrame = false;
         bool mHoldInput = false;
         bool mHoldsInput = false;

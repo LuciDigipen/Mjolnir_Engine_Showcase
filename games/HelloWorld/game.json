@@ -25,5 +25,8 @@
   ],
   "soundBanksRoot": "assets/audio/SoundBanks",
   "startupScene": "default",
-  "title": "MjolnirEngine - HelloWorld"
+  "title": "MjolnirEngine - HelloWorld",
+  "ui": {
+    "style": "ui/style.json"
+  }
 }

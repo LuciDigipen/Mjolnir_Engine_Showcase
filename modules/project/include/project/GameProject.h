@@ -63,6 +63,9 @@ namespace mir
         // that draws its own
         bool mShellHud = true;
         bool mShellMenu = true;
+
+        // game.json's "ui": { "style": "ui/style.json" }, an asset path, empty keeps the engine's look
+        std::string mUIStyle;
     };
 
     // Where games/ lives: the source tree in a development build (asset_workspace.json),

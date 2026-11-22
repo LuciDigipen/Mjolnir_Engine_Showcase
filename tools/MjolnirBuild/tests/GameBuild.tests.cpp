@@ -533,3 +533,19 @@ TEST_CASE("game.json's shell section turns the engine's HUD and pause menu off, 
         CHECK_THROWS_AS(LoadGameProject(game), SetupError);
     }
 }
+
+TEST_CASE("game.json's ui section names the UI style file, and a wrong type is refused", "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Demo";
+    CHECK(LoadGameProject(game).mUIStyle.empty());
+
+    Touch(game / "game.json", R"({ "ui": { "style": "ui/style.json" } })");
+    CHECK(LoadGameProject(game).mUIStyle == "ui/style.json");
+
+    for (const std::string_view manifest : { R"({ "ui": { "style": 3 } })", R"({ "ui": "ui/style.json" })" })
+    {
+        Touch(game / "game.json", std::string(manifest));
+        CHECK_THROWS_AS(LoadGameProject(game), SetupError);
+    }
+}

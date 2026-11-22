@@ -1,12 +1,13 @@
 -- Game UI drawn from Lua: a panel in the bottom-left corner that fades in, counts clicks, and pauses and resumes
 -- the game, and a dial beside it that follows the slider. OnUI draws the whole UI again every frame, and what it
--- remembers lives in self.
+-- remembers lives in self. The look, Turret Road and the colours, is ui/style.json's, which game.json names, so the
+-- engine's pause menu wears it too.
 local UIDemo = {}
 
 -- a HUD in play: the mouse clicks it, but the arrow keys, the stick and Enter stay the game's
 local hud = { pointer_only = true }
 
--- text options style one widget's text; OnUI sets font here and in hud, the game's own Turret Road
+-- text options style one widget's text over the style
 local title = {
     size = 22,
     align = "center",
@@ -15,8 +16,11 @@ local title = {
     shadow = { x = 1, y = 2, color = { 0, 0, 0, 0.6 } },
 }
 
+-- with_style keys are the style file's
+local warning = { widget_color = { 0.55, 0.32, 0.08, 0.95 }, widget_hovered_color = { 0.7, 0.42, 0.12, 0.95 } }
+
 -- shapes and rotation: angles are degrees, 0 to the right and clockwise
-local function DrawDial(ui, cx, cy, r, value, font)
+local function DrawDial(ui, cx, cy, r, value)
     local from, sweep = 135, 270
     local angle = from + sweep * value
     ui:circle(cx, cy, r + 8, { color = { 0, 0, 0, 0.45 } })
@@ -38,7 +42,7 @@ local function DrawDial(ui, cx, cy, r, value, font)
     ui:circle(cx, cy, 5, { color = { 0.9, 0.9, 0.9, 1 } })
     ui:label("dial_value", { x = cx - 40, y = cy + 16, w = 80, h = 24 },
         string.format("%d%%", math.floor(value * 100 + 0.5)),
-        { font = font, size = 20, align = "center", outline = true })
+        { size = 20, align = "center", outline = true })
 end
 
 function UIDemo.NewInstanceData()
@@ -52,11 +56,6 @@ function UIDemo.OnStart(self, world, entity)
 end
 
 function UIDemo.OnUI(self, world, entity, ui, dt)
-    -- loaded once and cached; nil, the default font, if it does not load
-    local font = ui:font("fonts/TurretRoad-Bold.ttf")
-    title.font = font
-    hud.font = font
-
     local panel = ui:anchor(ui:inset(ui:safe_area(), 16), "bottom_left", 240, 200)
     ui:with_opacity(world:value("UIDemo.alpha", 1), function()
         ui:panel(panel)
@@ -71,14 +70,16 @@ function UIDemo.OnUI(self, world, entity, ui, dt)
             ui:bar("level_bar", rows:next(12), self.level)
         end
         local paused = world:is_paused()
-        if ui:button("pause", rows:rest(), paused and "Resume" or "Pause", hud).clicked then
-            if paused then world:resume() else world:pause() end
-        end
+        ui:with_style(warning, function()
+            if ui:button("pause", rows:rest(), paused and "Resume" or "Pause", hud).clicked then
+                if paused then world:resume() else world:pause() end
+            end
+        end)
 
         -- the needle eases after the slider rather than jumping to it
         self.needle = self.needle + (self.level - self.needle) * math.min(1, dt * 8)
         local r = 56
-        DrawDial(ui, panel.x + panel.w + 24 + r, panel.y + panel.h - r - 8, r, self.needle, font)
+        DrawDial(ui, panel.x + panel.w + 24 + r, panel.y + panel.h - r - 8, r, self.needle)
     end)
 end
 

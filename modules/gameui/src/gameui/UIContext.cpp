@@ -2,8 +2,8 @@
  * @file UIContext.cpp
  * @author Quy Dong Ta
  * @brief The game UI's frame: the area it draws into, the input it reads, the
- *        widgets' hot and active state, the draw list that is submitted
- *        when the frame ends, and the textures and fonts it draws.
+ *        widgets' hot and active state, the style stack, the draw list that is
+ *        submitted when the frame ends, and the textures and fonts it draws.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -65,6 +65,7 @@ namespace mir
                    mDrawList.OpacityDepth());
         MIR_ASSERT(mDrawList.TransformDepth() == 0, "UIContext::EndFrame with {} PushTransform unpopped",
                    mDrawList.TransformDepth());
+        MIR_ASSERT(StyleDepth() == 0, "UIContext::EndFrame with {} PushStyle unpopped", StyleDepth());
 
         if (mInFrame && !mArea.IsEmpty() && mBackend != nullptr)
             mBackend->Submit(mArea, mScale, mDrawList, mTextures, mFonts);
@@ -85,6 +86,21 @@ namespace mir
         mInputMap = nullptr;
         mNav = UINavInput{};
         mInFrame = false;
+    }
+
+    void UIContext::SetBaseStyle(const UIStyle &style)
+    {
+        MIR_ASSERT(StyleDepth() == 0, "UIContext::SetBaseStyle with {} PushStyle unpopped", StyleDepth());
+        mStyles.front() = style;
+    }
+
+    void UIContext::PushStyle(const UIStyle &style) { mStyles.push_back(style); }
+
+    void UIContext::PopStyle()
+    {
+        MIR_ASSERT(StyleDepth() > 0, "UIContext::PopStyle without a matching PushStyle");
+        if (StyleDepth() > 0)
+            mStyles.pop_back();
     }
 
     void UIContext::HoldInput()
@@ -132,13 +148,13 @@ namespace mir
 
     UISize UIContext::MeasureText(std::string_view text) const
     {
-        return MeasureText(text, mStyle.mFont, mStyle.mFontSize);
+        return MeasureText(text, Style().mFont, Style().mFontSize);
     }
 
     UISize UIContext::MeasureText(std::string_view text, UIFont font, float fontSize) const
     {
         if (mBackend == nullptr)
-            return EstimateTextSize(text, fontSize > 0.0f ? fontSize : mStyle.mTextHeight);
+            return EstimateTextSize(text, fontSize > 0.0f ? fontSize : Style().mTextHeight);
 
         void *backendFont = mFonts.Find(font);
 

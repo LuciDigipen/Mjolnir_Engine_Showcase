@@ -119,6 +119,8 @@ Every call is a method, `ui:name(...)`. A widget call returns a result table
 | `sprite(path[, slice])` | sprite or `nil` | A texture from the game's assets, nine-sliced by `slice`; loaded once, and `nil` with one error if it does not load |
 | `font(path)` | font or `nil` | A `.ttf` or `.otf` from the game's assets, for the `font` option; loaded once, and `nil` with one error if it does not load. Unlike `ui`, a font can be kept in `self` |
 | `with_opacity(alpha, fn)`, `with_clip(rect, fn)` | nothing | Runs `fn` faded, or clipped to `rect` |
+| `with_style(style, fn)` | nothing | Runs `fn` with the keys in `style` over the current style |
+| `style()` | table | Every style key and its current value |
 | `with_offset(x, y, fn)` | nothing | Runs `fn` moved by `x`, `y` |
 | `with_rotation(degrees, fn)`, `with_rotation(degrees, px, py, fn)` | nothing | Runs `fn` turned clockwise about the origin or about `px`, `py` |
 | `with_transform(transform, fn)` | nothing | Runs `fn` scaled, then turned, both about `pivot`, then moved: `{ offset = { x, y }, rotate = degrees, scale = s or { x, y }, pivot = { x, y } }`, each optional |
@@ -168,6 +170,29 @@ valid ones for that call:
 | `closed` | `true` to join the last point to the first | `lines` |
 | `rounding` | Corner radius | `rect` |
 
+`with_style` takes any of the style's keys, the same names as a game's style
+file ([gameshell.md](gameshell.md)), and an unknown one is an error that lists
+them all:
+
+| Keys | Value |
+|---|---|
+| `text_color`, `panel_color`, `text_shadow_color`, `text_outline_color`, `widget_color`, `widget_hovered_color`, `widget_held_color`, `disabled_text_color`, `track_color`, `fill_color`, `focus_color` | A colour |
+| `panel_rounding`, `font_size`, `text_height`, `text_outline_width`, `widget_rounding`, `focus_thickness`, `padding` | A number, 0 or more |
+| `text_shadow_x`, `text_shadow_y` | A number |
+| `text_align` | `"left"`, `"center"` or `"right"` |
+| `font` | What `ui:font` returned, or `false` for the default font |
+| `panel_sprite`, `widget_sprite`, `widget_hovered_sprite`, `widget_held_sprite`, `track_sprite`, `fill_sprite`, `focus_sprite` | What `ui:sprite` returned, or `false` for the colour |
+
+```lua
+local danger = { widget_color = { 0.6, 0.1, 0.1, 1 }, text_color = { 1, 0.9, 0.9, 1 } }
+ui:with_style(danger, function()
+    if ui:button("quit", rect, "Quit").clicked then world:quit() end
+end)
+```
+
+`ui:style()` returns the same keys, colours by position and no font or sprite
+as `false`, so it can be read for measuring or passed back to `with_style`.
+
 Angles are degrees, 0 to the right and clockwise, the way y grows down, for the
 shapes and `with_rotation` alike. A shape takes no pointer and has no name.
 Points are a flat list, at most 4096 to a call.
@@ -181,9 +206,9 @@ it. A screen that holds the input, a menu, can be focusable.
 **`ui` is valid only inside the `OnUI` it was given to.** A script that keeps it
 and calls it later gets an error, not a crash.
 
-**Opacity, clip and transform are scoped.** There is no push or pop in Lua,
-only `with_opacity`, `with_clip`, `with_offset`, `with_rotation` and
-`with_transform`, which pop whether `fn` returns or fails. After
+**Opacity, clip, transform and style are scoped.** There is no push or pop in
+Lua, only `with_opacity`, `with_clip`, `with_offset`, `with_rotation`,
+`with_transform` and `with_style`, which pop whether `fn` returns or fails. After
 each `OnUI` the bridge also pops anything left pushed, so a broken script never
 trips `EndFrame`'s balance asserts.
 
@@ -196,9 +221,13 @@ take no press or focus, because the menu is a `Shell` screen that holds the
 input. A slider or button held when the menu opens lets go, and `ui:set_focus`
 returns `false` and leaves focus on the menu. See [gameui.md](gameui.md).
 
-**Text options last one widget.** They are set on the style while that widget
-draws and put back after it, error or not, so the next widget and the shell's
-pause menu draw in the shared style.
+**Text options last one widget.** They are pushed over the style while that
+widget draws and popped after it, error or not. For more than one widget, use
+`with_style`.
+
+**A script cannot change the base style.** `with_style` lasts its function, and
+the shell's HUD and pause menu draw in the base style whatever a script pushed.
+A game changes the base style, and the shell's look with it, in its style file.
 
 **Scripts draw in query order.** Two entities' UIs overlap in whatever order the
 ECS walks them. Keep a game's screens on one entity, or apart on screen, until
@@ -206,7 +235,7 @@ there is an order field.
 
 ## State
 
-*As of 2026-11-20.* Widgets, layout, sprites, scoped opacity and clip, input
+*As of 2026-11-21.* Widgets, layout, sprites, scoped opacity, clip, transform and style, input
 holding, focus, prompts and text measurement work. `tests/UIBindings.tests.cpp`
 drives `DrawScriptScreens` through a real `UIContext` with no backend: a click
 on a Lua button, only after `OnStart` and only in Play (paused included), two
@@ -222,20 +251,32 @@ each call's commands, points, widths, angles in radians and gradient, under
 clicked where it is drawn; an odd or short point list, an option a call does
 not take, a gradient with one point, a zero dash, a negative radius, a wrong
 `with_rotation` call and an unknown transform key each failing the `OnUI`, and
-an error inside nested `with_*` calls leaving the transforms balanced.
+an error inside nested `with_*` calls leaving the transforms balanced. Style:
+buttons drawn in a `with_style` colour, an inner `with_style` keeping the
+outer's keys, `ui:style()` reading the current values and going back into
+`with_style`, and an unknown key, a negative number, a bad alignment, a path
+for a sprite, `true` for a font, a string for the style and a missing function
+each failing the `OnUI`, with an error inside nested `with_style` leaving the
+stack balanced.
 `HelloWorld`'s default scene has the sample.
 
 ## Backlog
 
 1. **Order between scripts,** a `ui_order` the bridge sorts by.
-2. **Style from Lua.** Screens use the shared `UIStyle`; text options are
-   per widget, so a script repeats them or keeps them in a table.
+2. ~~**Style from Lua.**~~ Landed 2026-11-21: `ui:with_style` and `ui:style`.
+   Left: named styles defined in the style file, `ui:with_style("danger", fn)`.
 3. **A preview in Edit.** Scripts only run in Play, so their UI only shows there.
 4. **Layouts from data,** on top of the same calls: a Lua table is already one.
 5. **Audio and controls options from Lua,** for a game's own settings screen,
    through `audio_script` and `input_script`.
 
 ## Changed
+
+*2026-11-21* — **Style.** Was: screens drew in the shared `UIStyle`, changed
+only by a widget's text options. Now: `ui:with_style` pushes any style keys
+for a function and `ui:style` reads them, and text options are pushed the same
+way. Because: theming a screen or a part of one without repeating options on
+every widget.
 
 *2026-11-21* — **Shapes and transforms.** Was: a script drew only through
 widgets and panels, axis-aligned. Now: `line`, `lines`, `polygon`, `circle`,
