@@ -20,6 +20,28 @@
 // RegisterUserTexture and UnregisterUserTexture
 #include <imgui_internal.h>
 
+// ImGui's own font loader, set up as imgui_draw.cpp does, to try a font before the atlas asserts on it
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4505)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#define STBTT_malloc(x, u) ((void)(u), IM_ALLOC(x))
+#define STBTT_free(x, u) ((void)(u), IM_FREE(x))
+#define STBTT_assert(x) do { IM_ASSERT(x); } while (0)
+#define STBTT_STATIC
+#define STB_TRUETYPE_IMPLEMENTATION
+// its declarations only, which keep stb_truetype from declaring its own stbrp_node over imgui_internal.h's
+#include <imstb_rectpack.h>
+#include <imstb_truetype.h>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 #include <cfloat>
 #include <climits>
 #include <cstring>
@@ -54,6 +76,20 @@ namespace mir
         ImFont *FontOf(void *font)
         {
             return font != nullptr ? static_cast<BackendFont *>(font)->mFont : ImGui::GetFont();
+        }
+
+        // ImGui rounds a font size to whole pixels and asserts on 0, PushFont keeps it in this range the same way
+        float PixelSize(float size)
+        {
+            return ImClamp(size, 1.0f, IMGUI_FONT_SIZE_MAX);
+        }
+
+        // the checks AddFontFromMemoryTTF makes on its first font, which it asserts on when they fail
+        bool ImGuiCanLoad(std::span<const uint8_t> bytes)
+        {
+            const int offset = stbtt_GetFontOffsetForIndex(bytes.data(), 0);
+            stbtt_fontinfo info{};
+            return offset >= 0 && stbtt_InitFont(&info, bytes.data(), offset) != 0;
         }
 
         ImU32 ToImColor(UIColor color) { return ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, color.a)); }
@@ -127,6 +163,11 @@ namespace mir
             MIR_LOG_ERROR("gameui: a {} byte font is too large", bytes.size());
             return {};
         }
+        if (!ImGuiCanLoad(bytes))
+        {
+            MIR_LOG_ERROR("gameui: a {} byte font is damaged, ImGui cannot read its tables", bytes.size());
+            return {};
+        }
 
         // the atlas owns the copy and frees it with the font, or at once when it does not load
         void *copy = IM_ALLOC(bytes.size());
@@ -178,7 +219,8 @@ namespace mir
             case UIDrawCommandKind::Text:
             {
                 const std::string_view text = list.TextOf(command);
-                const float fontSize = (command.mFontSize > 0.0f ? command.mFontSize : ImGui::GetFontSize()) * scale;
+                const float fontSize =
+                    PixelSize((command.mFontSize > 0.0f ? command.mFontSize : ImGui::GetFontSize()) * scale);
                 drawList->AddText(FontOf(fonts.Find(command.mFont)), fontSize, Min(command.mRect, area, scale),
                                   ToImColor(command.mColor), text.data(), text.data() + text.size());
                 break;
@@ -195,7 +237,7 @@ namespace mir
         if (imFont == nullptr)
             return EstimateTextSize(text, fontSize > 0.0f ? fontSize : 16.0f);
 
-        const float size = fontSize > 0.0f ? fontSize : ImGui::GetFontSize();
+        const float size = PixelSize(fontSize > 0.0f ? fontSize : ImGui::GetFontSize());
         const ImVec2 measured = imFont->CalcTextSizeA(size, FLT_MAX, 0.0f, text.data(), text.data() + text.size());
         return UISize{measured.x, measured.y};
     }

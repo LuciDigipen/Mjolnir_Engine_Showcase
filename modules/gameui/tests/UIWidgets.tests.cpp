@@ -806,9 +806,13 @@ TEST_CASE("Text is measured in the font it is drawn in", "[gameui][text]")
 {
     Fixture f;
     MeasuringBackend backend;
+    // a TrueType tag and one 16 byte table at 28, which the backend here never reads
     const std::vector<uint8_t> header = [] {
         std::vector<uint8_t> bytes(200, 0);
         bytes[1] = 1;
+        bytes[5] = 1;
+        bytes[12 + 11] = 28;
+        bytes[12 + 15] = 16;
         return bytes;
     }();
     const UIFont font = f.UI().Fonts().Add(header);

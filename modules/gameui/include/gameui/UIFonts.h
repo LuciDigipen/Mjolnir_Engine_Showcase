@@ -39,7 +39,8 @@ namespace mir
         // is the default font
         UIFont Load(AssetCache &assets, AssetId id);
 
-        // the default font, logged, when the bytes are not a TrueType or OpenType file
+        // the default font, logged, when the bytes are not a whole TrueType or OpenType file, or the installed
+        // backend cannot make a font of them. Added before a backend, a font it cannot make draws in the default
         UIFont Add(std::span<const uint8_t> bytes);
 
         size_t Count() const { return mFonts.size(); }

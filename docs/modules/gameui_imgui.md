@@ -29,6 +29,13 @@ asks for it, so one font serves every size. The font is removed from the atlas
 when the game UI releases it, and a context destroyed first takes it down with
 its atlas. Text with no font draws in `ImGui::GetFont()`, as before.
 
+`MakeFont` first runs the checks ImGui's stb_truetype loader makes, finding the
+font in the file and its required tables, and refuses a font that fails them,
+since ImGui asserts on it in Debug and gives no font in Release. Text is drawn
+and measured at its size in pixels rounded as ImGui rounds it, which asserts at
+0, so both keep the size between 1 and ImGui's largest, as `PushFont` does: a
+0.25 unit label is drawn and measured one pixel tall.
+
 ## API
 
 | Type | Header | Role |
@@ -58,7 +65,9 @@ loading through an `AssetCache`, teardown before and after the context, and
 `EndFrame` drawing a sprite with the `ImTextureData` as its texture. It also
 loads `fonts/Inter.ttf` from the source tree as a game font: into the atlas and
 out with its `UIFonts`, measured with its own widths, drawn by a label, loaded
-through an `AssetCache` once per id, and kept past its context's end.
+through an `AssetCache` once per id, and kept past its context's end. A damaged
+copy, its tables renamed, and a cut-off copy are refused with the atlas
+untouched, and text under a pixel draws and measures at one pixel.
 
 ## Backlog
 

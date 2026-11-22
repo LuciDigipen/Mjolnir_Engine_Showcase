@@ -261,9 +261,14 @@ nothing from them and keeps them as raw bytes under their path's id.
 `UIFonts::Load(AssetCache&, AssetId)` reads them, and `UIFonts`, also owned by
 `UIContext`, keeps the bytes and has the backend make its font the same way
 `UITextures` does, with the same release. Bytes that do not start with a font
-file's tag are refused before the backend sees them, and a font that does not
-load is the default font, reported once. A font has no size: one font draws
-at every size a style or widget asks for.
+file's tag, or whose table directory lists a table past the end of the file,
+are refused before the backend sees them: backends read the tables without
+checking, and a cut-off file is the usual damage. A font the installed backend
+cannot make is not added either, so `Add` and `Load` give the default font, and
+`ui:font` gives `nil`. Only a font added before any backend can turn out
+unusable later, and it then draws in the default font. A font that does not
+load is reported once. A font has no size: one font draws at every size a style
+or widget asks for.
 
 ### Layout
 
@@ -573,8 +578,9 @@ across sizes, pieces covering the rect exactly, corners shrinking by one factor,
 uneven and oversized slices, an atlas cell, and culling by piece.
 `tests/UITextures.tests.cpp` covers the pixels kept until a backend makes a
 texture, a wrong pixel count, and copies releasing themselves after the backend
-is gone. `tests/UIFonts.tests.cpp` covers which bytes are a font file and a font
-made once a backend is installed and released with the table, and
+is gone. `tests/UIFonts.tests.cpp` covers which bytes are a whole font file, a
+font made once a backend is installed and released with the table, and one the
+backend cannot make, and
 `tests/UIWidgets.tests.cpp` covers text in the style's font and size, the shadow
 and outline passes and their fading, alignment, and measuring in a font. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
 helper, a row inside a column inside an anchored region, and the demo's

@@ -473,3 +473,68 @@ TEST_CASE("Load reads a font through the asset cache, once per id", "[gameui][fo
     CHECK(fonts.Count() == 1);
     ImGui::Render();
 }
+
+TEST_CASE("A damaged or cut-off font is refused before ImGui asserts on it", "[gameui][fonts]")
+{
+    const std::vector<uint8_t> bytes = ReadTestFont();
+    REQUIRE(bytes.size() > 1000);
+
+    // a whole directory whose tables ImGui cannot find, so stb_truetype refuses it
+    std::vector<uint8_t> damaged = bytes;
+    const size_t tables = (size_t{damaged[4]} << 8) | damaged[5];
+    REQUIRE(12 + tables * 16 < damaged.size());
+    for (size_t table = 0; table < tables; ++table)
+        std::memcpy(&damaged[12 + table * 16], "zzzz", 4);
+
+    // its last tables past the end
+    const std::vector<uint8_t> cutOff(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(bytes.size() / 2));
+
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    const int before = ImGui::GetIO().Fonts->Fonts.Size;
+    UIFonts fonts;
+    fonts.SetBackend(&backend);
+    CHECK(backend.MakeFont(damaged).font == nullptr);
+    CHECK_FALSE(fonts.Add(damaged).IsValid());
+    CHECK_FALSE(fonts.Add(cutOff).IsValid());
+    CHECK(fonts.Count() == 0);
+    CHECK(ImGui::GetIO().Fonts->Fonts.Size == before);
+
+    // and the font it was made from still loads
+    CHECK(fonts.Add(bytes).IsValid());
+    ImGui::Render();
+}
+
+TEST_CASE("Text under a pixel tall draws and measures at one pixel, as ImGui keeps it", "[gameui][fonts]")
+{
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    InputState input;
+    const InputMap map = DefaultInputMap();
+
+    UIContext ui;
+    ui.SetBackend(&backend);
+    const UIFont font = ui.Fonts().Add(ReadTestFont());
+    REQUIRE(font.IsValid());
+
+    const std::string_view text = "Speed";
+    for (void *backendFont : {static_cast<void *>(nullptr), ui.Fonts().Find(font)})
+    {
+        const UISize tiny = backend.MeasureText(text, 0.25f, backendFont);
+        const UISize onePixel = backend.MeasureText(text, 1.0f, backendFont);
+        CHECK(tiny.width == Catch::Approx(onePixel.width));
+        CHECK(tiny.height == Catch::Approx(onePixel.height));
+        CHECK(tiny.height > 0.0f);
+    }
+
+    ui.BeginFrame(UIRect{0, 0, 1920, 1080}, input, map, UIPointer{});
+    CHECK(ui.MeasureText(text, font, 0.25f).height > 0.0f);
+    ui.Style().mFontSize = 0.25f;
+    Label(ui, UIId("tiny"), UIRect{100, 100, 300, 40}, text);
+    ui.Style().mFont = font;
+    Label(ui, UIId("tiny_font"), UIRect{100, 200, 300, 40}, text);
+    ui.EndFrame();
+    ImGui::Render();
+}
