@@ -19,8 +19,11 @@ namespace mir
     {
     public:
         UIBackendTexture CreateTexture(uint32_t width, uint32_t height, std::span<const uint8_t> rgba) override;
-        void Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures) override;
-        // with ImGui's font; without an ImGui context, an estimate
-        UISize MeasureText(std::string_view text, float fontSize) const override;
+        // a font in ImGui's atlas, which loads its glyphs at each size as text first uses it
+        UIBackendFont MakeFont(std::span<const uint8_t> bytes) override;
+        void Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures,
+                    const UIFonts &fonts) override;
+        
+        UISize MeasureText(std::string_view text, float fontSize, void *font) const override;
     };
 }

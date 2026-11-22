@@ -2,8 +2,8 @@
  * @file ImGuiUIBackend.cpp
  * @author Quy Dong Ta
  * @brief Replays a UIDrawList into ImGui's background draw list, and keeps
- *        the game UI's textures as ImGui 1.92 user textures. The only file
- *        the game UI has that includes ImGui.
+ *        the game UI's textures as ImGui 1.92 user textures and its fonts in
+ *        ImGui's atlas. The only file the game UI has that includes ImGui.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -11,6 +11,7 @@
 #include <gameui_imgui/ImGuiUIBackend.h>
 
 #include <gameui/UIDrawList.h>
+#include <gameui/UIFonts.h>
 #include <gameui/UITextures.h>
 
 #include <core/log/Log.h>
@@ -20,6 +21,7 @@
 #include <imgui_internal.h>
 
 #include <cfloat>
+#include <climits>
 #include <cstring>
 
 namespace mir
@@ -31,6 +33,28 @@ namespace mir
             ImTextureData mData;
             ImGuiContext *mContext = nullptr;
         };
+
+        struct BackendFont
+        {
+            ImFont *mFont = nullptr;
+            ImGuiContext *mContext = nullptr;
+        };
+
+        // a context destroyed first took the font and its bytes down with its atlas
+        void ReleaseFont(void *opaque)
+        {
+            auto *font = static_cast<BackendFont *>(opaque);
+            if (font == nullptr)
+                return;
+            if (ImGui::GetCurrentContext() == font->mContext)
+                ImGui::GetIO().Fonts->RemoveFont(font->mFont);
+            delete font;
+        }
+
+        ImFont *FontOf(void *font)
+        {
+            return font != nullptr ? static_cast<BackendFont *>(font)->mFont : ImGui::GetFont();
+        }
 
         ImU32 ToImColor(UIColor color) { return ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, color.a)); }
 
@@ -91,7 +115,34 @@ namespace mir
         return UIBackendTexture{ texture, &Release };
     }
 
-    void ImGuiUIBackend::Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures)
+    UIBackendFont ImGuiUIBackend::MakeFont(std::span<const uint8_t> bytes)
+    {
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            MIR_LOG_ERROR("gameui: a UI font needs an ImGui context");
+            return {};
+        }
+        if (bytes.size() > static_cast<size_t>(INT_MAX))
+        {
+            MIR_LOG_ERROR("gameui: a {} byte font is too large", bytes.size());
+            return {};
+        }
+
+        // the atlas owns the copy and frees it with the font, or at once when it does not load
+        void *copy = IM_ALLOC(bytes.size());
+        std::memcpy(copy, bytes.data(), bytes.size());
+        ImFont *font = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(copy, static_cast<int>(bytes.size()), 16.0f);
+        if (font == nullptr)
+        {
+            MIR_LOG_ERROR("gameui: ImGui could not load a {} byte font", bytes.size());
+            return {};
+        }
+
+        return UIBackendFont{new BackendFont{font, ImGui::GetCurrentContext()}, &ReleaseFont};
+    }
+
+    void ImGuiUIBackend::Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures,
+                                const UIFonts &fonts)
     {
         ImDrawList *drawList = ImGui::GetBackgroundDrawList();
 
@@ -128,7 +179,7 @@ namespace mir
             {
                 const std::string_view text = list.TextOf(command);
                 const float fontSize = (command.mFontSize > 0.0f ? command.mFontSize : ImGui::GetFontSize()) * scale;
-                drawList->AddText(ImGui::GetFont(), fontSize, Min(command.mRect, area, scale),
+                drawList->AddText(FontOf(fonts.Find(command.mFont)), fontSize, Min(command.mRect, area, scale),
                                   ToImColor(command.mColor), text.data(), text.data() + text.size());
                 break;
             }
@@ -138,14 +189,14 @@ namespace mir
         }
     }
 
-    UISize ImGuiUIBackend::MeasureText(std::string_view text, float fontSize) const
+    UISize ImGuiUIBackend::MeasureText(std::string_view text, float fontSize, void *font) const
     {
-        if (ImGui::GetCurrentContext() == nullptr || ImGui::GetFont() == nullptr)
+        ImFont *imFont = ImGui::GetCurrentContext() != nullptr ? FontOf(font) : nullptr;
+        if (imFont == nullptr)
             return EstimateTextSize(text, fontSize > 0.0f ? fontSize : 16.0f);
 
         const float size = fontSize > 0.0f ? fontSize : ImGui::GetFontSize();
-        const ImVec2 measured =
-            ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, text.data(), text.data() + text.size());
+        const ImVec2 measured = imFont->CalcTextSizeA(size, FLT_MAX, 0.0f, text.data(), text.data() + text.size());
         return UISize{measured.x, measured.y};
     }
 } // namespace mir

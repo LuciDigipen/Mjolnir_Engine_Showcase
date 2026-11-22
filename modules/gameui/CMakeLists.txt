@@ -13,6 +13,7 @@ target_sources(engine_gameui PRIVATE
     src/gameui/UIContext.cpp
     src/gameui/UIDemoScreen.cpp
     src/gameui/UIDrawList.cpp
+    src/gameui/UIFonts.cpp
     src/gameui/UINavInput.cpp
     src/gameui/UIState.cpp
     src/gameui/UITextures.cpp

@@ -34,6 +34,8 @@ namespace mir
         const AssetResolver *mResolver = nullptr;
         // by path and slice, a failed one as an invalid sprite, so it is resolved and reported once
         std::unordered_map<std::string, UISprite> mSprites;
+        // by path, a failed one as the default font
+        std::unordered_map<std::string, UIFont> mFonts;
     };
 
     void RegisterUIBindings(sol::state &lua);

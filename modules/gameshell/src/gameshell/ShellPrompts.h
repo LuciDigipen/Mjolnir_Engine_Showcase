@@ -11,6 +11,7 @@
 
 #include <gameui/UIContext.h>
 #include <gameui/UILayout.h>
+#include <gameui/UIWidgets.h>
 
 #include <algorithm>
 #include <string_view>
@@ -30,7 +31,7 @@ namespace mir::shell
     inline void DrawLine(UIContext &ui, const UIRect &rect, float x, std::string_view text, UIColor color)
     {
         const float height = ui.MeasureText(text).height;
-        ui.DrawList().Text(x, rect.y + (rect.height - height) * 0.5f, text, color, ui.Style().mFontSize);
+        StyledText(ui, x, rect.y + (rect.height - height) * 0.5f, text, color);
     }
 
     // the label centred in the cap both ways

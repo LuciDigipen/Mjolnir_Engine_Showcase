@@ -41,6 +41,14 @@ units, measured by the backend's font at the size it is drawn, and screens size
 and centre their text with it. Without a backend it estimates half the font
 size a character.
 
+Text is drawn in `UIStyle::mFont`, the backend's own font while it is 0, and a
+widget places it across its rect by `mTextAlign`, left, centre or right inside
+the padding. `StyledText` is the one way text is drawn, by widgets, the shell's
+prompts and the demo alike: a shadow when `mTextShadowColor` has alpha, then an
+outline of eight copies `mTextOutlineWidth` out when `mTextOutlineColor` has
+alpha, then the text. Both fade with the text's own alpha, so a fading label
+takes its outline with it. They keep text readable over a bright sky.
+
 `GameUIModule` owns the `UIContext` and the screens drawn into it, each a
 function registered with `AddScreen(layer, screen)`. `SetSuspended(true)` makes `RunFrame` return without running a screen or reading the pointer, for a scene that is still preparing its resources. `RunFrame(area, pointer)` is one frame:
 `BeginFrame`, every `UIScreenLayer::Game` screen, then every `Shell` screen,
@@ -248,6 +256,15 @@ installed backend make its own copy, when the texture is added or when a
 backend is installed later. Each copy carries its own release function, so a
 backend may go before the textures; removing the backend only stops new copies.
 
+Fonts are TrueType or OpenType files in the game's assets. The cooker imports
+nothing from them and keeps them as raw bytes under their path's id.
+`UIFonts::Load(AssetCache&, AssetId)` reads them, and `UIFonts`, also owned by
+`UIContext`, keeps the bytes and has the backend make its font the same way
+`UITextures` does, with the same release. Bytes that do not start with a font
+file's tag are refused before the backend sees them, and a font that does not
+load is the default font, reported once. A font has no size: one font draws
+at every size a style or widget asks for.
+
 ### Layout
 
 `gameui/UILayout.h` turns one rect into others. `Inset` takes edges in,
@@ -297,19 +314,21 @@ wrap or grid, and no measuring pass.
 
 | Type | Header | Role |
 |---|---|---|
-| `UIRect`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice |
+| `UIRect`, `UIColor`, `UIEdges`, `UITexture`, `UISprite`, `UIFont`, `UITextAlign`, `UIStyle` | `gameui/UITypes.h` | Value types; `Intersect` and `Contains` for rects; a sprite is a texture, a source rect and a nine-slice; a font is a handle into `UIFonts`, 0 the backend's own |
 | `UIDrawList` | `gameui/UIDrawList.h` | `Rect`, `Texture`, `Sprite`, `Text`, `PushClip`/`PopClip`, `PushOpacity`/`PopOpacity`, recorded as `UIDrawCommand`s; `Sprite` nine-slices into `Texture`s |
 | `UITextures` | `gameui/UITextures.h` | Cooked textures as ImGui user textures, handed out as sprites; `Load` from an `AssetCache`, `Add` from a `TextureAsset` |
+| `UIFonts` | `gameui/UIFonts.h` | Font files kept as bytes and made by the backend, handed out as `UIFont`s; `Load` from an `AssetCache`, `Add` from bytes |
+| `IUIBackend`, `UIBackendTexture`, `UIBackendFont` | `gameui/UIBackend.h` | What draws the UI: `CreateTexture`, `MakeFont`, `Submit`, `MeasureText` in a font |
 | `UIId` | `gameui/UIId.h` | A widget's identity: a `constexpr` hash of a name and an optional index |
 | `UIState`, `UIPointer`, `UIInteraction` | `gameui/UIState.h` | Hot, active and focus, the press latch, the hit test, and `FollowLink` |
 | `UINavLinks`, `UIWidgetOptions` | `gameui/UIState.h` | A widget's four neighbours, whether it is hidden or disabled, whether it takes left and right (`mAdjustsX`), and whether only the pointer reaches it (`mPointerOnly`) |
 | `UINavInput`, `UINavDirection` | `gameui/UINavInput.h` | The UI actions for a frame, read from `InputState` by name; `UINavStepper` turns `UINavigate` into steps, one per direction per press |
-| `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing |
+| `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel`, `StyledText` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing; `StyledText` draws text in the style's font with its shadow and outline |
 | `UIAnchor`, `UIAxis`, `UIStack`; `Inset`, `Anchor` | `gameui/UILayout.h` | Layout over rects: insets, anchoring to a point of a container, rows and columns cut from either end; `kUITopLeft` to `kUIBottomRight` |
 | `GameUIModule`, `UIScreenLayer` | `gameui/GameUIModule.h` | The context and the screens by layer; `RunFrame`, `SetSuspended`, `ShellHeldInput` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
 | `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText`/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures, the fonts and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area. Each command stores its clip already intersected with
@@ -360,8 +379,8 @@ enabled widget declared. `UIState::SetFocus` picks the widget a screen opens on.
 ## Rules
 
 **gameui names no graphics API.** It does not link `imgui`, and no header in it
-includes one. `IUIBackend` is the whole contract: make a texture, submit a
-frame. Swapping the backend means swapping the bridge.
+includes one. `IUIBackend` is the whole contract: make a texture, make a font,
+measure text, submit a frame. Swapping the backend means swapping the bridge.
 
 **The game UI draws after the editor's layout in the same frame.** The editor's
 drawer writes `GameUIArea` from the scene viewport, and the bridge's drawer runs
@@ -554,7 +573,10 @@ across sizes, pieces covering the rect exactly, corners shrinking by one factor,
 uneven and oversized slices, an atlas cell, and culling by piece.
 `tests/UITextures.tests.cpp` covers the pixels kept until a backend makes a
 texture, a wrong pixel count, and copies releasing themselves after the backend
-is gone. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
+is gone. `tests/UIFonts.tests.cpp` covers which bytes are a font file and a font
+made once a backend is installed and released with the table, and
+`tests/UIWidgets.tests.cpp` covers text in the style's font and size, the shadow
+and outline passes and their fading, alignment, and measuring in a font. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
 helper, a row inside a column inside an anchored region, and the demo's
 `Layout` at 16:9, 21:9, 4:3 and three more sizes, each with no inset, a TV's 5%
 and a lopsided one: everything inside the safe area, the menu down its left and
@@ -613,8 +635,20 @@ looks right is verified by running `--ui-demo`.
    the game's options, would set them through `SetSafeAreaInsets`.
 14. **More layout.** Equal shares, wrapping, grids and scrolling wait for a
    screen that needs them, as rows and columns waited for the demo screen.
+15. **More from fonts.** An outline is eight copies of the text, fine at HUD
+   amounts and soft at large widths; signed distance fields would make it
+   sharp and cheap. A character a font lacks shows the backend's fallback
+   glyph, with no second font to fall back to. No letter spacing, wrapping or
+   rich text, and no unloading, as for textures.
 
 ## Changed
+
+*2026-11-21* — **Fonts.** Was: all text was in the backend's one font, the
+editor's Inter. Now: `UIFonts` loads TrueType and OpenType files from the game's
+assets, `UIStyle` has a font, an alignment, a shadow and an outline, every text
+goes through `StyledText`, and `IUIBackend` has `MakeFont`, and its `Submit` and
+`MeasureText` take the fonts. Because: game HUDs need their own type, readable
+over the scene.
 
 *2026-11-21* — **A disabled widget lets go, and a blocked layer cannot take
 focus.** Was: a widget disabled mid-press kept the pointer, so a `Game` slider

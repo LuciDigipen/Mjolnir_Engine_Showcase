@@ -3,7 +3,8 @@
  * @author Quy Dong Ta
  * @brief Tests for gameui_imgui/ImGuiUIBackend: cooked textures reaching ImGui's
  *        dynamic texture path, loading through AssetCache, teardown before and
- *        after the context, and EndFrame drawing a sprite as an image. Runs a
+ *        after the context, and EndFrame drawing a sprite as an image; fonts
+ *        in ImGui's atlas, drawn and measured with their own glyphs. Runs a
  *        headless ImGui context with no renderer backend.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
@@ -12,6 +13,7 @@
 #include <gameui_imgui/ImGuiUIBackend.h>
 
 #include <gameui/UIContext.h>
+#include <gameui/UIFonts.h>
 #include <gameui/UITextures.h>
 #include <gameui/UIWidgets.h>
 
@@ -132,6 +134,12 @@ namespace
     {
         std::ofstream file(path, std::ios::binary);
         file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    std::vector<uint8_t> ReadTestFont()
+    {
+        std::ifstream file(MIR_TEST_FONT, std::ios::binary);
+        return std::vector<uint8_t>(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
     }
 } // namespace
 
@@ -368,4 +376,100 @@ TEST_CASE("Text keeps to the box sized for it, whatever ImGui's DPI scale and at
         CHECK(vertex.pos.x <= rect.Right() * 1.5f + 1.0f);
         CHECK(vertex.pos.y <= rect.Bottom() * 1.5f + 1.0f);
     }
+}
+
+TEST_CASE("A font goes into ImGui's atlas, draws and measures with its own glyphs, and leaves with UIFonts",
+          "[gameui][fonts]")
+{
+    const std::vector<uint8_t> bytes = ReadTestFont();
+    REQUIRE(bytes.size() > 1000);
+
+    ImGuiFixture imgui;
+    ImGuiUIBackend backend;
+    InputState input;
+    const InputMap map = DefaultInputMap();
+
+    // ImGui's own font first, as the editor loads Inter before the game UI runs
+    ImGui::NewFrame();
+    ImFontAtlas &atlas = *ImGui::GetIO().Fonts;
+    const int before = atlas.Fonts.Size;
+    REQUIRE(before >= 1);
+    {
+        UIContext ui;
+        ui.SetBackend(&backend);
+        const UIFont font = ui.Fonts().Add(bytes);
+        REQUIRE(font.IsValid());
+        REQUIRE(atlas.Fonts.Size == before + 1);
+        ImFont *added = atlas.Fonts.back();
+
+        ui.BeginFrame(UIRect{0, 0, 640, 480}, input, map, UIPointer{});
+        const std::string_view text = "Altitude 14419";
+        const UISize inFont = ui.MeasureText(text, font, 24.0f);
+        const ImVec2 expected = added->CalcTextSizeA(24.0f, FLT_MAX, 0.0f, text.data(), text.data() + text.size());
+        CHECK(inFont.width == Catch::Approx(expected.x));
+        CHECK(inFont.width != Catch::Approx(ui.MeasureText(text, UIFont{}, 24.0f).width));
+
+        ui.Style().mFont = font;
+        ui.Style().mFontSize = 24.0f;
+        Label(ui, UIId("altitude"), UIRect{100, 100, 300, 40}, text);
+        ui.EndFrame();
+        ImGui::Render();
+
+        const ImDrawList *drawList = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
+        CHECK(drawList->VtxBuffer.Size >= 4 * 10);
+    }
+    CHECK(atlas.Fonts.Size == before);
+}
+
+TEST_CASE("UIFonts outlives the context its fonts were added to", "[gameui][fonts]")
+{
+    const std::vector<uint8_t> bytes = ReadTestFont();
+    ImGuiFixture imgui;
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+    fonts.SetBackend(&backend);
+    REQUIRE(fonts.Add(bytes).IsValid());
+
+    // the atlas took the font with it; the release only drops what UIFonts kept
+    imgui.Destroy();
+    fonts.SetBackend(nullptr);
+}
+
+TEST_CASE("Load reads a font through the asset cache, once per id", "[gameui][fonts]")
+{
+    ScratchDir dir;
+    const AssetId font = MakeAssetId("assets/fonts/Inter.ttf");
+    const AssetId raw = MakeAssetId("assets/fonts/notes.txt");
+    const AssetId missing = MakeAssetId("assets/fonts/missing.ttf");
+    const std::vector<uint8_t> bytes = ReadTestFont();
+    WriteFile(dir.path / "font.blob", BuildAssetBlob(kRawAssetTypeTag, kRawAssetContentVersion,
+                                                     std::as_bytes(std::span(bytes))));
+    const std::byte text[] = {std::byte{'h'}, std::byte{'i'}};
+    WriteFile(dir.path / "notes.blob", BuildAssetBlob(kRawAssetTypeTag, kRawAssetContentVersion, text));
+
+    const AssetManifestSourceEntry entries[] = {
+        {{font, kRawAssetTypeTag, kRawAssetContentVersion}, "font.blob"},
+        {{raw, kRawAssetTypeTag, kRawAssetContentVersion}, "notes.blob"},
+    };
+    const std::optional<AssetManifest> manifest = AssetManifest::Parse(BuildAssetManifestBlob(entries));
+    REQUIRE(manifest.has_value());
+    AssetCache cache(&*manifest, dir.path);
+
+    ImGuiFixture imgui;
+    ImGui::NewFrame();
+    ImGuiUIBackend backend;
+    UIFonts fonts;
+    fonts.SetBackend(&backend);
+    const UIFont loaded = fonts.Load(cache, font);
+    REQUIRE(loaded.IsValid());
+    CHECK(fonts.Find(loaded) != nullptr);
+    CHECK(fonts.Load(cache, font) == loaded);
+    CHECK(fonts.Count() == 1);
+
+    // not fonts: the default font each time, and nothing added
+    CHECK_FALSE(fonts.Load(cache, raw).IsValid());
+    CHECK_FALSE(fonts.Load(cache, missing).IsValid());
+    CHECK_FALSE(fonts.Load(cache, missing).IsValid());
+    CHECK(fonts.Count() == 1);
+    ImGui::Render();
 }

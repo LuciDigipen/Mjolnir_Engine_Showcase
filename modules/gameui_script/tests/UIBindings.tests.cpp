@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 using namespace mir;
 
@@ -315,4 +316,108 @@ return T
     CHECK(f.ui.State().Focus() == UIId("menu"));
     CHECK(f.ui.State().Focus() != before);
     CHECK(f.host.ErrorCount() == 0);
+}
+
+TEST_CASE("Text options style one widget's text and are put back after it", "[gameui][script]")
+{
+    Fixture f;
+    // as if ui:font had loaded it, since this fixture has no assets
+    f.frame->mFonts.emplace("fonts/hud.ttf", UIFont{ 5 });
+    const Entity entity = f.Spawn("ui_text", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    local font = ui:font("fonts/hud.ttf")
+    ui:label("speed", { x = 100, y = 100, w = 200, h = 40 }, "SPD", {
+        font = font, size = 24, color = { 1, 0, 0, 1 }, align = "right",
+        shadow = { x = 2, y = 3, color = { r = 0, g = 0, b = 0, a = 0.5 } }, outline = true,
+    })
+    ui:label("plain", { x = 100, y = 200, w = 200, h = 40 }, "Plain")
+    local w, h = ui:measure_text("abcd", nil, 10)
+    world:set(entity, "UIBindingsProbe", "w", w)
+    world:set(entity, "UIBindingsProbe", "h", h)
+end
+return T
+)LUA");
+
+    const UIStyle before = f.ui.Style();
+    f.Frame();
+    REQUIRE(f.host.ErrorCount() == 0);
+
+    std::vector<UIDrawCommand> speed;
+    std::vector<UIDrawCommand> plain;
+    for (const UIDrawCommand &command : f.ui.DrawList().Commands())
+    {
+        if (command.mKind != UIDrawCommandKind::Text)
+            continue;
+        (f.ui.DrawList().TextOf(command) == "SPD" ? speed : plain).push_back(command);
+    }
+
+    // a shadow, eight outline copies and the text, all in the font and size
+    REQUIRE(speed.size() == 10);
+    for (const UIDrawCommand &command : speed)
+    {
+        CHECK(command.mFont == UIFont{ 5 });
+        CHECK(command.mFontSize == 24.0f);
+    }
+    CHECK(speed.front().mColor == UIColor{ 0, 0, 0, 0.5f });
+    CHECK(speed.front().mRect.x == Catch::Approx(speed.back().mRect.x + 2.0f));
+    CHECK(speed.back().mColor == UIColor{ 1, 0, 0, 1 });
+    // right aligned: 3 characters estimated at half of 24 each
+    CHECK(speed.back().mRect.x == Catch::Approx(300.0f - before.mPadding - 36.0f));
+
+    REQUIRE(plain.size() == 1);
+    CHECK(plain[0].mFont == UIFont{});
+    CHECK(plain[0].mFontSize == before.mFontSize);
+    CHECK(plain[0].mColor == before.mTextColor);
+
+    CHECK(f.ui.Style().mFont == before.mFont);
+    CHECK(f.ui.Style().mTextAlign == before.mTextAlign);
+    CHECK(f.ui.Style().mTextOutlineColor == before.mTextOutlineColor);
+    CHECK(ReadProbe<float>(f.world, entity, "w") == Catch::Approx(20.0f));
+    CHECK(ReadProbe<float>(f.world, entity, "h") == Catch::Approx(10.0f));
+}
+
+TEST_CASE("ui:font is nil for a font that does not load, and a bad text option fails the OnUI", "[gameui][script]")
+{
+    Fixture f;
+    const Entity entity = f.Spawn("ui_no_font", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    world:set(entity, "UIBindingsProbe", "clicked", ui:font("fonts/missing.ttf") == nil)
+end
+return T
+)LUA");
+    f.Spawn("ui_bad_align", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    ui:label("a", { x = 0, y = 0, w = 10, h = 10 }, "A", { align = "middle" })
+end
+return T
+)LUA");
+    f.Spawn("ui_text_on_slider", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    ui:slider("s", { x = 0, y = 0, w = 10, h = 10 }, 0, 0, 1, { size = 20 })
+end
+return T
+)LUA");
+    f.Spawn("ui_bad_font", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    ui:button("b", { x = 0, y = 0, w = 10, h = 10 }, "B", { font = "fonts/hud.ttf" })
+end
+return T
+)LUA");
+
+    const UIStyle before = f.ui.Style();
+    f.Frame();
+    CHECK(ReadProbe<bool>(f.world, entity, "clicked"));
+    CHECK(f.host.ErrorCount() == 3);
+    CHECK(f.ui.Style().mFont == before.mFont);
+    CHECK(f.ui.Style().mTextAlign == before.mTextAlign);
 }

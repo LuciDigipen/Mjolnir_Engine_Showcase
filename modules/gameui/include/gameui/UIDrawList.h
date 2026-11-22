@@ -43,6 +43,7 @@ namespace mir
 
 
         float mFontSize = 0.0f;
+        UIFont mFont;
 
 
         UITexture mTexture;
@@ -63,7 +64,7 @@ namespace mir
                      const UIRect &uv = UIRect{0.0f, 0.0f, 1.0f, 1.0f});
 
         void Sprite(const UIRect &rect, const UISprite &sprite, UIColor tint = kUIWhite);
-        void Text(float x, float y, std::string_view text, UIColor color, float fontSize = 0.0f);
+        void Text(float x, float y, std::string_view text, UIColor color, float fontSize = 0.0f, UIFont font = {});
 
         void PushClip(const UIRect &rect);
         void PopClip();

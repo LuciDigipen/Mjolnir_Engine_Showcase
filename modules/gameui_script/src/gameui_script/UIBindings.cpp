@@ -112,6 +112,20 @@ namespace mir
                 ReadIndex(table[2].get<sol::object>(), call, argument));
         }
 
+        // what a widget's text options change in the style, for that widget only
+        struct TextOptions
+        {
+            std::optional<UIFont> mFont;
+            std::optional<float> mSize;
+            std::optional<UIColor> mColor;
+            std::optional<UITextAlign> mAlign;
+            std::optional<UIColor> mShadowColor;
+            float mShadowX = 1.0f;
+            float mShadowY = 1.0f;
+            std::optional<UIColor> mOutlineColor;
+            float mOutlineWidth = 1.0f;
+        };
+
         struct Options
         {
             uint64_t mIndex = 0;
@@ -119,22 +133,139 @@ namespace mir
             bool mFocusable = false;
             UIColor mTint = kUIWhite;
             float mStep = 0.0f;
+            TextOptions mText;
         };
 
         constexpr std::string_view kCommonOptions[] = { "index", "disabled", "hidden", "pointer_only", "links" };
+        constexpr std::string_view kTextOptions[] = { "font", "size", "color", "align", "shadow", "outline" };
+
+        // { r, g, b, a } by name or by position; a missing channel is 1
+        UIColor ReadColor(const sol::object &value, std::string_view call, std::string_view argument)
+        {
+            if (value.get_type() != sol::type::table)
+                Fail(call, std::format("{} must be a table {{ r, g, b, a }}", argument));
+            const sol::table table = value.as<sol::table>();
+            const bool positional = table[1].get<sol::object>() != sol::lua_nil;
+            const auto channel = [&](const char *name, int position)
+            {
+                const sol::object part = positional ? table[position].get<sol::object>() : table[name].get<sol::object>();
+                return part == sol::lua_nil ? 1.0f : ReadFloat(part, call, argument);
+            };
+            return UIColor{ channel("r", 1), channel("g", 2), channel("b", 3), channel("a", 4) };
+        }
 
         UIColor ReadTint(const sol::object &value, std::string_view call)
         {
-            if (value.get_type() != sol::type::table)
-                Fail(call, "options.tint must be a table { r, g, b, a }");
-            const sol::table tint = value.as<sol::table>();
-            const auto channel = [&](const char *name)
-            {
-                const sol::object part = tint[name].get<sol::object>();
-                return part == sol::lua_nil ? 1.0f : ReadFloat(part, call, "options.tint");
-            };
-            return UIColor{ channel("r"), channel("g"), channel("b"), channel("a") };
+            return ReadColor(value, call, "options.tint");
         }
+
+        UIFont ReadFont(const sol::object &value, std::string_view call, std::string_view argument)
+        {
+            if (!value.is<UIFont>())
+                Fail(call, std::format("{} must be what ui:font returned", argument));
+            return value.as<UIFont>();
+        }
+
+        float ReadSize(const sol::object &value, std::string_view call, std::string_view argument)
+        {
+            const float size = ReadFloat(value, call, argument);
+            if (size <= 0.0f)
+                Fail(call, std::format("{} must be more than 0", argument));
+            return size;
+        }
+
+        UITextAlign ReadAlign(const sol::object &value, std::string_view call)
+        {
+            const std::string_view name = ReadText(value, call, "options.align");
+            if (name == "left")
+                return UITextAlign::Left;
+            if (name == "center")
+                return UITextAlign::Center;
+            if (name == "right")
+                return UITextAlign::Right;
+            Fail(call, std::format("unknown align '{}'; valid ones are left, center, right", name));
+        }
+
+        // false turns off what the style has, true is black at the defaults, a table sets what it names
+        template <typename Fields>
+        std::optional<UIColor> ReadEffect(const sol::object &value, std::string_view call, std::string_view argument,
+            Fields fields)
+        {
+            constexpr UIColor kBlack{ 0.0f, 0.0f, 0.0f, 1.0f };
+            if (value.get_type() == sol::type::boolean)
+                return value.as<bool>() ? kBlack : UIColor{ 0.0f, 0.0f, 0.0f, 0.0f };
+            if (value.get_type() != sol::type::table)
+                Fail(call, std::format("{} must be true, false or a table", argument));
+            const sol::table table = value.as<sol::table>();
+            fields(table);
+            const sol::object color = table["color"].get<sol::object>();
+            return color == sol::lua_nil ? kBlack : ReadColor(color, call, std::format("{}.color", argument));
+        }
+
+        void ReadTextOption(TextOptions &text, std::string_view key, const sol::object &entry, std::string_view call)
+        {
+            if (key == "font")
+                text.mFont = ReadFont(entry, call, "options.font");
+            else if (key == "size")
+                text.mSize = ReadSize(entry, call, "options.size");
+            else if (key == "color")
+                text.mColor = ReadColor(entry, call, "options.color");
+            else if (key == "align")
+                text.mAlign = ReadAlign(entry, call);
+            else if (key == "shadow")
+                text.mShadowColor = ReadEffect(entry, call, "options.shadow", [&](const sol::table &table)
+                    {
+                        const sol::object x = table["x"].get<sol::object>();
+                        const sol::object y = table["y"].get<sol::object>();
+                        if (x != sol::lua_nil)
+                            text.mShadowX = ReadFloat(x, call, "options.shadow.x");
+                        if (y != sol::lua_nil)
+                            text.mShadowY = ReadFloat(y, call, "options.shadow.y");
+                    });
+            else if (key == "outline")
+                text.mOutlineColor = ReadEffect(entry, call, "options.outline", [&](const sol::table &table)
+                    {
+                        const sol::object width = table["width"].get<sol::object>();
+                        if (width != sol::lua_nil)
+                            text.mOutlineWidth = ReadSize(width, call, "options.outline.width");
+                    });
+        }
+
+        // a widget's text options over the style while it draws, put back after, whatever happens
+        class TextStyleScope
+        {
+        public:
+            TextStyleScope(UIContext &ui, const TextOptions &text) : mStyle(ui.Style()), mSaved(ui.Style())
+            {
+                if (text.mFont)
+                    mStyle.mFont = *text.mFont;
+                if (text.mSize)
+                    mStyle.mFontSize = *text.mSize;
+                if (text.mColor)
+                    mStyle.mTextColor = *text.mColor;
+                if (text.mAlign)
+                    mStyle.mTextAlign = *text.mAlign;
+                if (text.mShadowColor)
+                {
+                    mStyle.mTextShadowColor = *text.mShadowColor;
+                    mStyle.mTextShadowX = text.mShadowX;
+                    mStyle.mTextShadowY = text.mShadowY;
+                }
+                if (text.mOutlineColor)
+                {
+                    mStyle.mTextOutlineColor = *text.mOutlineColor;
+                    mStyle.mTextOutlineWidth = text.mOutlineWidth;
+                }
+            }
+            ~TextStyleScope() { mStyle = mSaved; }
+
+            TextStyleScope(const TextStyleScope &) = delete;
+            TextStyleScope &operator=(const TextStyleScope &) = delete;
+
+        private:
+            UIStyle &mStyle;
+            UIStyle mSaved;
+        };
 
         UINavLinks ReadLinks(const UIScriptFrame &frame, const sol::object &value, std::string_view call)
         {
@@ -154,7 +285,7 @@ namespace mir
         }
 
         Options ReadOptions(const UIScriptFrame &frame, const sol::object &value, std::string_view call,
-            std::initializer_list<std::string_view> extra)
+            std::initializer_list<std::string_view> extra, bool text = false)
         {
             Options options;
             if (value == sol::lua_nil)
@@ -170,6 +301,10 @@ namespace mir
                 for (const std::string_view name : extra)
                     if (key == name)
                         return true;
+                if (text)
+                    for (const std::string_view name : kTextOptions)
+                        if (key == name)
+                            return true;
                 return false;
             };
 
@@ -184,6 +319,9 @@ namespace mir
                         valid += std::format("{}{}", valid.empty() ? "" : ", ", name);
                     for (const std::string_view name : extra)
                         valid += std::format(", {}", name);
+                    if (text)
+                        for (const std::string_view name : kTextOptions)
+                            valid += std::format(", {}", name);
                     Fail(call, std::format("unknown option; valid ones are {}", valid));
                 }
 
@@ -203,6 +341,8 @@ namespace mir
                     options.mTint = ReadTint(entry, call);
                 else if (key == "step")
                     options.mStep = ReadFloat(entry, call, "options.step");
+                else
+                    ReadTextOption(options.mText, key, entry, call);
             }
             return options;
         }
@@ -289,6 +429,32 @@ namespace mir
             return sprite;
         }
 
+        UIFont LoadFont(UIScriptFrame &frame, UIContext &ui, std::string_view path)
+        {
+            const std::string key(path);
+            if (const auto it = frame.mFonts.find(key); it != frame.mFonts.end())
+                return it->second;
+
+            UIFont font;
+            if (frame.mAssets == nullptr || frame.mResolver == nullptr)
+                MIR_LOG_ERROR("ui:font: no assets to load '{}' from", path);
+            else
+            {
+                std::string error;
+                const AssetId id = frame.mResolver->Resolve(path, &error);
+                if (id.IsNull())
+                    MIR_LOG_ERROR("ui:font: '{}': {}", path, error);
+                else
+                {
+                    font = ui.Fonts().Load(*frame.mAssets, id);
+                    if (!font.IsValid())
+                        MIR_LOG_ERROR("ui:font: '{}' is not a font that loads", path);
+                }
+            }
+            frame.mFonts.emplace(key, font);
+            return font;
+        }
+
         float ReadOptionalFloat(const sol::object &value, std::string_view call, std::string_view argument)
         {
             return value == sol::lua_nil ? 0.0f : ReadFloat(value, call, argument);
@@ -303,6 +469,7 @@ namespace mir
     void RegisterUIBindings(sol::state &lua)
     {
         lua.new_usertype<UISprite>("UISprite", sol::no_constructor);
+        lua.new_usertype<UIFont>("UIFont", sol::no_constructor);
 
         lua.new_usertype<LuaStack>("UIStack", sol::no_constructor,
             "next", [](LuaStack &self, const sol::object &size, sol::this_state state)
@@ -348,7 +515,8 @@ namespace mir
                           const sol::object &text, const sol::object &opts, sol::this_state state)
         {
             UIContext &context = Use(self, "label");
-            const Options options = ReadOptions(self, opts, "label", { "focusable" });
+            const Options options = ReadOptions(self, opts, "label", { "focusable" }, true);
+            const TextStyleScope styled(context, options.mText);
             return ResultToLua(state, Label(context, MakeId(self, ReadText(name, "label", "name"), options.mIndex),
                 ReadRect(rect, "label"), ReadText(text, "label", "text"), Display(options)));
         };
@@ -356,7 +524,8 @@ namespace mir
                            const sol::object &text, const sol::object &opts, sol::this_state state)
         {
             UIContext &context = Use(self, "button");
-            const Options options = ReadOptions(self, opts, "button", {});
+            const Options options = ReadOptions(self, opts, "button", {}, true);
+            const TextStyleScope styled(context, options.mText);
             return ResultToLua(state, Button(context, MakeId(self, ReadText(name, "button", "name"), options.mIndex),
                 ReadRect(rect, "button"), ReadText(text, "button", "text"), options.mWidget));
         };
@@ -383,7 +552,8 @@ namespace mir
                            sol::this_state state)
         {
             UIContext &context = Use(self, "toggle");
-            const Options options = ReadOptions(self, opts, "toggle", {});
+            const Options options = ReadOptions(self, opts, "toggle", {}, true);
+            const TextStyleScope styled(context, options.mText);
             bool on = ReadBool(value, "toggle", "value");
             const UIWidgetResult result = Toggle(context, MakeId(self, ReadText(name, "toggle", "name"),
                 options.mIndex), ReadRect(rect, "toggle"), ReadText(text, "toggle", "text"), on, options.mWidget);
@@ -413,6 +583,15 @@ namespace mir
             if (!sprite.IsValid())
                 return sol::lua_nil;
             return sol::make_object(state, sprite);
+        };
+
+        ui["font"] = [](UIScriptFrame &self, const sol::object &path, sol::this_state state) -> sol::object
+        {
+            UIContext &context = Use(self, "font");
+            const UIFont font = LoadFont(self, context, ReadText(path, "font", "path"));
+            if (!font.IsValid())
+                return sol::lua_nil;
+            return sol::make_object(state, font);
         };
 
         // scoped, so nothing a script pushes outlives the function it pushed it for
@@ -445,10 +624,15 @@ namespace mir
             return context.SetFocus(MakeId(self, ReadText(name, "set_focus", "name"),
                 index == sol::lua_nil ? 0 : ReadIndex(index, "set_focus", "index")));
         };
-        ui["measure_text"] = [](UIScriptFrame &self, const sol::object &text)
+        ui["measure_text"] = [](UIScriptFrame &self, const sol::object &text, const sol::object &font,
+                                 const sol::object &size)
         {
-            const UISize size = Use(self, "measure_text").MeasureText(ReadText(text, "measure_text", "text"));
-            return std::make_tuple(size.width, size.height);
+            const UIContext &context = Use(self, "measure_text");
+            const UIStyle &style = context.Style();
+            const UISize measured = context.MeasureText(ReadText(text, "measure_text", "text"),
+                font == sol::lua_nil ? style.mFont : ReadFont(font, "measure_text", "font"),
+                size == sol::lua_nil ? style.mFontSize : ReadSize(size, "measure_text", "size"));
+            return std::make_tuple(measured.width, measured.height);
         };
         ui["prompt"] = [](UIScriptFrame &self, const sol::object &action, sol::this_state state)
         {

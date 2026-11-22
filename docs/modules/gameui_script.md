@@ -63,6 +63,16 @@ sees pixels. A widget's name is mixed with the entity, so two entities running
 one script never share a widget. A widget drawn in a loop takes
 `{ index = i }`.
 
+Text takes a game's own font and look per widget:
+
+```lua
+local font = ui:font("fonts/Rajdhani-SemiBold.ttf")
+ui:label("speed", rect, string.format("%d", speed), {
+    font = font, size = 26, align = "right", color = { 1, 0.3, 0.2, 1 },
+    outline = { width = 1, color = { 0, 0, 0, 0.6 } }, shadow = true,
+})
+```
+
 Fades and slides come from the `actions` bridge's named values:
 `ui:with_opacity(world:value("Hud.alpha", 1), function() ... end)`.
 `games/HelloWorld/assets/scripts/ui_demo.lua` is a working example.
@@ -94,12 +104,13 @@ Every call is a method, `ui:name(...)`. A widget call returns a result table
 | `toggle(name, rect, text, value[, options])` | value, result | A checkbox; returns the new value |
 | `slider(name, rect, value, min, max[, options])` | value, result | A slider; returns the new value |
 | `sprite(path[, slice])` | sprite or `nil` | A texture from the game's assets, nine-sliced by `slice`; loaded once, and `nil` with one error if it does not load |
+| `font(path)` | font or `nil` | A `.ttf` or `.otf` from the game's assets, for the `font` option; loaded once, and `nil` with one error if it does not load. Unlike `ui`, a font can be kept in `self` |
 | `with_opacity(alpha, fn)`, `with_clip(rect, fn)` | nothing | Runs `fn` faded, or clipped to `rect` |
 | `hold_input()` | nothing | Gameplay reads every action at rest this frame, as an open menu wants |
 | `hide_cursor()` | nothing | The mouse cursor is hidden this frame |
 | `cancel_pressed()`, `pause_pressed()`, `focus_visible()` | bool | `UICancel` or `UIPause` this frame; whether the focus highlight shows |
 | `set_focus(name[, index])` | bool | Moves focus to a widget; `false` while the shell's pause menu holds the input |
-| `measure_text(text)` | width, height | Text size in UI units at the style's font size |
+| `measure_text(text[, font[, size]])` | width, height | Text size in UI units, in the style's font and size unless given; `nil` keeps the style's |
 | `prompt(action)` | label or `nil`, gamepad | The binding's short name on the active device |
 
 `options` is optional. Every widget takes `index`, `disabled`, `hidden`,
@@ -107,6 +118,20 @@ Every call is a method, `ui:name(...)`. A widget call returns a result table
 `{ name, index }`). `label`, `image` and `bar` also take `focusable`, `image`
 takes `tint` (`{ r, g, b, a }`), and `slider` takes `step`. An unknown key is an
 error that lists the valid ones.
+
+`label`, `button` and `toggle` also take text options, which change that
+widget's text only:
+
+| Option | Value |
+|---|---|
+| `font` | What `ui:font` returned |
+| `size` | Font size in UI units, more than 0 |
+| `color` | The text colour |
+| `align` | `"left"`, `"center"` or `"right"`, inside the widget's padding |
+| `shadow` | `true` for black, 1 unit down and right; `false` for none; or `{ color, x, y }` |
+| `outline` | `true` for black, 1 unit wide; `false` for none; or `{ color, width }` |
+
+A colour is `{ r, g, b, a }` by name or by position, a missing channel 1.
 
 ## Rules
 
@@ -131,6 +156,10 @@ take no press or focus, because the menu is a `Shell` screen that holds the
 input. A slider or button held when the menu opens lets go, and `ui:set_focus`
 returns `false` and leaves focus on the menu. See [gameui.md](gameui.md).
 
+**Text options last one widget.** They are set on the style while that widget
+draws and put back after it, error or not, so the next widget and the shell's
+pause menu draw in the shared style.
+
 **Scripts draw in query order.** Two entities' UIs overlap in whatever order the
 ECS walks them. Keep a game's screens on one entity, or apart on screen, until
 there is an order field.
@@ -144,18 +173,29 @@ on a Lua button, only after `OnStart` and only in Play (paused included), two
 entities' widgets kept apart, toggle and slider values and layout rects, a
 failing `OnUI` leaving the stacks balanced while the next script still draws,
 and a bad argument, an unknown option and a kept `ui` each failing cleanly.
+Text options: a label's font, size, colour, alignment, shadow and outline in its
+draw commands and gone from the next label and the style, `measure_text` with a
+size, `ui:font` `nil` for a font that does not load, and a bad `align`, a text
+option on a slider and a string for `font` each failing the `OnUI`.
 `HelloWorld`'s default scene has the sample.
 
 ## Backlog
 
 1. **Order between scripts,** a `ui_order` the bridge sorts by.
-2. **Style from Lua.** Screens use the shared `UIStyle`.
+2. **Style from Lua.** Screens use the shared `UIStyle`; text options are
+   per widget, so a script repeats them or keeps them in a table.
 3. **A preview in Edit.** Scripts only run in Play, so their UI only shows there.
 4. **Layouts from data,** on top of the same calls: a Lua table is already one.
 5. **Audio and controls options from Lua,** for a game's own settings screen,
    through `audio_script` and `input_script`.
 
 ## Changed
+
+*2026-11-21* — **Fonts and text options.** Was: text was in the shared style's
+font, size and colour only. Now: `ui:font` loads a game's font, and `label`,
+`button` and `toggle` take `font`, `size`, `color`, `align`, `shadow` and
+`outline`; `measure_text` takes a font and size. Because: HUD text in a game's
+own type.
 
 *2026-11-21* — **Under the pause menu, a held widget lets go and `set_focus` is
 refused.** Was: a slider dragged when the menu opened kept changing behind it,
