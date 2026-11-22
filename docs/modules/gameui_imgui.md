@@ -23,6 +23,15 @@ Output. A texture's pixels go into an `ImTextureData` in `WantCreate`,
 registered as a user texture; `ImGui_ImplVulkan` creates, uploads and frees it,
 so the renderer has no part in it.
 
+A texture released while ImGui runs, such as a Play session's sprites when Play
+stops, may still be drawn by a frame in flight. One never uploaded is
+unregistered at once. An uploaded one is marked `WantDestroyNextFrame` and
+queued: ImGui moves it to `WantDestroy`, `ImGui_ImplVulkan` destroys its GPU
+copy once it has gone unused for as many frames as the swapchain has images,
+and `ImGuiUIBackend::RetireTextures`, which `GameUIImGuiModule` calls every
+frame, then unregisters and frees it. ImGui drops its own atlas textures from
+its list after a destroy, but not a user texture, which is why this is ours.
+
 A font goes into ImGui's font atlas through `AddFontFromMemoryTTF`, the atlas
 owning a copy of its bytes. ImGui 1.92 bakes each size the first time text
 asks for it, so one font serves every size. The font is removed from the atlas
@@ -76,7 +85,9 @@ puts after `ImGuiModule` (see [gameui.md](gameui.md)).
 *As of 2026-10-24.* Moved out of `gameui` as is. `tests/ImGuiUIBackend.tests.cpp`
 hosts a headless ImGui context and covers a texture reaching ImGui's list in
 `WantCreate` with its pixels, a texture made when the backend is installed,
-loading through an `AssetCache`, teardown before and after the context, and
+loading through an `AssetCache`, teardown before and after the context, two
+sessions' uploaded textures kept until the renderer backend destroys each and
+then retired, and
 `EndFrame` drawing a sprite with the `ImTextureData` as its texture. It also
 loads `fonts/Inter.ttf` from the source tree as a game font: into the atlas and
 out with its `UIFonts`, measured with its own widths, drawn by a label, loaded
@@ -93,6 +104,13 @@ every shape kind writes vertices under a turn.
 None yet.
 
 ## Changed
+
+*2026-11-22* — **Uploaded textures are retired, not leaked.** Was: a texture
+released while the context lived but after its upload, a Play session's when
+Play stopped, was logged and left registered, so every Play leaked a copy of
+the style file's and scripts' sprites. Now: it is queued, destroyed by
+`ImGui_ImplVulkan` once unused, and freed by `RetireTextures`. Because: review;
+each Play loads its own copy of `ui.style`'s sprites.
 
 *2026-11-21* — **Shapes, gradients and transforms.** Was: rects, images and
 text, axis-aligned. Now: the new shape commands through ImGui's own calls, and

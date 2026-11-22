@@ -565,10 +565,13 @@ the cooker's, with its own failures, in every game build.
 **Destroy the game UI after ImGui shuts down.** An ImGui texture's GPU side
 belongs to ImGui's Vulkan backend, which frees a registered texture only while
 rendering or in its own shutdown. A copy released after the context frees only
-CPU memory. One released while the context lives unregisters a texture the
-backend never uploaded, and leaks one it did, with an error. `App` therefore
-declares `GameUIModule` and `GameShellModule` before `ImGuiModule`; the
-`ui-demo` smoke run fails on that error.
+CPU memory. One released while the context lives, as a Play session's is when
+Play stops, unregisters a texture the backend never uploaded at once, and
+retires one it did: ImGui destroys the GPU copy once no frame in flight uses
+it, and `ImGuiUIBackend::RetireTextures` then frees it (see
+[gameui_imgui.md](gameui_imgui.md)). The authoring world's game UI lives as
+long as the app, so `App` still declares `GameUIModule` and `GameShellModule`
+before `ImGuiModule`.
 
 **Lay a screen out in `SafeArea()`, never in `Bounds()` or by constant.** The
 safe area is the one place the display's and the player's insets reach a

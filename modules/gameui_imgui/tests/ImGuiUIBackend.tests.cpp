@@ -227,6 +227,53 @@ TEST_CASE("UITextures destroyed with its context alive unregisters what was neve
     CHECK(Listed(5, 7) == nullptr);
 }
 
+TEST_CASE("Textures uploaded when their UI goes are retired once the renderer backend destroys them", "[gameui]")
+{
+    ImGuiFixture imgui;
+    ImGuiUIBackend backend;
+    const std::size_t before = ImGuiUIBackend::RetireTextures();
+
+    // two Play sessions, each with its own copy uploaded by the renderer backend
+    for (int session = 0; session < 2; ++session)
+    {
+        UITextures textures;
+        textures.SetBackend(&backend);
+        textures.Add(Numbered(4 + session, 4));
+        imgui.Render();
+        ImTextureData *listed = Listed(4 + session, 4);
+        REQUIRE(listed != nullptr);
+        listed->SetTexID(static_cast<ImTextureID>(1 + session));
+        listed->SetStatus(ImTextureStatus_OK);
+    }
+
+    // still drawn by a frame in flight, so kept and asked for destroy
+    CHECK(ImGuiUIBackend::RetireTextures() == before + 2);
+    imgui.Render();
+    for (const int width : {4, 5})
+    {
+        ImTextureData *listed = Listed(width, 4);
+        REQUIRE(listed != nullptr);
+        CHECK(listed->Status == ImTextureStatus_WantDestroy);
+        CHECK(listed->UnusedFrames > 0);
+    }
+
+    // as the renderer backend does once no frame uses it
+    ImTextureData *first = Listed(4, 4);
+    first->SetTexID(ImTextureID_Invalid);
+    first->SetStatus(ImTextureStatus_Destroyed);
+    CHECK(ImGuiUIBackend::RetireTextures() == before + 1);
+    imgui.Render();
+    CHECK(Listed(4, 4) == nullptr);
+    CHECK(Listed(5, 4) != nullptr);
+
+    ImTextureData *second = Listed(5, 4);
+    second->SetTexID(ImTextureID_Invalid);
+    second->SetStatus(ImTextureStatus_Destroyed);
+    CHECK(ImGuiUIBackend::RetireTextures() == before);
+    imgui.Render();
+    CHECK(Listed(5, 4) == nullptr);
+}
+
 TEST_CASE("UITextures outlives the context its textures were registered with", "[gameui]")
 {
     // a backend still installed when ImGui went: nothing left to unregister

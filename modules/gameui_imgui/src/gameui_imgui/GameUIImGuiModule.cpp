@@ -27,6 +27,8 @@ namespace mir
         // the Game group runs after Tools, so the editor has written this frame's area
         mDrawer = imgui.AddDrawer(DrawerGroup::Game, [this, &window]
             {
+                ImGuiUIBackend::RetireTextures();
+
                 const Window &surface = window.Get();
                 if (surface.Width() == 0 || surface.Height() == 0)
                     return;
