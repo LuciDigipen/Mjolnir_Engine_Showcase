@@ -182,6 +182,37 @@ TEST_CASE("OnStart runs once and OnStop runs in the same order", "[ecs][system]"
     REQUIRE(recorder.stopped == std::vector<int>{1, 2, 3});
 }
 
+TEST_CASE("BeforeRender runs once a frame between LateUpdate and Render, and Render sees its commands", "[ecs][system]")
+{
+    World world;
+    CommandBuffer commands;
+    SystemScheduler scheduler;
+    Recorder recorder;
+
+    scheduler.AddSystem<TagSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 1);
+    scheduler.AddSystem<TagSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kMax}, recorder, 2);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Render, SystemOrder{SystemOrder::kMin}, recorder, 3);
+    CountSystem &counter = scheduler.AddSystem<CountSystem>(SystemPhase::Render, SystemOrder{SystemOrder::kNormal});
+    const Registration slot = scheduler.AddFrameSlot(FrameSlot::BeforeRender, [&](SystemContext &frame)
+        {
+            recorder.updated.push_back(9);
+            frame.commands.Add(frame.world.CreateEntity(), SSpawned{0});
+        });
+
+    SystemContext context{world, commands};
+    scheduler.Start(context);
+    scheduler.Update(context, 3, 1.0f / 60.0f);
+    scheduler.Update(context, 0, 1.0f / 60.0f);
+
+    REQUIRE(recorder.updated == std::vector<int>{1, 1, 1, 2, 9, 3, 2, 9, 3});
+    REQUIRE(counter.seen == std::vector<std::size_t>{1, 2});
+
+    // no gameplay runs while a scene loads, so there is no frame to render
+    scheduler.UpdateLoading(context);
+    REQUIRE(recorder.updated.size() == 9);
+    scheduler.Stop(context);
+}
+
 TEST_CASE("Commands recorded in one phase are visible to the next", "[ecs][system]")
 {
     World world;

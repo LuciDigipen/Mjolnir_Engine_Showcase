@@ -41,8 +41,12 @@ A *stage* is a transition `App` runs: `SceneEnd`, `SceneUnload`, `SceneUnloaded`
 `SceneSaved`, `PlayBegin`, `PlayEnd`, `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. `App` runs
 `SceneUnloaded` right after each `SceneUnload`, once every holder has let go. `RunStage` calls the
 stage's functions in registration order, then flushes the command buffer. A
-*frame slot* is host work once per rendered frame, outside the phases; today the
-only one is `FrameBegin`. The scheduler holds both lists next to its phases.
+*frame slot* is host work once per rendered frame. `FrameBegin` runs outside the
+phases, before the UI and the systems, when `App` calls `RunFrameSlot`.
+`BeforeRender` runs inside `Update`, once, after `LateUpdate` and before
+`Render`, then flushes, so `Render` sees what it recorded; the game UI runs
+there. `UpdateLoading` does not run it. The scheduler holds both lists next to
+its phases.
 
 Each loaded scene has a `SceneInstanceId`. An entity records the instance that
 was active when it was created, and `SystemContext::sceneInstance` names the
@@ -382,7 +386,7 @@ These are the constraints the orders carry:
 | `LateUpdate` | `CameraControllerSystem` (`kEarly`) | `AudioListenerSystem`, `AudioEmitterSystem` (`kNormal`) | It moves the camera after `Propagate` and refreshes its `WorldTransform`, which a listener on the camera reads |
 | `LateUpdate` | `AudioEmitterSystem`, `AudioListenerSystem`, `SoundtrackSystem` (`kNormal`) | `AudioRenderSystem` (`kLate`) | The render sends Wwise this frame's positions |
 | `LateUpdate` | `ParticleUpdateSystem` (70) | `ParticleSubmitSystem` (80) | Submit uploads what the update simulated this frame |
-| `Render` | `ActiveCameraSystem` (`kEarly`) | `RenderSystem` (`kNormal`) | The frame renders through the camera picked this frame |
+| `LateUpdate` | the rest of the phase | `ActiveCameraSystem` (`kMax`) | The game UI in `BeforeRender` and `RenderSystem` see the camera picked this frame |
 | `PostUpdate`, in a prefab preview's own scheduler | `TransformPropagateSystem` (`kEarly`) | `ModelSystem` (`kNormal`) | `ModelSystem` reads the preview's `WorldTransform` |
 
 `physics_script`'s `SystemOrder.tests.cpp` pins the `InputSystem`,
@@ -472,7 +476,7 @@ free to leave in hot paths.
 
 *As of 2026-10-24.* Working: entities, archetype storage with tags, filtered and
 runtime queries, deferred structural change, per-type component hooks behind
-tokens, phase scheduling, stages, the `FrameBegin` slot, the request queue, the
+tokens, phase scheduling, stages, the `FrameBegin` and `BeforeRender` slots, the request queue, the
 crash handler, typed resources,
 the transform hierarchy with lazy world-matrix resolution, ordered siblings and
 roots, keep-world reparenting, the component registry
@@ -536,6 +540,13 @@ system has started.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-11-22* — **A `BeforeRender` frame slot.** Was: `FrameBegin` was the only
+slot, and ran outside `Update`. Now: `BeforeRender` runs inside `Update`
+between `LateUpdate` and `Render`, and `ActiveCameraSystem` moved from the
+start of `Render` to the end of `LateUpdate`. Because: the game UI runs there,
+so it reads this frame's transforms and camera, which it could not do before
+the systems.
 
 *2026-11-01* — **Scene readiness (`SceneLoadGroup`).** Was: a standalone game
 started simulating the frame the scene loaded, with meshes and models still

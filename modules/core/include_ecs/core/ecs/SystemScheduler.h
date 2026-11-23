@@ -104,6 +104,7 @@ namespace mir
         // call systems in the order of phase -> SystemOrder
         // buffer is flushed after every phase, and after every FixedUpdate substep
         // FixedUpdate runs fixedSteps times with dt = fixedDt; every other phase runs once with context.dt
+        // the BeforeRender slot runs once, between LateUpdate and Render
         void Update(SystemContext &context, uint32_t fixedSteps, float fixedDt)
         {
             MIR_ASSERT(mStarted, "SystemScheduler::Update: Start was never called");
@@ -112,6 +113,9 @@ namespace mir
 
             for (std::size_t phase = 0; phase < kPhaseCount; ++phase)
             {
+                if (phase == Index(SystemPhase::Render))
+                    RunFrameSlot(FrameSlot::BeforeRender, context);
+
                 if (phase != fixedPhase)
                 {
                     RunPhase(phase, context);

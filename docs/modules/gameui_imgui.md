@@ -64,7 +64,7 @@ vertices can be tested against the clip, which the GPU then does.
 
 | Type | Header | Role |
 |---|---|---|
-| `GameUIImGuiModule` | `gameui_imgui/GameUIImGuiModule.h` | Installs the backend and runs gameui's frame in the `Game` drawer group |
+| `GameUIImGuiModule` | `gameui_imgui/GameUIImGuiModule.h` | Installs the backend and runs gameui's frame in the `Game` drawer group, after `LateUpdate` |
 | `ImGuiUIBackend` | `gameui_imgui/ImGuiUIBackend.h` | `IUIBackend` over ImGui's background list, user textures and font atlas |
 
 ## Rules

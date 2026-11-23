@@ -37,11 +37,22 @@ get a context from.
 | Type | Header | Role |
 |---|---|---|
 | `ImGuiRuntime` | `imguiruntime/ImGuiRuntime.h` | `Initialize`/`Shutdown` the context and both backends; `BeginFrame`/`EndFrame` bracket a frame |
-| `ImGuiModule` | `imguiruntime/ImGuiModule.h` | Owns the runtime; `AddDrawer` and `RunUI` |
+| `ImGuiModule` | `imguiruntime/ImGuiModule.h` | Owns the runtime; `AddDrawer`, `BeginUI`, `EndUI`, `RunUI` and `EndUIOn` |
 
-`RunUI` is one ImGui frame: `BeginFrame`, every `Tools` drawer, every `Game`
-drawer, then every `Late` drawer, each group in registration order, `EndFrame`, then the draw data to the renderer and the frame's keyboard and
-mouse capture to `InputState`, for this frame's systems.
+One ImGui frame is split around the frame's systems. `BeginUI`, before them,
+calls `BeginFrame`, runs every `Tools` drawer, then hands the frame's keyboard
+and mouse capture to `InputState`, for this frame's systems. `NewFrame` sets
+ImGui's capture, so it is final there. `EndUI` runs every `Game` drawer, then
+every `Late` drawer, `EndFrame`, then the draw data to the renderer. Each group
+runs in registration order.
+
+`EndUI` runs in the `BeforeRender` slot of whichever scheduler updates, after
+`LateUpdate`, so the game UI reads the world the frame renders. The module
+registers it on its own scheduler, and `EndUIOn` on another, as `App` does for
+each Play session. `RunUI` is `BeginUI` then `EndUI`, for a frame no systems
+update, such as a scene's loading wait. A `BeginUI` that finds the previous
+frame still open closes it first, and an `EndUI` with no frame open does
+nothing.
 
 `VulkanRenderer::InitImGuiVulkanBackend` and `ShutdownImGuiVulkanBackend` stay in
 `renderer`, because they need the device, queue and swapchain format. This module
@@ -106,6 +117,12 @@ every frame and shutdown, and `smoke.switch` covers the restart that reloads
    that wants its own fonts has no hook yet.
 
 ## Changed
+
+*2026-11-22* — **The frame is split around the systems.** Was: `RunUI` ran
+every drawer group before the scheduler. Now: `BeginUI` runs `Tools` before it,
+and `EndUI` runs `Game` and `Late` in its `BeforeRender` slot. Because: the game
+UI read the previous frame's transforms and camera, so a marker over a moving
+target trailed it by a frame.
 
 *2026-11-20* — **A `Late` drawer group.** Was: `Tools`, then `Game`. Now: a
 third group after `Game`. Because: the editor's scene pick needs the game UI's

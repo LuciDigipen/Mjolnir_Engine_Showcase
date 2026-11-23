@@ -1,7 +1,8 @@
 /**
  * @file ImGuiModule.h
  * @author sumin.park
- * @brief Owns the ImGui context and runs the frame's UI drawers inside one ImGui frame.
+ * @brief Owns the ImGui context and runs the frame's UI drawers inside one ImGui frame, opened before the
+ *        frame's systems and closed just before Render.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -22,10 +23,10 @@ namespace mir
     class RendererModule;
     class WindowModule;
 
-    // RunUI runs every Tools drawer, then every Game drawer, then every Late drawer. An order
-    // that follows no dependency edge needs a boundary: the game UI fits the scene viewport a
-    // tool drawer, the editor's, writes the same frame, and the editor's scene pick waits for
-    // the game UI's hit test of the same frame
+    // Every Tools drawer runs before the frame's systems, then every Game drawer, then every Late
+    // drawer, after LateUpdate. An order that follows no dependency edge needs a boundary: the
+    // game UI fits the scene viewport a tool drawer, the editor's, writes the same frame, and the
+    // editor's scene pick waits for the game UI's hit test of the same frame
     enum class DrawerGroup : uint8_t
     {
         Tools,
@@ -47,9 +48,17 @@ namespace mir
         // drawn by group, then in registration order, between the frame's BeginFrame and EndFrame
         [[nodiscard]] Registration AddDrawer(DrawerGroup group, std::function<void()> drawer);
 
-        // BeginFrame, the drawers, EndFrame; hands the draw data to the renderer and the
-        // frame's keyboard and mouse capture to InputState, for this frame's systems
+        // BeginFrame and the Tools drawers, then the frame's keyboard and mouse capture to
+        // InputState, for this frame's systems
+        void BeginUI();
+        // the Game and Late drawers and EndFrame, then the draw data to the renderer. It runs in
+        // the BeforeRender slot of the scheduler that updates, so the game UI reads this frame's world
+        void EndUI();
+        // both, for a frame no systems update, such as a scene's loading wait
         void RunUI();
+
+        // EndUI in the scheduler's BeforeRender slot; this module's own scheduler has it already
+        [[nodiscard]] Registration EndUIOn(SystemScheduler &scheduler);
         void SetInputWorld(World *world) { mInputWorld = world != nullptr ? world : &mContext.world; }
 
         const ImGuiRuntime &Runtime() const { return mRuntime; }
@@ -60,5 +69,7 @@ namespace mir
         RendererModule &mRenderer;
         ImGuiRuntime mRuntime;
         RegistrationList<std::function<void()>> mDrawers[static_cast<std::size_t>(DrawerGroup::kCount)];
+        bool mInFrame = false;
+        Registration mEndUI;
     };
 }

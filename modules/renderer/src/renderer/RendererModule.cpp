@@ -95,8 +95,9 @@ namespace mir
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
             SystemOrder{ SystemOrder::kNormal }, mRenderer, settings.mAssetService,
             *settings.mResolver, &mSurfaceMaterials);
-        mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
-            SystemOrder{ SystemOrder::kEarly });
+        // last in LateUpdate, so the game UI in BeforeRender sees the camera this frame renders through
+        mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::LateUpdate,
+            SystemOrder{ SystemOrder::kMax });
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
             SystemOrder{ SystemOrder::kNormal }, mRenderer);
 

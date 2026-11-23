@@ -1,13 +1,15 @@
 /**
  * @file ImGuiModule.cpp
  * @author sumin.park
- * @brief Owns the ImGui context and runs the frame's UI drawers inside one ImGui frame.
+ * @brief Owns the ImGui context and runs the frame's UI drawers inside one ImGui frame, opened before the
+ *        frame's systems and closed just before Render.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
 #include <imguiruntime/ImGuiModule.h>
 
+#include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
@@ -28,7 +30,10 @@ namespace mir
         : mContext(context), mInputWorld(&context.world), mRenderer(renderer)
     {
         if (mRuntime.Initialize(window.Get(), renderer.Renderer()))
+        {
+            mEndUI = EndUIOn(context.scheduler);
             return;
+        }
 
         // the destructor does not run for a throwing constructor
         mRuntime.Shutdown(renderer.Renderer());
@@ -53,17 +58,43 @@ namespace mir
         return mDrawers[static_cast<std::size_t>(group)].Add(std::move(drawer));
     }
 
-    void ImGuiModule::RunUI()
+    void ImGuiModule::BeginUI()
     {
-        mRuntime.BeginFrame();
-        for (auto &group : mDrawers)
-            group.Run();
-        mRenderer.Renderer().SetImGuiDrawData(mRuntime.EndFrame());
+        // a frame whose systems never reached Render still closes, since ImGui asserts on a second NewFrame
+        if (mInFrame)
+            EndUI();
 
+        mRuntime.BeginFrame();
+        mInFrame = true;
+        mDrawers[static_cast<std::size_t>(DrawerGroup::Tools)].Run();
+
+        // NewFrame sets ImGui's capture, so it is final here
         if (InputState *input = mInputWorld->TryResource<InputState>())
         {
             const ImGuiIO &io = ImGui::GetIO();
             input->SetUiCapture(io.WantCaptureKeyboard, io.WantCaptureMouse);
         }
+    }
+
+    void ImGuiModule::EndUI()
+    {
+        if (!mInFrame)
+            return;
+
+        mDrawers[static_cast<std::size_t>(DrawerGroup::Game)].Run();
+        mDrawers[static_cast<std::size_t>(DrawerGroup::Late)].Run();
+        mInFrame = false;
+        mRenderer.Renderer().SetImGuiDrawData(mRuntime.EndFrame());
+    }
+
+    void ImGuiModule::RunUI()
+    {
+        BeginUI();
+        EndUI();
+    }
+
+    Registration ImGuiModule::EndUIOn(SystemScheduler &scheduler)
+    {
+        return scheduler.AddFrameSlot(FrameSlot::BeforeRender, [this](SystemContext &) { EndUI(); });
     }
 }

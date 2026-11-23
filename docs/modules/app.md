@@ -60,9 +60,10 @@ while true:
     AsyncAssetService::DrainCompletions  background asset loads that finished become visible
     ProjectResources::Refresh          edited terrain configuration is merged and validated
     RunFrameSlot(FrameBegin)           authoring tools and shared services, plus runtime frame slots during Play
-    ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
+    ImGuiModule::BeginUI               ImGui's frame and the Tools drawers (the editor)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
-    active SystemScheduler::Update     PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
+    active SystemScheduler::Update     PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate,
+                                       BeforeRender (ImGuiModule::EndUI: the Game, then Late drawers), Render
     if ToggleFullscreen just pressed: ToggleFullscreen    F11; the swapchain follows next frame
     ++frame
     until the window opens: StartupGate on TerrainRuntime::AreasLoading, then RevealWindow
@@ -351,6 +352,14 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
    cheap for a large scene.
 
 ## Changed
+
+*2026-11-22* — **The game UI runs inside the frame's update.** Was: `Run`
+called `ImGuiModule::RunUI` before the scheduler, so the game UI read the
+previous frame's transforms, camera and input. Now: `Run` calls `BeginUI`, and
+`EndUI` runs in the active scheduler's `BeforeRender` slot; a Play session
+registers it on its own scheduler (`RuntimeSession::uiEnd`, its last member).
+The loading wait still calls `RunUI`, since its systems do not update. Because:
+a marker drawn over a moving target trailed it by a frame.
 
 *2026-11-05*, **`App` owns a `ProjectResources`.** Was: `InputModule`, the renderer's
 world binding, `PhysicsModule`, `TerrainRuntime` and `AudioModule` each read their
