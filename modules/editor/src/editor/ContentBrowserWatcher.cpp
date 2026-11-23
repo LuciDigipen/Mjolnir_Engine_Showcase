@@ -187,8 +187,9 @@ namespace mir
         case ContentBrowserActionKind::Delete:
             DeleteEntry(action.mTargetPath);
             break;
-        case ContentBrowserActionKind::OpenInIde:
-        case ContentBrowserActionKind::OpenPrefab:
+        case ContentBrowserActionKind::OpenFile:
+        case ContentBrowserActionKind::NewParticleSystem:
+        case ContentBrowserActionKind::NewExtensionItem:
             break;
         case ContentBrowserActionKind::None:
             break;

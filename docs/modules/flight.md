@@ -23,7 +23,9 @@ assigns the staged configs into their existing objects, so the pointers in `Airc
 clears those failures and bumps the store generation. Abort drops the staging. On the next fixed step the config
 system re-applies a config whose generation is newer than the aircraft's and clears the tracking pointers the
 propulsion, aerodynamic-warning and camera stages compare, so they initialise again; actuator deflections,
-throttle and the flap detent are kept.
+throttle and the flap detent are kept. A config reaches the candidate manifest when its source is queued with
+`AssetImportManager::QueueChanged`: Flight Debug's Save and the editor's Flight Model panel queue every file they
+write, so a save takes effect with auto import off.
 
 The store also carries live tuning. `Edit` returns the decoded object, the one every aircraft on that path
 shares, so a panel edit reaches them all at once; `MarkEdited` sets the path unsaved and bumps `EditGeneration`,

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 
 namespace mir
@@ -154,6 +155,16 @@ namespace mir
         }
     } // namespace
 
+    ContentBrowserOpenTarget ClassifyContentBrowserFile(std::string_view relativePath)
+    {
+        const std::string name = std::filesystem::path(relativePath).filename().string();
+        if (name.ends_with(".particle.json"))
+            return ContentBrowserOpenTarget::ParticleSystem;
+        if (IsPrefabFile(name))
+            return ContentBrowserOpenTarget::Prefab;
+        return IsTextFile(name) ? ContentBrowserOpenTarget::Ide : ContentBrowserOpenTarget::None;
+    }
+
     ContentBrowserAction ContentBrowserPanel::Draw(const ContentBrowserView &view, EditorPreferences &preferences)
     {
         ContentBrowserAction action;
@@ -228,6 +239,18 @@ namespace mir
         {
             action.mKind = ContentBrowserActionKind::NewParticleSystem;
             action.mTargetPath = mCurrentFolder;
+        }
+        for (std::size_t index = 0; index < view.mExtensionCreateItems.size(); ++index)
+        {
+            ImGui::SameLine();
+            ImGui::PushID(static_cast<int>(index));
+            if (ImGui::SmallButton(view.mExtensionCreateItems[index].c_str()))
+            {
+                action.mKind = ContentBrowserActionKind::NewExtensionItem;
+                action.mTargetPath = mCurrentFolder;
+                action.mItemLabel = view.mExtensionCreateItems[index];
+            }
+            ImGui::PopID();
         }
 
         if (mCreatingFolder)
@@ -448,19 +471,9 @@ namespace mir
             {
                 if (entry.mKind == ContentBrowserEntryKind::Directory)
                     mCurrentFolder = entry.mRelativePath;
-                else if (entry.mName.ends_with(".particle.json"))
+                else
                 {
-                    action.mKind = ContentBrowserActionKind::OpenParticleSystem;
-                    action.mTargetPath = entry.mRelativePath;
-                }
-                else if (IsPrefabFile(entry.mName))
-                {
-                    action.mKind = ContentBrowserActionKind::OpenPrefab;
-                    action.mTargetPath = entry.mRelativePath;
-                }
-                else if (IsTextFile(entry.mName))
-                {
-                    action.mKind = ContentBrowserActionKind::OpenInIde;
+                    action.mKind = ContentBrowserActionKind::OpenFile;
                     action.mTargetPath = entry.mRelativePath;
                 }
             }

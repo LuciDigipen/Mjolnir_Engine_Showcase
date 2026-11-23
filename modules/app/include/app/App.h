@@ -71,6 +71,7 @@
 
 #if MIR_WITH_EDITOR
 #include <editor/EditorModule.h>
+#include <flight_editor/FlightEditorModule.h>
 #include <terrain_editor/TerrainEditorModule.h>
 #endif
 #if MIR_WITH_AUDIO && MIR_WITH_EDITOR
@@ -248,9 +249,6 @@ namespace mir
         bool AwaitSceneResources();
         void DrawLoadingOverlay();
 
-        // True when the editor has material drafts that are not accepted yet.
-        bool HasUnsavedMaterialDrafts() const;
-
         // One guard for OS close, Alt+F4, the custom title bar and Request::Quit.
         bool ConfirmEditorExit();
 
@@ -357,6 +355,7 @@ namespace mir
         SplashStep mEditorStep{ mSplash, "Initializing editor...", 0.5f };
         EditorModule mEditor;
         TerrainEditorModule mTerrainEditor;
+        FlightEditorModule mFlightEditor;
     #endif
         SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
         CameraModule mCamera;

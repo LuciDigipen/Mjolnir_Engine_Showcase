@@ -144,6 +144,7 @@ namespace mir
         Enum,    // Int, shown as a combo over mEnumNames (index == underlying value)
         Color,   // Vec3/Vec4, shown as a color picker instead of drag floats
         AssetRef, // String, shown as a picker combo sourced from the inspector's asset list
+        AssetPath, // String, shown as a combo of files under the source assets root ending in mAssetSuffix
     };
 
     // Which list an AssetRef field picks from.
@@ -175,6 +176,7 @@ namespace mir
         AssetKind mAssetKind = AssetKind::None; 
         std::span<const std::string_view> mResetOnChange{}; // other field names to zero on write
         std::string_view mBankField{}; // AssetKind::SoundEvent = the String field the picked event's bank goes in
+        std::string_view mAssetSuffix{}; // FieldWidget::AssetPath: the file ending a candidate picks
 
         bool mHidden = false; // excluded from the inspector entirely (persistence-only)
 

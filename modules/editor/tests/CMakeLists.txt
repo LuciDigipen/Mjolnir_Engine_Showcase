@@ -2,6 +2,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 engine_add_module_tests(editor
     ActiveCameraEdit.tests.cpp
+    AssetPathField.tests.cpp
     Authoring.tests.cpp
     AuthoredEdit.tests.cpp
     BackgroundImage.tests.cpp
@@ -21,6 +22,7 @@ engine_add_module_tests(editor
     PrefabAuthoringAdapter.tests.cpp
     PrefabPlayMarks.tests.cpp
     PrefabWorkspace.tests.cpp
+    RawImportQueue.tests.cpp
     SettingsPanels.tests.cpp
     SnapToTerrain.tests.cpp
     ViewPie.tests.cpp

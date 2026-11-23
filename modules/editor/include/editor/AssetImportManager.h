@@ -11,6 +11,7 @@
 #include <project/GameProject.h>
 #include <core/platform/Process.h>
 #include <editor/panels/AssetImportPanel.h>
+#include <editor/RawImportQueue.h>
 
 #include <chrono>
 #include <filesystem>
@@ -38,6 +39,8 @@ namespace mir
         void QueueFullCook();
         bool SourceHasAssets() const;
         bool QueueChanged(const std::filesystem::path &path);
+        // The latest state of a raw file given to QueueChanged
+        std::optional<RawImportStatus> ChangedStatus(const std::filesystem::path &path) const;
         const std::filesystem::path &SourceAssetRoot() const { return mSourceAssetRoot; }
         void Handle(const AssetImportAction &action);
         void Update(bool editing);
@@ -85,6 +88,7 @@ namespace mir
 
         void StartBatch();
         void FinishBatch(int exitCode, bool editing);
+        void QueueRawChange(const std::filesystem::path &path);
         void QueueExternalImport(const AssetImportAction &action);
         std::filesystem::path UniqueImportTarget(const std::filesystem::path &source) const;
         void RefreshView();
@@ -103,6 +107,7 @@ namespace mir
         std::unordered_map<std::string, uint64_t> mMaterialCookRevision;
         std::unordered_map<std::string, uint64_t> mMaterialFailureRevision;
         std::unordered_map<std::string, uint64_t> mPendingApplyRevision;
+        RawImportQueue mRawImport;
         uint64_t mApplySequence = 0;
         std::map<std::filesystem::path, WatchedFile> mWatched;
         std::chrono::steady_clock::time_point mLastWatchPoll{};

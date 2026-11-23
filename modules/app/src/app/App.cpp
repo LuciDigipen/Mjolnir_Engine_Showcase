@@ -22,6 +22,7 @@
 #include <core/log/SetupError.h>
 #include <core/platform/CrashHandler.h>
 #if MIR_WITH_EDITOR
+#include <editor/EditorDrafts.h>
 #include <editor/Selection.h>
 #endif
 #include <input/DefaultInputMap.h>
@@ -315,6 +316,7 @@ namespace mir
         mTerrainEditor(Context(), mEditor, mProject,
             [this](AssetId asset, std::shared_ptr<const TerrainOverlay> overlay)
             { return mTerrain.Runtime().SetTerrainOverlay(asset, std::move(overlay)); }),
+        mFlightEditor(Context(), mEditor),
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO
@@ -325,7 +327,16 @@ namespace mir
             mParticlesGpu, mRenderer.Rendering(), mWorldState.gameUI),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
+    #if MIR_WITH_EDITOR
+        mFlightDebug(Context(), mImGui, SourceAssetsRoot(mProject),
+            [this](const std::filesystem::path &saved)
+            {
+                if (!mEditor.Import().QueueChanged(saved))
+                    MIR_LOG_ERROR("Flight Debug: saved '{}', but it is outside the source assets root", saved.string());
+            }),
+    #else
         mFlightDebug(Context(), mImGui, SourceAssetsRoot(mProject)),
+    #endif
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
         mWorldState.gameShell.SetControlsOptions(&mControlsOptions);
@@ -1075,26 +1086,25 @@ namespace mir
         mRenderer.Renderer().RequestSwapchainRecreate();
     }
 
-    bool App::HasUnsavedMaterialDrafts() const
-    {
-    #if MIR_WITH_EDITOR
-        return mEditor.HasUnsavedMaterialDrafts();
-    #else
-        return false;
-    #endif
-    }
-
     bool App::ConfirmEditorExit()
     {
-        if (!HasUnsavedMaterialDrafts())
+    #if MIR_WITH_EDITOR
+        const std::vector<std::string> drafts = mEditor.UnsavedDraftNames();
+        if (drafts.empty())
             return true;
+
+        const std::string phrase = DraftListPhrase(drafts);
         if (mDesc.mNonInteractive || mDesc.mMaxFrames != 0)
         {
-            MIR_LOG_WARN("Closing with unsaved material drafts in a bounded run; they are not saved automatically.");
+            MIR_LOG_WARN("Closing with unsaved {} in a bounded run; they are not saved automatically.", phrase);
             return true;
         }
-        return AskYesNo("Unsaved material drafts",
-            "Close and discard the unsaved material drafts? They are never saved automatically.", false);
+        const bool materialsOnly = drafts.size() == 1 && drafts.front() == "material drafts";
+        return AskYesNo(materialsOnly ? "Unsaved material drafts" : "Unsaved drafts",
+            "Close and discard the unsaved " + phrase + "? They are never saved automatically.", false);
+    #else
+        return true;
+    #endif
     }
 
     void App::UnloadCurrentScene()

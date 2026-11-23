@@ -40,14 +40,17 @@ endif()
 
 target_sources(engine_editor PRIVATE
     src/editor/AssetImportManager.cpp
+    src/editor/AssetPathField.cpp
     src/editor/BackgroundImage.cpp
     src/editor/BuildJob.cpp
     src/editor/BuildSettings.cpp
+    src/editor/ContentBrowserPaths.cpp
     src/editor/ContentBrowserWatcher.cpp
     src/editor/ContentThumbnailCache.cpp
     src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
+    src/editor/EditorDrafts.cpp
     src/editor/EditorExtension.cpp
     src/editor/EditorModule.cpp
     src/editor/EditorPreferences.cpp
@@ -57,6 +60,7 @@ target_sources(engine_editor PRIVATE
     src/editor/PrefabAuthoringAdapter.cpp
     src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp
+    src/editor/RawImportQueue.cpp
     src/editor/ShaderHotReload.cpp
     src/editor/SnapToTerrain.cpp
     src/editor/TextureThumbnailDecoder.cpp

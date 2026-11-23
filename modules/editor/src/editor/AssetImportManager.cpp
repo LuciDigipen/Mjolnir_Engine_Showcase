@@ -167,8 +167,24 @@ namespace mir
         if (!error && entry.is_regular_file(error))
             mWatched[candidate] = {Signature(entry),std::chrono::steady_clock::now(),false};
         mQueued.changed.insert(candidate);
+        mRawImport.Queue(candidate);
         mRunningStale |= mView.mProcessRunning;
         return true;
+    }
+
+    void AssetImportManager::QueueRawChange(const std::filesystem::path &path)
+    {
+        mQueued.changed.insert(path);
+        mRawImport.Queue(path);
+    }
+
+    std::optional<RawImportStatus> AssetImportManager::ChangedStatus(const std::filesystem::path &path) const
+    {
+        std::error_code error;
+        const auto candidate = std::filesystem::weakly_canonical(path, error);
+        if (error)
+            return std::nullopt;
+        return mRawImport.Status(candidate);
     }
 
     bool AssetImportManager::SourceHasAssets() const
@@ -253,6 +269,8 @@ namespace mir
                     SetStatus(model, AssetImportStatus::Canceled);
                 for (const auto &[model, destination] : mQueued.moves)
                     SetStatus(model, AssetImportStatus::Canceled);
+                for (const auto &changed : mQueued.changed)
+                    mRawImport.Fail(changed, "canceled");
                 mQueued.Clear();
             }
             break;
@@ -399,18 +417,25 @@ namespace mir
         std::filesystem::remove(mResultPath, error);
         if (!mProcess.Start(mCooker, args, ExecutableDir()))
         {
+            const std::string message = "could not start AssetCooker";
+            mView.mLastError = message;
+            MIR_LOG_ERROR("Asset import failed: {}", message);
             for (const auto &model : mRunning.models)
-                SetStatus(model, AssetImportStatus::Failed, "could not start AssetCooker");
+                SetStatus(model, AssetImportStatus::Failed, message);
             for (const auto &material : mRunning.materials)
             {
-                SetStatus(material, AssetImportStatus::Failed, "could not start AssetCooker");
+                SetStatus(material, AssetImportStatus::Failed, message);
                 const auto sequence = mRunning.materialSequences.find(material);
                 if (sequence != mRunning.materialSequences.end())
                     mMaterialFailureRevision[material] = sequence->second;
             }
+            for (const auto &changed : mRunning.changed)
+                mRawImport.Fail(changed, message);
             mRunning.Clear();
             return;
         }
+        for (const auto &changed : mRunning.changed)
+            mRawImport.StartCooking(changed);
         mView.mProcessRunning = true;
         mCancelRequested = false;
         mRunningStale = false;
@@ -436,13 +461,16 @@ namespace mir
                 SetStatus(model, AssetImportStatus::Canceled);
             for (const auto &[model, destination] : mRunning.moves)
                 SetStatus(model, AssetImportStatus::Canceled);
+            for (const auto &changed : mRunning.changed)
+                mRawImport.Fail(changed, "canceled");
         }
         else
         {
             try
             {
                 const Json result = ReadJson(mResultPath);
-                if (exitCode != 0 || result.value("status", "failed") == "failed")
+                const bool failed = exitCode != 0 || result.value("status", "failed") == "failed";
+                if (failed)
                 {
                     const std::string message =
                         result.value("diagnostic", Json::object()).value("message", "AssetCooker failed");
@@ -457,6 +485,8 @@ namespace mir
                     }
                     mView.mLastError = message;
                     MIR_LOG_ERROR("Asset import failed: {}", message);
+                    for (const auto &changed : mRunning.changed)
+                        mRawImport.Fail(changed, message);
                 }
                 else
                 {
@@ -478,7 +508,14 @@ namespace mir
                                                                            : AssetImportStatus::WaitingForStop));
                     }
                     // a full cook replaces a missing manifest, so it applies even when no model changed
-                    mPendingApply |= cooked || mRunning.fullCook;
+                    mPendingApply |= mRawImport.NeedsApply(cooked || mRunning.fullCook, !mRunning.changed.empty());
+                    for (const Json &skipped : result.value("skipped", Json::array()))
+                    {
+                        const std::string path = skipped.value("path", "");
+                        const std::string reason = skipped.value("reason", "skipped by the cook");
+                        MIR_LOG_WARN("Asset import: '{}' was not cooked: {}", path, reason);
+                        mRawImport.Skip(path, reason);
+                    }
                 }
 
                 if (!mRunningStale)
@@ -512,9 +549,14 @@ namespace mir
                             mMaterialFailureRevision[material] = revision;
                     }
                 }
+                if (!failed)
+                    for (const auto &changed : mRunning.changed)
+                        mRawImport.Finish(changed, mPendingApply, editing);
             }
             catch (const std::exception &error)
             {
+                mView.mLastError = error.what();
+                MIR_LOG_ERROR("Asset import failed: {}", error.what());
                 for (const auto &model : mRunning.models)
                     SetStatus(model, AssetImportStatus::Failed, error.what());
                 for (const auto &material : mRunning.materials)
@@ -524,6 +566,8 @@ namespace mir
                     if (sequence != mRunning.materialSequences.end())
                         mMaterialFailureRevision[material] = sequence->second;
                 }
+                for (const auto &changed : mRunning.changed)
+                    mRawImport.Fail(changed, error.what());
             }
         }
         if (mRunningStale)
@@ -534,6 +578,8 @@ namespace mir
             for (const auto &[material, revision] : mRunning.materialSequences)
                 mQueued.materialSequences[material] = std::max(mQueued.materialSequences[material], revision);
             mQueued.fullCook |= mRunning.fullCook;
+            for (const auto &changed : mRunning.changed)
+                mRawImport.Queue(changed);
         }
         if (!mRunning.importSource.empty() || !mRunning.moves.empty())
         {
@@ -606,7 +652,7 @@ namespace mir
                         MIR_LOG_ERROR("Asset import: '{}': {}", path.string(), Describe(logical.error));
                 }
                 else
-                    mQueued.changed.insert(path);
+                    QueueRawChange(path);
                 it->second.pending = false;
             }
         }
@@ -617,7 +663,7 @@ namespace mir
                 mViewDirty = true;
                 mRunningStale |= mView.mProcessRunning && !cookerChangesSource;
                 if (mView.mAutoImport)
-                    mQueued.changed.insert(it->first);
+                    QueueRawChange(it->first);
                 it = mWatched.erase(it);
             }
             else
@@ -718,6 +764,7 @@ namespace mir
         if (!mPendingApplyRevision.empty())
             ++mApplySequence;
         mPendingApplyRevision.clear();
+        mRawImport.MarkApplied();
         RefreshView();
     }
     void AssetImportManager::MarkApplyFailed(std::string diagnostic)
@@ -729,6 +776,9 @@ namespace mir
         for (const auto &[path, revision] : mPendingApplyRevision)
             mMaterialFailureRevision[path] = revision;
         mPendingApplyRevision.clear();
+        mRawImport.MarkApplyFailed(diagnostic);
+        mView.mLastError = diagnostic;
+        MIR_LOG_ERROR("Asset import apply failed: {}", diagnostic);
         RefreshView();
     }
 

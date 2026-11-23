@@ -123,13 +123,13 @@ namespace mir
         }
 
         void DrawSaveControls(const AircraftConfig &config, AircraftConfigStore &store, std::string_view path,
-            const std::string &sourceAssetsRoot, std::string &error)
+            const std::string &sourceAssetsRoot, const SavedSourceCallback &onSaved, std::string &error)
         {
             const bool dirty = store.IsDirty(path);
             ImGui::BeginDisabled(!dirty || sourceAssetsRoot.empty());
             if (ImGui::Button("Save to source"))
             {
-                if (SaveAircraftConfigToSource(config, sourceAssetsRoot, path, error))
+                if (SaveAircraftConfigToSource(config, sourceAssetsRoot, path, error, onSaved))
                     store.ClearDirty(path);
                 else
                     MIR_LOG_ERROR("Flight Debug: {}", error);
@@ -150,9 +150,10 @@ namespace mir
         }
     }
 
-    FlightDebugModule::FlightDebugModule(ModuleContext context, ImGuiModule &imgui, std::string sourceAssetsRoot)
+    FlightDebugModule::FlightDebugModule(ModuleContext context, ImGuiModule &imgui, std::string sourceAssetsRoot,
+        SavedSourceCallback onSavedSource)
         : mAuthoringWorld(&context.world), mActiveWorld(&context.world),
-          mSourceAssetsRoot(std::move(sourceAssetsRoot))
+          mSourceAssetsRoot(std::move(sourceAssetsRoot)), mOnSavedSource(std::move(onSavedSource))
     {
         mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this] { Draw(); });
     }
@@ -252,7 +253,7 @@ namespace mir
                         if (!editable->aero.l2.has_value())
                             ImGui::TextUnformatted("needs aero.L2");
 
-                        DrawSaveControls(*editable, *store, path, mSourceAssetsRoot, mSaveError);
+                        DrawSaveControls(*editable, *store, path, mSourceAssetsRoot, mOnSavedSource, mSaveError);
 
                         ImGui::SeparatorText("Curves and tables (read-only)");
                         DrawRows(BuildFlightDebugTableRows(*editable));

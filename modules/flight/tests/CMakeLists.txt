@@ -3,6 +3,7 @@ engine_add_module_tests(flight
     AerodynamicsL2.tests.cpp
     AerodynamicsL3.tests.cpp
     AircraftConfig.tests.cpp
+    AircraftFields.tests.cpp
     AirData.tests.cpp
     FlightActuators.tests.cpp
     FlightCamera.tests.cpp
@@ -20,5 +21,6 @@ engine_add_module_tests(flight
 target_compile_definitions(engine_flight_tests PRIVATE MIR_GAMES_DIR="${CMAKE_SOURCE_DIR}/games")
 
 # flight links renderer and camera privately; the telemetry test adds a Camera and reads the cut list, and the
-# camera test registers the chase controller component.
-target_link_libraries(engine_flight_tests PRIVATE mir::renderer mir::camera)
+# camera test registers the chase controller component. The field test reads a component through scene's Json codec.
+find_package(nlohmann_json CONFIG REQUIRED)
+target_link_libraries(engine_flight_tests PRIVATE mir::renderer mir::camera mir::scene nlohmann_json::nlohmann_json)

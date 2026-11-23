@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mir
@@ -46,6 +47,7 @@ namespace mir
         std::string mContentRoot; // display only, e.g. "games/HelloWorld"
         std::string mLastError;
         std::vector<ContentBrowserEntryView> mEntries; // every file/dir under the content root, flat
+        std::vector<std::string> mExtensionCreateItems; // extension buttons beside New Particle System
 
         std::string mLastRenamedFrom;
         std::string mLastRenamedTo;
@@ -57,10 +59,9 @@ namespace mir
         CreateFolder,
         Rename,
         Delete,
-        OpenInIde,    // double-clicked a script file - mTargetPath is the file
-        OpenPrefab,   // double-clicked a Prefab - mTargetPath is the file
-        OpenParticleSystem,
+        OpenFile,     // double-clicked a file - mTargetPath is the file
         NewParticleSystem,
+        NewExtensionItem, // mItemLabel names the clicked button, mTargetPath is the folder
     };
 
     struct ContentBrowserAction
@@ -69,7 +70,19 @@ namespace mir
         ContentBrowserActionKind mKind = ContentBrowserActionKind::None;
         std::string mTargetPath;
         std::string mNewName;
+        std::string mItemLabel;
     };
+
+    enum class ContentBrowserOpenTarget
+    {
+        None,
+        ParticleSystem,
+        Prefab,
+        Ide,
+    };
+
+    // What a double-clicked file opens when no extension takes it.
+    ContentBrowserOpenTarget ClassifyContentBrowserFile(std::string_view relativePath);
 
     class ContentBrowserPanel
     {
