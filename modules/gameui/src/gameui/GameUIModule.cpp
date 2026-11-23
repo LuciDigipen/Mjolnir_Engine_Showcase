@@ -11,6 +11,7 @@
 #include <gameui/GameUIArea.h>
 #include <gameui/GameUIDemo.h>
 
+#include <core/ecs/PrimaryView.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <input/InputMap.h>
@@ -44,6 +45,9 @@ namespace mir
             mShellHeldInput = false;
             return;
         }
+        // the renderer's, written last in LateUpdate, a world without a renderer has none
+        const PrimaryView *view = mWorld.TryResource<PrimaryView>();
+        mUI.SetView(view != nullptr ? *view : PrimaryView{});
         mUI.BeginFrame(area, mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(), pointer);
         mUI.SetWidgetsDisabled(mShellHeldInput);
         mScreens[static_cast<std::size_t>(UIScreenLayer::Game)].Run(mUI, mFrameDt);

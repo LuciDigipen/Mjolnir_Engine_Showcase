@@ -170,6 +170,7 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `WriteBytesAtomic`, `WriteTextAtomic` | `fs/FileIO.h` | The same, through a temp file and a rename |
 | `InitLog`, `FlushLog`, `ShutdownLog` | `log/Log.h` | Logger lifetime; `ShutdownLog` releases the log file for another process |
 | `EngineMode`, `PlayState`, `EngineModeState` | `ecs/EngineMode.h` | Edit/Play and Play's Running/Paused sub-state, as a `World` resource |
+| `PrimaryView` | `ecs/PrimaryView.h` | World resource: the camera position, camera-relative view-projection and pixel size viewport 0 renders this frame, written by `renderer` last in `LateUpdate` and read by `gameui`, which cannot link it |
 
 `TypeIdOf<T>()` returns three things. `seq` is process-local and is used directly
 as a signature bit position. `hash` is FNV-1a of the name, stable across runs,
@@ -540,6 +541,10 @@ system has started.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-11-22* — **A `PrimaryView` resource.** Was: the view a frame renders
+lived inside `renderer`. Now: `renderer` writes it here. Because: `gameui`
+projects world points through it and does not depend on `renderer`.
 
 *2026-11-22* — **A `BeforeRender` frame slot.** Was: `FrameBegin` was the only
 slot, and ran outside `Update`. Now: `BeforeRender` runs inside `Update`

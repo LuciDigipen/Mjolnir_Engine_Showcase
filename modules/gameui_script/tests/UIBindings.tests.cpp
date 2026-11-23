@@ -14,6 +14,8 @@
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/PrimaryView.h>
+#include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 #include <input/InputMap.h>
 #include <input/InputState.h>
@@ -21,6 +23,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <exception>
 #include <format>
 #include <iterator>
@@ -117,6 +120,33 @@ namespace
             return std::nullopt;
         }
     };
+
+    // a camera at the origin looking down -Z with a 90 degree lens, as the renderer projects
+    PrimaryView LookingDownZ()
+    {
+        constexpr float kAspect = 640.0f / 480.0f;
+        glm::mat4 projection{ 0.0f };
+        projection[0][0] = 1.0f / kAspect;
+        projection[1][1] = -1.0f;
+        projection[2][3] = -1.0f;
+        projection[3][2] = 0.1f;
+        return PrimaryView{ WorldPosition{}, projection, 640, 480, true };
+    }
+
+    void Place(World &world, Entity entity, WorldVec3 position)
+    {
+        AddTransform(world, entity, Transform(position));
+        ResolveWorld(world, entity);
+    }
+
+    std::vector<UIPoint> CircleCentres(const UIDrawList &list, float radius)
+    {
+        std::vector<UIPoint> centres;
+        for (const UIDrawCommand &command : list.Commands())
+            if (command.mKind == UIDrawCommandKind::Circle && command.mRect.width == radius)
+                centres.push_back(list.TransformOf(command).Apply(UIPoint{ command.mRect.x, command.mRect.y }));
+        return centres;
+    }
 
     constexpr std::string_view kButtonSource = R"LUA(
 local T = {}
@@ -605,6 +635,152 @@ return T
     DrawScriptScreens(f.host, f.world, f.frame, f.ui, 0.0f);
     CHECK(f.ui.StyleDepth() == 0);
     CHECK(f.ui.Style().mPadding == UIStyle{}.mPadding);
+    f.ui.EndFrame();
+    CHECK(f.host.ErrorCount() == std::size(kBodies));
+}
+
+
+TEST_CASE("ui:world_to_screen projects an entity or a position through the frame's view, and is nil without one",
+          "[gameui][script][world]")
+{
+    Fixture f;
+    constexpr std::string_view kSource = R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    local p = ui:world_to_screen(entity)
+    if p == nil then
+        world:set(entity, "UIBindingsProbe", "calls", -1)
+        return
+    end
+    world:set(entity, "UIBindingsProbe", "x", p.x)
+    world:set(entity, "UIBindingsProbe", "y", p.y)
+    world:set(entity, "UIBindingsProbe", "w", p.depth)
+    world:set(entity, "UIBindingsProbe", "clicked", p.on_screen)
+    world:set(entity, "UIBindingsProbe", "held", p.in_front)
+    local behind = ui:world_to_screen({ x = 5, y = 0, z = 10 })
+    world:set(entity, "UIBindingsProbe", "toggled", behind.in_front)
+    world:set(entity, "UIBindingsProbe", "h", behind.x)
+    world:set(entity, "UIBindingsProbe", "calls", 1)
+end
+return T
+)LUA";
+    const Entity placed = f.Spawn("ui_project", kSource);
+    Place(f.world, placed, WorldVec3(0, 0, -10));
+    const Entity unplaced = f.Spawn("ui_project", kSource);
+
+    f.ui.SetView(LookingDownZ());
+    f.Frame();
+    CHECK(f.host.ErrorCount() == 0);
+    REQUIRE(ReadProbe<int32_t>(f.world, placed, "calls") == 1);
+    CHECK(ReadProbe<float>(f.world, placed, "x") == Catch::Approx(320.0f));
+    CHECK(ReadProbe<float>(f.world, placed, "y") == Catch::Approx(240.0f));
+    CHECK(ReadProbe<float>(f.world, placed, "w") == Catch::Approx(10.0f));
+    CHECK(ReadProbe<bool>(f.world, placed, "clicked"));
+    CHECK(ReadProbe<bool>(f.world, placed, "held"));
+    CHECK_FALSE(ReadProbe<bool>(f.world, placed, "toggled"));
+    // behind, it stays on its own side
+    CHECK(ReadProbe<float>(f.world, placed, "h") == Catch::Approx(440.0f));
+    // an entity with no WorldTransform has no point
+    CHECK(ReadProbe<int32_t>(f.world, unplaced, "calls") == -1);
+
+    f.ui.SetView(PrimaryView{});
+    f.Frame();
+    CHECK(ReadProbe<int32_t>(f.world, placed, "calls") == -1);
+}
+
+TEST_CASE("ui:with_world_anchor draws on the target, hides it off screen, or puts it on the edge toward it",
+          "[gameui][script][world]")
+{
+    Fixture f;
+    const Entity entity = f.Spawn("ui_anchor", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnUI(self, world, entity, ui, dt)
+    ui:with_world_anchor(entity, function(on_screen, angle)
+        world:set(entity, "UIBindingsProbe", "held", on_screen)
+        ui:circle(0, 0, 4)
+    end)
+    ui:with_world_anchor({ x = 100, y = 0, z = -10 }, function() ui:circle(0, 0, 5) end)
+    ui:with_world_anchor({ x = 100, y = 0, z = -10 }, { offscreen = "edge", inset = 20 }, function(on_screen, angle)
+        world:set(entity, "UIBindingsProbe", "clicked", on_screen)
+        world:set(entity, "UIBindingsProbe", "slid", angle)
+        ui:circle(0, 0, 6)
+    end)
+    ui:with_world_anchor({ x = 0, y = 0, z = 10 }, { offscreen = "edge" }, function(on_screen, angle)
+        world:set(entity, "UIBindingsProbe", "w", angle)
+        ui:circle(0, 0, 7)
+    end)
+    -- the origin lands on the target whatever transform it is drawn under
+    ui:with_offset(50, 0, function()
+        ui:with_world_anchor(entity, function() ui:circle(0, 0, 8) end)
+    end)
+end
+return T
+)LUA");
+    Place(f.world, entity, WorldVec3(0, 0, -10));
+
+    f.ui.SetView(LookingDownZ());
+    f.Frame();
+    CHECK(f.host.ErrorCount() == 0);
+    CHECK(f.ui.DrawList().TransformDepth() == 0);
+    const UIDrawList &list = f.ui.DrawList();
+
+    REQUIRE(CircleCentres(list, 4).size() == 1);
+    CHECK(CircleCentres(list, 4)[0] == UIPoint{ 320, 240 });
+    CHECK(ReadProbe<bool>(f.world, entity, "held"));
+
+    CHECK(CircleCentres(list, 5).empty());
+
+    REQUIRE(CircleCentres(list, 6).size() == 1);
+    CHECK(CircleCentres(list, 6)[0].x == Catch::Approx(620.0f));
+    CHECK(CircleCentres(list, 6)[0].y == Catch::Approx(240.0f));
+    CHECK_FALSE(ReadProbe<bool>(f.world, entity, "clicked"));
+    CHECK(ReadProbe<float>(f.world, entity, "slid") == Catch::Approx(0.0f));
+
+    // dead behind points down
+    REQUIRE(CircleCentres(list, 7).size() == 1);
+    CHECK(CircleCentres(list, 7)[0].y == Catch::Approx(480.0f));
+    CHECK(ReadProbe<float>(f.world, entity, "w") == Catch::Approx(90.0f));
+
+    REQUIRE(CircleCentres(list, 8).size() == 1);
+    CHECK(CircleCentres(list, 8)[0].x == Catch::Approx(320.0f));
+    CHECK(CircleCentres(list, 8)[0].y == Catch::Approx(240.0f));
+
+    // without a view nothing is anchored
+    f.ui.SetView(PrimaryView{});
+    f.Frame();
+    CHECK(f.ui.DrawList().Commands().empty());
+}
+
+TEST_CASE("A bad world target or anchor option fails the OnUI, and a failure inside an anchor leaves it balanced",
+          "[gameui][script][world]")
+{
+    Fixture f;
+    constexpr std::string_view kBodies[] = {
+        "ui:world_to_screen('duck')",
+        "ui:world_to_screen({ x = 1 })",
+        "ui:with_world_anchor({ x = 0, y = 0, z = -10 })",
+        "ui:with_world_anchor({ x = 0, y = 0, z = -10 }, { offscreen = 'wrap' }, function() end)",
+        "ui:with_world_anchor({ x = 0, y = 0, z = -10 }, { inset = -1 }, function() end)",
+        "ui:with_world_anchor({ x = 0, y = 0, z = -10 }, { spin = 1 }, function() end)",
+        "ui:with_world_anchor({ x = 0, y = 0, z = -10 }, function() error('boom') end)",
+    };
+    int index = 0;
+    for (const std::string_view body : kBodies)
+        f.Spawn(std::format("ui_bad_world_{}", index++), std::format(R"LUA(
+local T = {{}}
+function T.NewInstanceData() return {{}} end
+function T.OnUI(self, world, entity, ui, dt)
+    {}
+end
+return T
+)LUA", body));
+
+    f.ui.SetView(LookingDownZ());
+    f.ui.BeginFrame(kArea, f.world.Resource<InputState>(), f.world.Resource<InputMap>(), f.pointer);
+    DrawScriptScreens(f.host, f.world, f.frame, f.ui, 0.0f);
+    CHECK(f.ui.DrawList().TransformDepth() == 0);
     f.ui.EndFrame();
     CHECK(f.host.ErrorCount() == std::size(kBodies));
 }

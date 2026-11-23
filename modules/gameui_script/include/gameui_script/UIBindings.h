@@ -29,6 +29,8 @@ namespace mir
     struct UIScriptFrame
     {
         UIContext *mUI = nullptr;
+        // the World whose scripts draw, set with mUI
+        World *mWorld = nullptr;
         Entity mOwner;
         AssetCache *mAssets = nullptr;
         const AssetResolver *mResolver = nullptr;

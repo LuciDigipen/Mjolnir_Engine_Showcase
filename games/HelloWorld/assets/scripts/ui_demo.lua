@@ -1,6 +1,6 @@
 -- Game UI drawn from Lua: a panel in the bottom-left corner that fades in, counts clicks, and pauses and resumes
--- the game, and a dial beside it that follows the slider. OnUI draws the whole UI again every frame, and what it
--- remembers lives in self. The look, Turret Road and the colours, is ui/style.json's, which game.json names, so the
+-- the game, a dial beside it that follows the slider, and a marker on the duck. OnUI draws the whole UI again every
+-- frame, and what it remembers lives in self. The look, Turret Road and the colours, is ui/style.json's, which game.json names, so the
 -- engine's pause menu wears it too.
 local UIDemo = {}
 
@@ -45,6 +45,32 @@ local function DrawDial(ui, cx, cy, r, value)
         { size = 20, align = "center", outline = true })
 end
 
+-- the duck is entity 7 in the scene's files; its origin is at its feet
+local kDuck = 7
+local kDuckHeight = 0.6
+
+-- a box and its distance over the duck, or an arrow on the screen's edge toward it when the camera does not see it
+local function DrawDuckMarker(ui, world)
+    local duck = world:find_scene_entity(world:primary_scene(), kDuck)
+    local at = duck and world:world_position(duck)
+    if at == nil then return end
+    -- an entity or a point; this one is a little above the duck's
+    at.y = at.y + kDuckHeight
+    local seen = ui:world_to_screen(at)
+    local color = { 1, 0.85, 0.4, 1 }
+    ui:with_world_anchor(at, { offscreen = "edge", inset = 28 }, function(on_screen, angle)
+        if on_screen then
+            ui:rect({ x = -28, y = -28, w = 56, h = 56 }, { width = 2, rounding = 4, color = color })
+            ui:label("duck_distance", { x = -40, y = -52, w = 80, h = 20 }, string.format("%.0f m", seen.depth),
+                { size = 16, align = "center", outline = true, color = color })
+        else
+            ui:with_rotation(angle, function()
+                ui:polygon({ 14, 0, -7, -10, -7, 10 }, { color = color })
+            end)
+        end
+    end)
+end
+
 function UIDemo.NewInstanceData()
     return { clicks = 0, showBar = true, level = 0.5, needle = 0.5 }
 end
@@ -56,6 +82,8 @@ function UIDemo.OnStart(self, world, entity)
 end
 
 function UIDemo.OnUI(self, world, entity, ui, dt)
+    DrawDuckMarker(ui, world)
+
     local panel = ui:anchor(ui:inset(ui:safe_area(), 16), "bottom_left", 240, 200)
     ui:with_opacity(world:value("UIDemo.alpha", 1), function()
         ui:panel(panel)

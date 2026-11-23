@@ -43,10 +43,19 @@ namespace
         mir::SystemContext context{ world, commands, 0.016f, 0.0, 0 };
         mir::ActiveCameraSystem *system = nullptr;
 
+        int picks = 0;
+        int activeWhenPicked = 0;
+
         SystemFixture()
         {
             system = &scheduler.AddSystem<mir::ActiveCameraSystem>(mir::SystemPhase::Render,
-                mir::SystemOrder{ mir::SystemOrder::kEarly });
+                mir::SystemOrder{ mir::SystemOrder::kEarly }, [this](World &picked)
+                {
+                    ++picks;
+                    activeWhenPicked = 0;
+                    picked.GetOrCreateQuery<const Camera>().ForEach([&](Entity, const Camera &camera)
+                        { activeWhenPicked += camera.mActive ? 1 : 0; });
+                });
             scheduler.Start(context);
         }
 
@@ -174,6 +183,18 @@ TEST_CASE("A camera that arrives flagged loses to the active one", "[renderer][c
 
     CHECK(IsActive(fixture.world, original));
     CHECK_FALSE(IsActive(fixture.world, duplicate));
+}
+
+TEST_CASE("ActiveCameraSystem calls back each update, once the flags are final", "[renderer][camera]")
+{
+    SystemFixture fixture;
+    MakeCamera(fixture.world, true);
+    MakeCamera(fixture.world, true);
+    fixture.Update();
+    CHECK(fixture.picks == 1);
+    CHECK(fixture.activeWhenPicked == 1);
+    fixture.Update();
+    CHECK(fixture.picks == 2);
 }
 
 TEST_CASE("Cameras that all arrive flagged keep the lowest-index one", "[renderer][camera]")
