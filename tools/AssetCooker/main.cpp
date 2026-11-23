@@ -384,6 +384,8 @@ namespace
     // What the cook does with one file under a source root; only Raw is published as its own bytes.
     enum class SourceFileKind
     {
+        // models, materials, shaders and banks, which other steps cook or read loose
+        OtherPipeline,
         Excluded,
         Prefab,
         ParticleEmitter,
@@ -399,10 +401,10 @@ namespace
         std::filesystem::path bank = path;
         const bool bankMetadata = ext == ".json" && std::filesystem::exists(bank.replace_extension(".bnk"));
         if (ext == ".gltf" || ext == ".glb" || IsMaterialPath(path) || ext == ".slang" || ext == ".bnk" ||
-            ext == ".wem" || bankMetadata || mir::IsAssetToolingFile(path))
-            return SourceFileKind::Excluded;
+            ext == ".wem" || bankMetadata)
+            return SourceFileKind::OtherPipeline;
         // TerrainTool owns recipes and releases.
-        if (mir::IsTerrainFileExcludedFromCook(LogicalPath(root, path)))
+        if (mir::IsAssetToolingFile(path) || mir::IsTerrainFileExcludedFromCook(LogicalPath(root, path)))
             return SourceFileKind::Excluded;
         if (ext == ".prefab")
             return SourceFileKind::Prefab;
@@ -746,14 +748,19 @@ namespace
                                 return std::filesystem::weakly_canonical(changed) == texture;
                             });
                 }
-        const bool partial = !requiresFullCook &&
-            (!options.models.empty() || !options.materials.empty() || !options.changed.empty() ||
-                !options.removals.empty() || !options.materialRemovals.empty() || !options.moves.empty());
-        std::unordered_map<uint64_t, Output> outputs;
-        std::unordered_map<uint64_t, Output> previousOutputs;
         const auto manifestPath = options.out / mir::kAssetManifestFileName;
         const auto previousManifestBytes = ReadExistingCookedBytes(manifestPath);
-        if (auto previous = previousManifestBytes ? mir::AssetManifest::Parse(*previousManifestBytes) : std::nullopt)
+        const auto previous = previousManifestBytes ? mir::AssetManifest::Parse(*previousManifestBytes) : std::nullopt;
+        const bool anyRequest = !options.models.empty() || !options.materials.empty() || !options.changed.empty() ||
+            !options.removals.empty() || !options.materialRemovals.empty() || !options.moves.empty();
+        // A partial cook keeps the previous manifest's entries, so one that does not parse would drop them all.
+        const bool previousInvalid = previousManifestBytes && !previous;
+        if (anyRequest && previousInvalid)
+            MIR_LOG_WARN("AssetCooker: the previous manifest is invalid, cooking every asset");
+        const bool partial = !requiresFullCook && !previousInvalid && anyRequest;
+        std::unordered_map<uint64_t, Output> outputs;
+        std::unordered_map<uint64_t, Output> previousOutputs;
+        if (previous)
             for (const auto &entry : previous->Entries())
             {
                 const auto deps = previous->Dependencies(entry);
@@ -770,18 +777,31 @@ namespace
         std::set<std::string> changedCanonical;
         for (const auto &path : options.changed)
             changedCanonical.insert(std::filesystem::weakly_canonical(path).generic_string());
+        // listed files a model or material recooks
+        std::set<std::string> changedDependencies;
         if (!changedCanonical.empty())
         {
+            const auto dependsOnChange = [&](const Json &record)
+                {
+                    bool found = false;
+                    for (const auto &dependency : record.value("dependencies", Json::array()))
+                    {
+                        const std::string canonical =
+                            std::filesystem::weakly_canonical(dependency.get<std::string>()).generic_string();
+                        if (changedCanonical.contains(canonical))
+                        {
+                            changedDependencies.insert(canonical);
+                            found = true;
+                        }
+                    }
+                    return found;
+                };
             for (auto &[model, record] : cache["models"].items())
-                for (const auto &dependency : record.value("dependencies", Json::array()))
-                    if (changedCanonical.contains(
-                        std::filesystem::weakly_canonical(dependency.get<std::string>()).generic_string()))
-                        requested.insert(model);
+                if (dependsOnChange(record))
+                    requested.insert(model);
             for (auto &[material, record] : cache["materials"].items())
-                for (const auto &dependency : record.value("dependencies", Json::array()))
-                    if (changedCanonical.contains(
-                        std::filesystem::weakly_canonical(dependency.get<std::string>()).generic_string()))
-                        requestedMaterials.insert(material);
+                if (dependsOnChange(record))
+                    requestedMaterials.insert(material);
         }
 
         std::vector<std::pair<const SourceRoot *, std::filesystem::path>> models;
@@ -862,9 +882,14 @@ namespace
                 const auto bytes = mir::ReadBytes(path);
                 if (!bytes)
                     throw std::runtime_error("cannot read " + path.string());
-                emit(ids.Meta(path).guid,
-                    mir::BuildAssetBlob(mir::kRawAssetTypeTag, mir::kRawAssetContentVersion, *bytes),
-                    LogicalPath(root, path));
+                const mir::AssetId id = ids.Meta(path).guid;
+                const std::string logical = LogicalPath(root, path);
+                // a file recreated with a new .meta replaces the entry its old guid left under the same path
+                std::erase_if(outputs, [&](const auto &entry)
+                    {
+                        return entry.first != id.value && entry.second.logicalPath == logical;
+                    });
+                emit(id, mir::BuildAssetBlob(mir::kRawAssetTypeTag, mir::kRawAssetContentVersion, *bytes), logical);
             };
 
             // a file a particle source names, by the guid in its .meta
@@ -1251,6 +1276,7 @@ namespace
                 {
                     switch (ClassifySourceFile(root, path))
                     {
+                    case SourceFileKind::OtherPipeline:
                     case SourceFileKind::Excluded:
                         continue;
                     case SourceFileKind::Prefab:
@@ -1324,6 +1350,40 @@ namespace
                 emitRaw(*resolved->first, resolved->second);
             }
         }
+        // A listed raw file that is gone loses its entry. Listed files this cook leaves out are reported, so the
+        // editor does not show them as applied.
+        Json skipped = Json::array();
+        for (const auto &changedPath : options.changed)
+        {
+            std::error_code error;
+            const auto file = std::filesystem::weakly_canonical(changedPath, error);
+            if (error)
+                continue;
+            const bool present = std::filesystem::is_regular_file(file, error) && !error;
+            const auto resolved = ResolveSourceFile(options, file);
+            std::string reason;
+            if (!resolved)
+                reason = "outside the source asset roots";
+            else if (const SourceFileKind kind = ClassifySourceFile(*resolved->first, file); !present)
+            {
+                if (kind == SourceFileKind::Raw)
+                {
+                    const std::string logical = LogicalPath(*resolved->first, file);
+                    std::erase_if(outputs, [&](const auto &entry)
+                        {
+                            return entry.second.tag == mir::kRawAssetTypeTag && entry.second.logicalPath == logical;
+                        });
+                }
+            }
+            else if (kind == SourceFileKind::Excluded)
+                reason = "excluded from the asset cook";
+            else if (partial && !particleChange &&
+                (kind == SourceFileKind::Prefab ||
+                    (kind == SourceFileKind::Image && !changedDependencies.contains(file.generic_string()))))
+                reason = "a partial cook does not publish this file type";
+            if (present && !reason.empty())
+                skipped.push_back({ { "path", changedPath.string() }, { "reason", reason } });
+        }
         for (auto &[source, state] : importerStates)
         {
             ids.Meta(source).importer = std::move(state);
@@ -1355,6 +1415,8 @@ namespace
         for (const auto &output : ordered)
             entries.push_back({ { output.id, output.tag, output.version }, output.file, output.logicalPath, output.deps });
         const auto manifestBytes = mir::BuildAssetManifestBlob(entries);
+        if (!mir::AssetManifest::Parse(manifestBytes))
+            throw std::runtime_error("the cooked manifest is invalid, so it was not published");
         const bool manifestChanged = !previousManifestBytes || *previousManifestBytes != manifestBytes;
         if (previousManifestBytes)
             Publish(options.out / kPreviousManifestFileName, *previousManifestBytes);
@@ -1372,6 +1434,7 @@ namespace
         assetsChanged = assetsChanged || manifestChanged;
         auto result = BuildResult(changed || assetsChanged ? "succeeded" : "unchanged", resultModels);
         result["assetsChanged"] = assetsChanged;
+        result["skipped"] = std::move(skipped);
         WriteResult(options, result);
         MIR_LOG_INFO("AssetCooker: {} assets in manifest ({} model, {} material requests)", ordered.size(),
             models.size(), materials.size());

@@ -154,6 +154,20 @@ TEST_CASE("A path longer than the config field holds is refused", "[flight_edito
     CHECK(preview.assetsRelativePath.size() >= mir::kFieldStringCapacity);
 }
 
+TEST_CASE("A folder the asset cook skips is refused", "[flight_editor][create]")
+{
+    TempRoot root("cook-excluded");
+    for (const std::string folder : { "terrain/demo.terrain.layers", "terrain/releases/current", "TERRAIN/Releases/x" })
+    {
+        INFO(folder);
+        const mir::FlightModelCreatePreview preview =
+            mir::PreviewFlightModelCreate(Request("Wing", folder), root.path);
+        CHECK_FALSE(preview.Valid());
+        CHECK(preview.error.find("skips") != std::string::npos);
+    }
+    CHECK(mir::PreviewFlightModelCreate(Request("Wing", std::string("terrain")), root.path).Valid());
+}
+
 TEST_CASE("Creating writes the chosen template and creates its folder", "[flight_editor][create]")
 {
     TempRoot root("create");

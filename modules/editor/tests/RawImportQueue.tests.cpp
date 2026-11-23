@@ -82,14 +82,72 @@ TEST_CASE("A failed cook reports its reason and keeps it through an apply", "[ed
         CHECK(queue.Status(kPath)->mReason == reason);
     }
 
+    queue.MarkApplied();
+    CHECK(queue.Status(kPath)->mState == mir::RawImportState::Failed);
+    CHECK(queue.Status(kPath)->mReason == "canceled");
+}
+
+TEST_CASE("A vetoed apply reports its reason", "[editor][import]")
+{
+    mir::RawImportQueue queue;
     queue.Queue(kPath);
     queue.StartCooking(kPath);
     queue.Finish(kPath, true, true);
     queue.MarkApplyFailed("a prefab vetoed the reload");
     CHECK(queue.Status(kPath)->mState == mir::RawImportState::Failed);
     CHECK(queue.Status(kPath)->mReason == "a prefab vetoed the reload");
+}
+
+TEST_CASE("A later apply also applies the files a veto left cooked", "[editor][import]")
+{
+    mir::RawImportQueue queue;
+    queue.Queue(kPath);
+    queue.Queue(kOther);
+    queue.StartCooking(kPath);
+    queue.StartCooking(kOther);
+    queue.Finish(kPath, true, true);
+    queue.Finish(kOther, true, true);
+    queue.MarkApplyFailed("a prefab vetoed the reload");
+
+    queue.Queue(kOther);
+    queue.StartCooking(kOther);
+    queue.Finish(kOther, queue.NeedsApply(true, true), true);
+    queue.MarkApplied();
+    CHECK(queue.Status(kPath)->mState == mir::RawImportState::Applied);
+    CHECK(queue.Status(kPath)->mReason.empty());
+    CHECK(queue.Status(kOther)->mState == mir::RawImportState::Applied);
+}
+
+TEST_CASE("A vetoed file that failed again keeps its newer failure through a later apply", "[editor][import]")
+{
+    mir::RawImportQueue queue;
+    queue.Queue(kPath);
+    queue.StartCooking(kPath);
+    queue.Finish(kPath, true, true);
+    queue.MarkApplyFailed("a prefab vetoed the reload");
+
+    queue.Queue(kPath);
+    queue.StartCooking(kPath);
+    queue.Fail(kPath, "AssetCooker failed");
     queue.MarkApplied();
     CHECK(queue.Status(kPath)->mState == mir::RawImportState::Failed);
+    CHECK(queue.Status(kPath)->mReason == "AssetCooker failed");
+}
+
+TEST_CASE("A file the cook left out is skipped, not applied", "[editor][import]")
+{
+    mir::RawImportQueue queue;
+    queue.Queue(kPath);
+    queue.StartCooking(kPath);
+    queue.Skip(kPath, "excluded from the asset cook");
+    queue.Finish(kPath, true, true);
+    CHECK(queue.Status(kPath)->mState == mir::RawImportState::Skipped);
+    CHECK(queue.Status(kPath)->mReason == "excluded from the asset cook");
+    queue.MarkApplied();
+    CHECK(queue.Status(kPath)->mState == mir::RawImportState::Skipped);
+
+    queue.Skip(kOther, "excluded from the asset cook");
+    CHECK_FALSE(queue.Status(kOther).has_value());
 }
 
 TEST_CASE("A vetoed apply keeps the changed manifest unapplied until the next changed cook", "[editor][import]")

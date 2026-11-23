@@ -9,6 +9,7 @@
 #include <flight_editor/FlightModelCreate.h>
 
 #include <flight/AircraftConfig.h>
+#include <terrain/TerrainAssetPath.h>
 
 #include <core/ecs/ComponentFields.h>
 #include <core/fs/FileIO.h>
@@ -101,6 +102,12 @@ namespace mir
         if (sourceAssetsRoot.empty())
         {
             preview.error = "The project has no source assets root.";
+            return preview;
+        }
+        if (IsTerrainFileExcludedFromCook(preview.assetsRelativePath))
+        {
+            preview.error = std::format("The asset cook skips '{}', so choose another folder.",
+                preview.assetsRelativePath);
             return preview;
         }
         if (ExistsIgnoringCase(sourceAssetsRoot / std::filesystem::path(folder), fileName))

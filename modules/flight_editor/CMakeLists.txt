@@ -19,6 +19,7 @@ target_link_libraries(engine_flight_editor
            mir::flight
            mir::flight_debug
     PRIVATE mir::core
+            mir::terrain
             imgui::imgui
 )
 

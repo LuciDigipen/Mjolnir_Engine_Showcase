@@ -509,6 +509,13 @@ namespace mir
                     }
                     // a full cook replaces a missing manifest, so it applies even when no model changed
                     mPendingApply |= mRawImport.NeedsApply(cooked || mRunning.fullCook, !mRunning.changed.empty());
+                    for (const Json &skipped : result.value("skipped", Json::array()))
+                    {
+                        const std::string path = skipped.value("path", "");
+                        const std::string reason = skipped.value("reason", "skipped by the cook");
+                        MIR_LOG_WARN("Asset import: '{}' was not cooked: {}", path, reason);
+                        mRawImport.Skip(path, reason);
+                    }
                 }
 
                 if (!mRunningStale)

@@ -1159,6 +1159,134 @@ TEST_CASE("A partial cook leaves excluded kinds to other paths and skips missing
     CHECK(std::string(manifest->PathOf(*stillKept)) == keepBlob);
     CHECK(ReadBytes(out / keepBlob) == keepBytes);
 
+    std::set<std::string> reported;
+    for (const Json &entry : unchanged.value("skipped", Json::array()))
+    {
+        CHECK_FALSE(entry.value("reason", "").empty());
+        reported.insert(entry.value("path", ""));
+    }
+    const std::set<std::string> expected{
+        (source / "data/plane.prefab").string(),
+        (source / "terrain/hills.terrain.json").string(),
+        (source / "terrain/releases/5ada0b9d43f41166/current.tpack").string(),
+        (source / "ui/broken.png").string(),
+        (source / "data/keep.txt.import.json").string(),
+        outside.string(),
+    };
+    CHECK(reported == expected);
+
+    std::error_code error;
+    fs::remove_all(root, error);
+}
+
+TEST_CASE("A raw file recreated with a new .meta replaces its entry", "[cooker][raw][incremental]")
+{
+    const auto root = fs::current_path() /
+                      ("raw-recreate-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto source = root / "assets";
+    const auto out = root / "cooked";
+    const auto result = out / "result.json";
+    fs::create_directories(source / "aircraft");
+    fs::create_directories(source / "data");
+    const auto plane = source / "aircraft" / "plane.aircraft.json";
+    const auto keep = source / "data" / "keep.txt";
+    const auto other = source / "data" / "other.txt";
+    REQUIRE(WriteText(plane, R"({"mass":1})"));
+    REQUIRE(WriteText(keep, "keep\n"));
+    REQUIRE(WriteText(other, "other\n"));
+    const std::vector<std::string> full{"--source-dir", source.string(), "--id-root", "assets", "--out", out.string(),
+                                        "--result", result.string()};
+    auto cook = [&](const fs::path &changed) {
+        std::vector<std::string> args = full;
+        if (!changed.empty())
+            args.insert(args.end(), {"--changed", changed.string()});
+        REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
+    };
+    cook({});
+    auto manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    const auto *before = manifest->FindByPath("assets/aircraft/plane.aircraft.json");
+    REQUIRE(before);
+    const AssetId oldId = before->id;
+
+    REQUIRE(fs::remove(plane));
+    REQUIRE(fs::remove(fs::path(plane.string() + std::string(kAssetMetaExtension))));
+    REQUIRE(WriteText(plane, R"({"mass":2})"));
+    cook(plane);
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 3);
+    const auto *after = manifest->FindByPath("assets/aircraft/plane.aircraft.json");
+    REQUIRE(after);
+    CHECK(after->id != oldId);
+    CHECK(manifest->Find(oldId) == nullptr);
+
+    REQUIRE(WriteText(other, "other edited\n"));
+    cook(other);
+    manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 3);
+    CHECK(manifest->FindByPath("assets/data/keep.txt") != nullptr);
+    CHECK(manifest->FindByPath("assets/aircraft/plane.aircraft.json") != nullptr);
+
+    std::error_code error;
+    fs::remove_all(root, error);
+}
+
+TEST_CASE("A partial cook removes the entry of a listed raw file that is gone", "[cooker][raw][incremental]")
+{
+    const auto root = fs::current_path() /
+                      ("raw-removed-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto source = root / "assets";
+    const auto out = root / "cooked";
+    const auto result = out / "result.json";
+    fs::create_directories(source / "data");
+    const auto gone = source / "data" / "gone.aircraft.json";
+    REQUIRE(WriteText(gone, R"({"mass":1})"));
+    REQUIRE(WriteText(source / "data" / "keep.txt", "keep\n"));
+    const std::vector<std::string> full{"--source-dir", source.string(), "--id-root", "assets", "--out", out.string(),
+                                        "--result", result.string()};
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+
+    REQUIRE(fs::remove(gone));
+    std::vector<std::string> partial = full;
+    partial.insert(partial.end(), {"--changed", gone.string()});
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
+    CHECK(Json::parse(std::ifstream(result)).value("assetsChanged", false));
+    const auto manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 1);
+    CHECK(manifest->FindByPath("assets/data/gone.aircraft.json") == nullptr);
+    CHECK(manifest->FindByPath("assets/data/keep.txt") != nullptr);
+
+    std::error_code error;
+    fs::remove_all(root, error);
+}
+
+TEST_CASE("A partial cook over a manifest that does not parse cooks every asset", "[cooker][raw][incremental]")
+{
+    const auto root = fs::current_path() /
+                      ("raw-bad-manifest-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto source = root / "assets";
+    const auto out = root / "cooked";
+    const auto result = out / "result.json";
+    fs::create_directories(source / "data");
+    const auto plane = source / "data" / "plane.aircraft.json";
+    REQUIRE(WriteText(plane, R"({"mass":1})"));
+    REQUIRE(WriteText(source / "data" / "keep.txt", "keep\n"));
+    const std::vector<std::string> full{"--source-dir", source.string(), "--id-root", "assets", "--out", out.string(),
+                                        "--result", result.string()};
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+
+    REQUIRE(WriteText(out / kAssetManifestFileName, "not a manifest"));
+    std::vector<std::string> partial = full;
+    partial.insert(partial.end(), {"--changed", plane.string()});
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
+    const auto manifest = AssetManifest::LoadFile(out / kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 2);
+    CHECK(manifest->FindByPath("assets/data/keep.txt") != nullptr);
+
     std::error_code error;
     fs::remove_all(root, error);
 }

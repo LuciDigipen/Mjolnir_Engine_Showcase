@@ -16,6 +16,7 @@ namespace mir
 
     void RawImportQueue::Queue(const std::filesystem::path &path)
     {
+        mVetoed.erase(Key(path));
         mStatuses[Key(path)] = RawImportStatus{RawImportState::Queued, {}};
     }
 
@@ -38,8 +39,16 @@ namespace mir
                 editing ? RawImportState::WaitingForApply : RawImportState::WaitingForStop, {}};
     }
 
+    void RawImportQueue::Skip(const std::filesystem::path &path, std::string reason)
+    {
+        const auto found = mStatuses.find(Key(path));
+        if (found != mStatuses.end() && found->second.mState == RawImportState::Cooking)
+            found->second = RawImportStatus{RawImportState::Skipped, std::move(reason)};
+    }
+
     void RawImportQueue::Fail(const std::filesystem::path &path, std::string reason)
     {
+        mVetoed.erase(Key(path));
         mStatuses[Key(path)] = RawImportStatus{RawImportState::Failed, std::move(reason)};
     }
 
@@ -47,8 +56,10 @@ namespace mir
     {
         mUnapplied = false;
         for (auto &[key, status] : mStatuses)
-            if (status.mState == RawImportState::WaitingForApply || status.mState == RawImportState::WaitingForStop)
+            if (status.mState == RawImportState::WaitingForApply || status.mState == RawImportState::WaitingForStop ||
+                mVetoed.contains(key))
                 status = RawImportStatus{RawImportState::Applied, {}};
+        mVetoed.clear();
     }
 
     void RawImportQueue::MarkApplyFailed(const std::string &reason)
@@ -56,7 +67,10 @@ namespace mir
         mUnapplied = true;
         for (auto &[key, status] : mStatuses)
             if (status.mState == RawImportState::WaitingForApply || status.mState == RawImportState::WaitingForStop)
+            {
                 status = RawImportStatus{RawImportState::Failed, reason};
+                mVetoed.insert(key);
+            }
     }
 
     bool RawImportQueue::NeedsApply(bool cookedOutput, bool listedFiles) const

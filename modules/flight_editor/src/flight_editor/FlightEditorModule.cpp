@@ -43,7 +43,19 @@ namespace mir
     {
         constexpr const char *kCreateItem = "New Flight Model Settings";
         constexpr const char *kWindowName = "Flight Model";
+        constexpr const char *kAskOpenPopup = "Unsaved flight model";
+        constexpr const char *kConflictPopup = "Flight model changed on disk";
         constexpr auto kPollInterval = std::chrono::milliseconds(250);
+        // a window docked or created this frame can miss a focus request, so it is repeated once
+        constexpr int kFocusFrames = 2;
+
+        enum class ConflictChoice
+        {
+            None,
+            Overwritten,
+            Reloaded,
+            Canceled,
+        };
 
         std::string_view RawImportStateName(RawImportState state)
         {
@@ -59,6 +71,8 @@ namespace mir
                 return "waiting to apply";
             case RawImportState::Applied:
                 return "applied";
+            case RawImportState::Skipped:
+                return "not cooked";
             case RawImportState::Failed:
                 return "failed";
             }
@@ -79,6 +93,15 @@ namespace mir
         float DragSpeed(float value)
         {
             return std::max(0.01f, std::fabs(value) * 0.001f);
+        }
+
+        void DrawErrorText(const std::string &text)
+        {
+            if (text.empty())
+                return;
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s", text.c_str());
+            ImGui::PopTextWrapPos();
         }
 
         bool EndsWithAircraftJson(std::string_view path)
@@ -121,12 +144,12 @@ namespace mir
             }
             if (mAskOpenPending)
             {
-                ImGui::OpenPopup("Unsaved flight model");
+                ImGui::OpenPopup(kAskOpenPopup);
                 mAskOpenPending = false;
             }
             if (mConflictPending)
             {
-                ImGui::OpenPopup("Flight model changed on disk");
+                ImGui::OpenPopup(kConflictPopup);
                 mConflictPending = false;
             }
 
@@ -151,7 +174,7 @@ namespace mir
             mCreateTemplate = FlightModelTemplate::Powered;
             mCreateFolder = assetsFolder ? std::optional<std::string>(*assetsFolder) : std::nullopt;
             mCreateDialogPending = true;
-            mError.clear();
+            mCreateError.clear();
         }
 
         bool OpenContentBrowserFile(std::string_view assetsRelativePath) override
@@ -178,6 +201,7 @@ namespace mir
             if (mDraft.HasFile() && mDraft.Path() == assetsRelativePath)
             {
                 mWindowOpen = true;
+                mFocusFrames = kFocusFrames;
                 return;
             }
             if (EvaluateFlightModelOpen(mDraft.Dirty(), mDraft.Path(), assetsRelativePath) ==
@@ -194,6 +218,7 @@ namespace mir
         {
             std::string error;
             mWindowOpen = true;
+            mFocusFrames = kFocusFrames;
             mLastPoll = std::chrono::steady_clock::now();
             if (!mDraft.Open(AssetsRoot(), assetsRelativePath, error))
             {
@@ -213,7 +238,8 @@ namespace mir
             OpenPath(path);
         }
 
-        bool SaveDraft(bool overwrite)
+        // The caller asks about ChangedOnDisk, in a popup nested in the one it is drawing, if any.
+        FlightModelSaveResult SaveDraft(bool overwrite)
         {
             const SavedSourceCallback onSaved = [this](const std::filesystem::path &saved)
             {
@@ -223,21 +249,14 @@ namespace mir
 
             std::string error;
             const FlightModelSaveResult result = mDraft.Save(AssetsRoot(), onSaved, error, overwrite);
-            switch (result)
+            if (result == FlightModelSaveResult::Saved)
             {
-            case FlightModelSaveResult::Saved:
                 mStatus = "Saved and queued for import.";
                 mError.clear();
-                return true;
-            case FlightModelSaveResult::Invalid:
-                mError = error;
-                return false;
-            case FlightModelSaveResult::ChangedOnDisk:
-                mError = error;
-                mConflictPending = true;
-                return false;
             }
-            return false;
+            else if (result == FlightModelSaveResult::Invalid)
+                mError = error;
+            return result;
         }
 
         bool CreateFromDialog()
@@ -248,7 +267,7 @@ namespace mir
             std::string error;
             if (!CreateFlightModelFile(request, AssetsRoot(), assetsRelativePath, absolutePath, error))
             {
-                mError = error;
+                mCreateError = error;
                 return false;
             }
 
@@ -274,11 +293,19 @@ namespace mir
         void DrawWindow(const EditorExtensionContext &context)
         {
             if (!mWindowOpen || !mDraft.HasFile())
+            {
+                mFocusFrames = 0;
                 return;
+            }
 
             ImGui::SetNextWindowSize(ImVec2(430.0f, 720.0f), ImGuiCond_FirstUseEver);
             if (context.mInspectorDockId != 0)
                 ImGui::SetNextWindowDockID(context.mInspectorDockId, ImGuiCond_FirstUseEver);
+            if (mFocusFrames > 0)
+            {
+                ImGui::SetNextWindowFocus();
+                --mFocusFrames;
+            }
 
             bool open = true;
             if (ImGui::Begin(kWindowName, &open))
@@ -298,9 +325,7 @@ namespace mir
 
         void DrawParseError(const EditorExtensionContext &context)
         {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s", mDraft.ParseError().c_str());
-            ImGui::PopTextWrapPos();
+            DrawErrorText(mDraft.ParseError());
             if (context.mOpenAssetInIde && ImGui::Button("Open in IDE"))
                 context.mOpenAssetInIde(mDraft.Path());
         }
@@ -318,13 +343,8 @@ namespace mir
             ImGui::Text("Import: %s", ImportStatusText(mEditor.Import().ChangedStatus(absolutePath)).c_str());
 
             ImGui::BeginDisabled(!mEditing);
-            if (ImGui::Button("Save"))
-            {
-                if (mDraft.DiskChanged(AssetsRoot()))
-                    mConflictPending = true;
-                else
-                    SaveDraft(false);
-            }
+            if (ImGui::Button("Save") && SaveDraft(false) == FlightModelSaveResult::ChangedOnDisk)
+                mConflictPending = true;
             ImGui::SameLine();
             if (ImGui::Button("Revert"))
             {
@@ -346,12 +366,7 @@ namespace mir
 
             if (!mStatus.empty())
                 ImGui::TextUnformatted(mStatus.c_str());
-            if (!mError.empty())
-            {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s", mError.c_str());
-                ImGui::PopTextWrapPos();
-            }
+            DrawErrorText(mError);
 
             ImGui::BeginDisabled(!mEditing);
             std::string group;
@@ -386,7 +401,8 @@ namespace mir
             if (!ImGui::BeginPopupModal(kCreateItem, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
                 return;
 
-            ImGui::InputText("Name", mCreateName, sizeof(mCreateName));
+            if (ImGui::InputText("Name", mCreateName, sizeof(mCreateName)))
+                mCreateError.clear();
 
             const std::array<std::string, 2> templateNames{
                 std::string(FlightModelTemplateName(FlightModelTemplate::Powered)),
@@ -396,19 +412,19 @@ namespace mir
             int templateIndex = static_cast<int>(mCreateTemplate);
             if (ImGui::Combo("Template", &templateIndex, templateItems.data(),
                     static_cast<int>(templateItems.size())))
+            {
                 mCreateTemplate = static_cast<FlightModelTemplate>(templateIndex);
+                mCreateError.clear();
+            }
 
             const FlightModelCreateRequest request{ mCreateName, mCreateTemplate, mCreateFolder };
             const FlightModelCreatePreview preview = PreviewFlightModelCreate(request, AssetsRoot());
             ImGui::TextDisabled("%s", preview.assetsRelativePath.c_str());
 
             const std::string reason = mEditing ? preview.error : std::string("Create in Edit.");
-            if (!reason.empty())
-            {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s", reason.c_str());
-                ImGui::PopTextWrapPos();
-            }
+            DrawErrorText(reason);
+            if (reason.empty())
+                DrawErrorText(mCreateError);
 
             ImGui::BeginDisabled(!reason.empty());
             if (ImGui::Button("Create") && CreateFromDialog())
@@ -422,7 +438,7 @@ namespace mir
 
         void DrawAskOpenDialog()
         {
-            if (!ImGui::BeginPopupModal("Unsaved flight model", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            if (!ImGui::BeginPopupModal(kAskOpenPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
                 return;
 
             ImGui::PushTextWrapPos(0.0f);
@@ -430,13 +446,16 @@ namespace mir
                 mPendingOpen ? mPendingOpen->c_str() : "");
             ImGui::PopTextWrapPos();
 
+            bool askConflict = false;
             if (ImGui::Button("Save"))
             {
-                if (SaveDraft(false))
+                const FlightModelSaveResult result = SaveDraft(false);
+                if (result == FlightModelSaveResult::Saved)
                 {
                     OpenPending();
                     ImGui::CloseCurrentPopup();
                 }
+                askConflict = result == FlightModelSaveResult::ChangedOnDisk;
             }
             ImGui::SameLine();
             if (ImGui::Button("Discard"))
@@ -450,62 +469,69 @@ namespace mir
                 mPendingOpen.reset();
                 ImGui::CloseCurrentPopup();
             }
+            DrawErrorText(mError);
 
-            if (!mError.empty())
+            // Nested, so a conflict does not replace this prompt: Cancel returns to it.
+            if (askConflict)
+                ImGui::OpenPopup(kConflictPopup);
+            const ConflictChoice choice = DrawConflictDialog();
+            if (choice == ConflictChoice::Overwritten || choice == ConflictChoice::Reloaded)
             {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s", mError.c_str());
-                ImGui::PopTextWrapPos();
+                OpenPending();
+                ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
 
-        void DrawConflictDialog()
+        ConflictChoice DrawConflictDialog()
         {
-            if (!ImGui::BeginPopupModal("Flight model changed on disk", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-                return;
+            if (!ImGui::BeginPopupModal(kConflictPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+                return ConflictChoice::None;
 
             ImGui::PushTextWrapPos(0.0f);
             ImGui::Text("'%s' changed on disk since it was opened or saved.", mDraft.Path().c_str());
             ImGui::PopTextWrapPos();
 
-            if (ImGui::Button("Overwrite"))
-            {
-                if (SaveDraft(true))
-                    ImGui::CloseCurrentPopup();
-            }
+            ConflictChoice choice = ConflictChoice::None;
+            if (ImGui::Button("Overwrite") && SaveDraft(true) == FlightModelSaveResult::Saved)
+                choice = ConflictChoice::Overwritten;
             ImGui::SameLine();
             if (ImGui::Button("Reload"))
             {
                 std::string error;
-                if (!mDraft.Revert(AssetsRoot(), error))
-                    mStatus = error;
-                else
+                if (mDraft.Revert(AssetsRoot(), error))
+                {
                     mStatus = "Reloaded from disk.";
-                ImGui::CloseCurrentPopup();
+                    choice = ConflictChoice::Reloaded;
+                }
+                else
+                {
+                    mStatus = error;
+                    choice = ConflictChoice::Canceled;
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Cancel"))
-                ImGui::CloseCurrentPopup();
+                choice = ConflictChoice::Canceled;
+            DrawErrorText(mError);
 
-            if (!mError.empty())
-            {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "%s", mError.c_str());
-                ImGui::PopTextWrapPos();
-            }
+            if (choice != ConflictChoice::None)
+                ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
+            return choice;
         }
 
         EditorModule &mEditor;
         FlightModelDraft mDraft;
         std::string mStatus;
         std::string mError;
+        std::string mCreateError;
         std::optional<std::string> mPendingOpen;
         std::optional<std::string> mCreateFolder;
         FlightModelTemplate mCreateTemplate = FlightModelTemplate::Powered;
         char mCreateName[128]{};
         std::chrono::steady_clock::time_point mLastPoll{};
+        int mFocusFrames = 0;
         bool mEditing = false;
         bool mWindowOpen = false;
         bool mCreateDialogPending = false;
