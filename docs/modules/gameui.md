@@ -333,6 +333,30 @@ moved button is pressed where it is drawn; the clip and the area are tested
 with the pointer as it is. A transform that flattens everything onto a line has
 no inverse, and nothing under it is hit.
 
+### Points in the world
+
+A marker over a target in the 3D scene needs the target's place on screen.
+gameui cannot ask the renderer, so the renderer publishes the view it draws
+viewport 0 through as the `PrimaryView` World resource, last in `LateUpdate`:
+the camera's position and its camera-relative view-projection, at the aspect
+that viewport renders at. `GameUIModule::RunFrame` copies its world's view into
+`UIContext` with `SetView`, and the game UI runs after it, so the view and the
+transforms are the ones this frame's image shows.
+
+`ProjectToUI(view, point, bounds)` subtracts the camera's position in world
+precision first, the way the renderer does, so a point far from the origin
+lands as exactly as one near it, then maps the clip-space point onto the
+bounds, which are the same rect the 3D viewport draws into. It returns the
+point in UI units, its depth along the view axis in meters, whether it is in
+front of the camera and whether it is on screen. A point behind the camera is
+divided by the depth's size rather than the depth, so it stays on its own side
+of the centre instead of flipping. `EdgePoint(point, bounds, edge)` leaves a
+point in front and inside `edge` where it is and moves any other to `edge`'s
+border, on the line from the bounds' centre, with the angle from the centre
+toward it, for an arrow. `UIContext::ProjectToUI(point)` and
+`UIContext::EdgePoint(point, inset)` do the same in the frame's bounds, the
+edge being the safe area moved in by `inset`.
+
 ### Layout
 
 `gameui/UILayout.h` turns one rect into others. `Inset` takes edges in,
@@ -398,7 +422,8 @@ wrap or grid, and no measuring pass.
 | `GameUIModule`, `UIScreenLayer` | `gameui/GameUIModule.h` | The context and the screens by layer; `RunFrame`, `SetSuspended`, `ShellHeldInput` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by the game shell while `GameUIDemo` is on; `Layout(safeArea)` places it without drawing |
 | `GameUIDemo` | `gameui/GameUIDemo.h` | World resource: show the widget demo in place of the game's screens; set by `--ui-demo`, toggled from the editor's Debug menu |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `LocalPointer`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`, `Style`, `BaseStyle`/`SetBaseStyle`, `PushStyle`/`PopStyle`/`StyleDepth`; owns the draw list, the state, the style stack, the textures, the fonts and the safe-area insets |
+| `UIWorldPoint`, `UIEdgePoint`, `ProjectToUI`, `EdgePoint` | `gameui/UIWorldProjection.h` | A world point through a `PrimaryView` into UI units, with its depth and whether it is in front and on screen; a point off screen or behind moved to an edge, with the angle toward it |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `SetView`/`View`, `ProjectToUI`, `EdgePoint`, `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `LocalPointer`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`/`HoldInputCalls`, `SetWidgetsDisabled`/`WidgetsDisabled`, `SetFocus`, `HideCursor`/`HidesCursor`, `MeasureText` (in the style's font, or a given font and size)/`TextWidth`, `SetReferenceHeight`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`, `Style`, `BaseStyle`/`SetBaseStyle`, `PushStyle`/`PopStyle`/`StyleDepth`; owns the draw list, the state, the style stack, the textures, the fonts and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area, before any transform. Each command stores its clip already
@@ -686,6 +711,14 @@ backend cannot make, and
 drawn in the pushed style and in the base once popped, and every style field's
 name finding it, and `tests/GameUIModule.tests.cpp` a style a Game screen left
 pushed kept from the Shell layer.
+`tests/UIWorldProjection.tests.cpp` covers a point ahead landing on the centre
+with its distance as the depth, the edges of the field of view on the bounds'
+edges at a wide aspect, a point behind and one on the camera plane keeping their
+side, a camera far from the origin, no view giving no point, edge points for a
+point inside, off to one side, in the margin, toward a corner, behind and dead
+behind, and `UIContext` projecting into scaled bounds and onto its safe area.
+`tests/GameUIModule.tests.cpp` covers a frame reading its world's
+`PrimaryView`, and having none without one.
 `tests/UIWidgets.tests.cpp` covers text in the style's font and size, the shadow
 and outline passes and their fading, alignment, and measuring in a font. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
 helper, a row inside a column inside an anchored region, and the demo's
@@ -774,8 +807,17 @@ looks right is verified by running `--ui-demo`.
    Gradients reach shapes only, not sprites or text, though the backend could
    shade any command. One gradient is linear; a radial one is a few lines in
    the backend's shading.
+20. **More from points in the world.** Viewport 0 only, so split screen has no
+   view for its other viewports. Nothing says whether something stands between
+   the camera and the target; a script can ask `world:raycast`. No way back from
+   the screen into the world, as picking needs.
 
 ## Changed
+
+*2026-11-22* — **Points in the world.** Was: the game UI had no way to find
+where a world point is on screen. Now: `ProjectToUI` and `EdgePoint`, through
+the renderer's `PrimaryView`, which `GameUIModule` hands `UIContext` each frame.
+Because: markers over targets, and arrows toward ones off screen.
 
 *2026-11-22* — **The game UI runs after `LateUpdate`.** Was: before the
 frame's systems, reading the previous frame's transforms, camera and

@@ -357,8 +357,9 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
+| `ResolveViewportCamera`, `MakePrimaryView`, `RenderSystem::ResolvePrimaryView` | `renderer/RenderSystem.h` | The camera a viewport draws through and its view-projection at the viewport's aspect, as `RenderSystem` draws it; that view as core's `PrimaryView`; viewport 0's, which `ActiveCameraSystem` publishes |
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
-| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the system last in `SystemPhase::LateUpdate`, before the game UI and `RenderSystem`, that keeps one flagged |
+| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the system last in `SystemPhase::LateUpdate`, before the game UI and `RenderSystem`, that keeps one flagged and then calls back, for the binding to publish `PrimaryView` |
 | `CameraCuts`, `CutCamera`, `IsCameraCut`, `ClearCameraCuts` | `renderer/CameraCut.h` | The World resource of cameras cut since the last frame (made by the first `CutCamera`); mark one (false without a `Camera`); ask; `RenderSystem` clears them after the views - see Rules |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
@@ -1288,6 +1289,15 @@ flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
 from the origin with a default lens. Each warns once per scene load and Play
 session.
 
+**The view viewport 0 renders is published before the game UI runs.** Each
+world binding emplaces core's `PrimaryView`, and `ActiveCameraSystem`'s
+callback writes it once the flags are final, last in `LateUpdate`, through
+`ResolveViewportCamera`, the same function `RenderSystem` resolves its views
+with. So the game UI projects through the camera, lens and aspect the frame
+renders, and the two cannot disagree unless something changes the camera
+between them, such as a script's `OnUI`, which shows next frame anyway. See
+[gameui.md](gameui.md).
+
 **Whoever causes a camera cut signals it; `RenderSystem` does not guess one
 from camera motion.** Switching the camera a view draws through changes its `historyId`,
 which is already a cut. A camera that jumps without changing (a teleport, a
@@ -1422,6 +1432,12 @@ shutdown. Run it through `ctest -R smoke.texture-gpu`, it is built only with
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-11-22* — **`PrimaryView` is published.** Was: only `RenderSystem` knew
+the view it drew, inside `Render`. Now: `ResolveViewportCamera` resolves a
+viewport's camera for both, and `ActiveCameraSystem` calls back after picking
+so the binding writes viewport 0's view as `PrimaryView`. Because: the game UI
+projects world points through it.
 
 *2026-11-22* — **`ActiveCameraSystem` runs last in `LateUpdate`.** Was: first
 in `Render`. Now: `SystemOrder::kMax` in `LateUpdate`. Because: the game UI

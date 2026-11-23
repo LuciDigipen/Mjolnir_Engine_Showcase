@@ -11,11 +11,13 @@
 #include <assets/AssetResolver.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/World.h>
+#include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
 #include <gameui/UILayout.h>
 #include <gameui/UIStyleFields.h>
 #include <gameui/UIWidgets.h>
 #include <script/BindingApi.h>
+#include <script/BindingHelpers.h>
 #include <script/components/ScriptRef.h>
 
 #include <sol/sol.hpp>
@@ -455,13 +457,13 @@ namespace mir
         }
 
         // pops what it pushed whether fn returns, errors or throws
-        template <typename Pop>
-        void CallScoped(const sol::protected_function &fn, std::string_view call, Pop pop)
+        template <typename Pop, typename... Args>
+        void CallScoped(const sol::protected_function &fn, std::string_view call, Pop pop, Args &&...args)
         {
             std::optional<sol::protected_function_result> result;
             try
             {
-                result.emplace(fn());
+                result.emplace(fn(std::forward<Args>(args)...));
             }
             catch (...)
             {
@@ -730,6 +732,59 @@ namespace mir
             CallScoped(body, call, [&] { draw.PopTransform(); });
         }
 
+        // an entity, at its WorldTransform, or { x, y, z }, none for an entity with no WorldTransform
+        std::optional<WorldPosition> ReadTarget(const UIScriptFrame &frame, const sol::object &value,
+            std::string_view call)
+        {
+            if (value.is<Entity>())
+            {
+                const WorldTransform *transform =
+                    frame.mWorld != nullptr ? frame.mWorld->GetComponent<WorldTransform>(value.as<Entity>()) : nullptr;
+                if (transform == nullptr)
+                    return std::nullopt;
+                return transform->Position();
+            }
+            if (value.get_type() != sol::type::table)
+                Fail(call, "target must be an entity or a table { x, y, z }");
+            std::string problem;
+            const std::optional<WorldVec3> meters = ParseWorldVec3(value, "target", problem);
+            if (!meters)
+                Fail(call, problem);
+            return WorldPosition::FromMeters(*meters);
+        }
+
+        struct AnchorOptions
+        {
+            bool mEdge = false;
+            float mInset = 0.0f;
+        };
+
+        AnchorOptions ReadAnchorOptions(const sol::object &value, std::string_view call)
+        {
+            AnchorOptions options;
+            if (value.get_type() != sol::type::table)
+                Fail(call, "options must be a table { offscreen, inset }");
+            const sol::table table = value.as<sol::table>();
+            CheckKeys(table, call, "option", { "offscreen", "inset" });
+
+            const sol::object offscreen = table["offscreen"].get<sol::object>();
+            if (offscreen != sol::lua_nil)
+            {
+                const std::string_view mode = ReadText(offscreen, call, "options.offscreen");
+                if (mode != "hide" && mode != "edge")
+                    Fail(call, std::format("unknown options.offscreen '{}'; valid ones are hide, edge", mode));
+                options.mEdge = mode == "edge";
+            }
+            const sol::object inset = table["inset"].get<sol::object>();
+            if (inset != sol::lua_nil)
+            {
+                options.mInset = ReadFloat(inset, call, "options.inset");
+                if (options.mInset < 0.0f)
+                    Fail(call, "options.inset must be 0 or more");
+            }
+            return options;
+        }
+
         struct LuaStack
         {
             UIStack mStack;
@@ -985,6 +1040,43 @@ namespace mir
                 draw.Rect(area, options.mColor, options.mRounding, options.mGradient);
         };
 
+        // the world: points in the UI's own units, before any with_* transform, through the camera the frame renders
+        ui["world_to_screen"] = [](UIScriptFrame &self, const sol::object &target, sol::this_state state) -> sol::object
+        {
+            const UIContext &context = Use(self, "world_to_screen");
+            const std::optional<WorldPosition> position = ReadTarget(self, target, "world_to_screen");
+            const std::optional<UIWorldPoint> point = position ? context.ProjectToUI(*position) : std::nullopt;
+            if (!point)
+                return sol::lua_nil;
+            return sol::state_view(state).create_table_with("x", point->mPoint.x, "y", point->mPoint.y, "depth",
+                point->mDepth, "in_front", point->mInFront, "on_screen", point->mOnScreen);
+        };
+        // (target, fn) or (target, options, fn): fn(on_screen, degrees) draws with the origin on the target, or with
+        // offscreen = "edge" on the safe area's border toward it, degrees point from the centre toward the target
+        ui["with_world_anchor"] = [](UIScriptFrame &self, const sol::object &target, const sol::object &opts,
+                                      const sol::object &fn)
+        {
+            constexpr std::string_view kCall = "with_world_anchor";
+            UIContext &context = Use(self, kCall);
+            const bool hasOptions = fn != sol::lua_nil;
+            const sol::protected_function body = ReadFunction(hasOptions ? fn : opts, kCall);
+            const AnchorOptions options = hasOptions ? ReadAnchorOptions(opts, kCall) : AnchorOptions{};
+            const std::optional<WorldPosition> position = ReadTarget(self, target, kCall);
+            const std::optional<UIWorldPoint> point = position ? context.ProjectToUI(*position) : std::nullopt;
+            if (!point || (!point->mOnScreen && !options.mEdge))
+                return;
+
+            const UIEdgePoint edge = context.EdgePoint(*point, options.mInset);
+            const UIPoint at = point->mOnScreen ? point->mPoint : edge.mPoint;
+            UIDrawList &draw = context.DrawList();
+            const std::optional<UITransform> inverse = draw.CurrentTransform().Inverse();
+            if (!inverse)
+                return;
+            const UIPoint local = inverse->Apply(at);
+            draw.PushTransform(UITransform::Translate(local.x, local.y));
+            CallScoped(body, kCall, [&] { draw.PopTransform(); }, point->mOnScreen, edge.mAngle / kRadiansPerDegree);
+        };
+
         // the frame
         ui["hold_input"] = [](UIScriptFrame &self) { Use(self, "hold_input").HoldInput(); };
         ui["hide_cursor"] = [](UIScriptFrame &self) { Use(self, "hide_cursor").HideCursor(); };
@@ -1042,6 +1134,7 @@ namespace mir
         const std::vector<sol::object> args = { sol::make_object(lua, frame), sol::make_object(lua, dt) };
         UIDrawList &draw = ui.DrawList();
         frame->mUI = &ui;
+        frame->mWorld = &world;
         for (const Instance &instance : instances)
         {
             const ScriptRef *ref =
@@ -1065,6 +1158,7 @@ namespace mir
                 draw.PopTransform();
         }
         frame->mUI = nullptr;
+        frame->mWorld = nullptr;
         frame->mOwner = kNullEntity;
     }
 }

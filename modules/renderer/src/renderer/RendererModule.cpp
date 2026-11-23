@@ -77,6 +77,7 @@ namespace mir
         : mRenderer(renderer), mSurfaceMaterials(surfaceMaterials)
     {
         context.world.EmplaceResource<ViewDrawSources>();
+        context.world.EmplaceResource<PrimaryView>();
         // physics fills it while a view shows colliders
         context.world.EmplaceResource<DebugLines>();
         // The renderer is shared, so only the main binding applies the budgets.
@@ -95,9 +96,10 @@ namespace mir
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
             SystemOrder{ SystemOrder::kNormal }, mRenderer, settings.mAssetService,
             *settings.mResolver, &mSurfaceMaterials);
-        // last in LateUpdate, so the game UI in BeforeRender sees the camera this frame renders through
+        // last in LateUpdate, so the game UI in BeforeRender sees the camera and view this frame renders through
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::LateUpdate,
-            SystemOrder{ SystemOrder::kMax });
+            SystemOrder{ SystemOrder::kMax },
+            [this](World &world) { world.Resource<PrimaryView>() = mRenderSystem->ResolvePrimaryView(world); });
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
             SystemOrder{ SystemOrder::kNormal }, mRenderer);
 

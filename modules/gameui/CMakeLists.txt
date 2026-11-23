@@ -20,6 +20,7 @@ target_sources(engine_gameui PRIVATE
     src/gameui/UITextures.cpp
     src/gameui/UITransform.cpp
     src/gameui/UIWidgets.cpp
+    src/gameui/UIWorldProjection.cpp
 )
 
 if(BUILD_TESTING)

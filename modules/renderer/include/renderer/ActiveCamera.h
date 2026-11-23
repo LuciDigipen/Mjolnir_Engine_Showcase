@@ -15,7 +15,9 @@
 #include <renderer/components/Camera.h>
 
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
+#include <utility>
 
 namespace mir
 {
@@ -43,6 +45,9 @@ namespace mir
     class ActiveCameraSystem final : public ISystem
     {
     public:
+        // @p picked runs after each update, once the flags are final
+        explicit ActiveCameraSystem(std::function<void(World &)> picked = {}) : mPicked(std::move(picked)) {}
+
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
 
@@ -52,5 +57,6 @@ namespace mir
     private:
         Query<Camera> *mQuery = nullptr;
         std::unordered_map<uint64_t, bool> mWasActive;
+        std::function<void(World &)> mPicked;
     };
 }

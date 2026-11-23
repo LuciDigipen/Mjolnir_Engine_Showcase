@@ -15,6 +15,7 @@
 #include "renderer/VulkanRenderer.h"
 
 #include <core/debug/DebugLines.h>
+#include <core/ecs/PrimaryView.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
 #include <core/ecs/components/Name.h>
@@ -77,6 +78,45 @@ namespace mir
 
         bool mCut = false;
     };
+
+    // The camera @p viewport draws through: its external camera, its Camera entity, or else @p play's, the origin
+    // with a default lens when there is none, at its rect's aspect. None when its Camera entity is gone
+    inline std::optional<ViewCamera> ResolveViewportCamera(const Viewport &viewport, size_t index, World &source,
+        const PlayCamera &play, VkExtent2D swapchain)
+    {
+        ViewCamera view{ .viewport = index };
+        if (viewport.mUseExternalCamera)
+        {
+            view.pose = viewport.mExternalCameraPose;
+            view.lens = viewport.mExternalCamera;
+        }
+        else
+        {
+            const Entity entity = viewport.mCameraEntity != kNullEntity ? viewport.mCameraEntity : play.mEntity;
+            const WorldTransform *transform = entity.IsNull() ? nullptr : source.GetComponent<WorldTransform>(entity);
+            const Camera *camera = entity.IsNull() ? nullptr : source.GetComponent<Camera>(entity);
+            if (transform != nullptr && camera != nullptr)
+            {
+                view.pose = transform->Pose();
+                view.lens = *camera;
+            }
+            else if (viewport.mCameraEntity != kNullEntity)
+                return std::nullopt;
+        }
+
+        view.extent = (viewport.mRect.extent.width > 0 && viewport.mRect.extent.height > 0) ? viewport.mRect.extent
+                                                                                             : swapchain;
+        const float aspect = view.extent.height == 0
+            ? 1.0f
+            : static_cast<float>(view.extent.width) / static_cast<float>(view.extent.height);
+        view.viewProj = MakeCameraRelativeViewProjection(view.pose, view.lens, aspect);
+        return view;
+    }
+
+    inline PrimaryView MakePrimaryView(const ViewCamera &view)
+    {
+        return PrimaryView{ view.pose.position, view.viewProj, view.extent.width, view.extent.height, true };
+    }
 
     class RenderSystem final : public ISystem
     {
@@ -230,13 +270,6 @@ namespace mir
 
             // No Camera at all draws from the origin with a default lens.
             const PlayCamera playCamera = ResolvePlayCamera(source);
-            WorldPose defaultCameraPose;
-            Camera defaultCamera{};
-            if (!playCamera.mEntity.IsNull())
-            {
-                defaultCameraPose = source.GetComponent<WorldTransform>(playCamera.mEntity)->Pose();
-                defaultCamera = *source.GetComponent<Camera>(playCamera.mEntity);
-            }
             bool usedDefaultCamera = false;
 
             const VkExtent2D swapchainExtent = mRenderer.SwapchainExtent();
@@ -247,50 +280,16 @@ namespace mir
             for (size_t i = 0; i < mViewports.size(); ++i)
             {
                 const Viewport &viewport = mViewports[i];
-
-                WorldPose cameraPose;
-                Camera camera{};
-                bool haveCamera = false;
-
-                if (viewport.mUseExternalCamera)
-                {
-                    cameraPose = viewport.mExternalCameraPose;
-                    camera = viewport.mExternalCamera;
-                    haveCamera = true;
-                }
-                else if (viewport.mCameraEntity != kNullEntity)
-                {
-                    mCameraQuery->ForEach([&](Entity e, const WorldTransform &world, const Camera &cam)
-                        {
-                            if (e != viewport.mCameraEntity)
-                                return;
-                            cameraPose = world.Pose();
-                            camera = cam;
-                            haveCamera = true;
-                        });
-                }
-                else
-                {
-                    cameraPose = defaultCameraPose;
-                    camera = defaultCamera;
-                    haveCamera = true;
-                    usedDefaultCamera = true;
-                }
-
-                if (!haveCamera)
+                const std::optional<ViewCamera> view =
+                    ResolveViewportCamera(viewport, i, source, playCamera, swapchainExtent);
+                if (!view)
                 {
                     warnNoCamera = true;
                     continue;
                 }
-
-                const VkExtent2D viewExtent = (viewport.mRect.extent.width > 0 && viewport.mRect.extent.height > 0)
-                    ? viewport.mRect.extent
-                    : swapchainExtent;
-                const float aspect = viewExtent.height == 0
-                    ? 1.0f
-                    : static_cast<float>(viewExtent.width) / static_cast<float>(viewExtent.height);
-                mViewCameras.push_back(ViewCamera{ i, cameraPose, camera, viewExtent,
-                                                  MakeCameraRelativeViewProjection(cameraPose, camera, aspect) });
+                if (!viewport.mUseExternalCamera && viewport.mCameraEntity == kNullEntity)
+                    usedDefaultCamera = true;
+                mViewCameras.push_back(*view);
             }
 
             // Post effects read viewport 0's lens: the editor camera's in Edit, the active Camera's in Play.
@@ -593,6 +592,15 @@ namespace mir
             }
         }
 
+        // viewport 0 as Render will draw it, unless its camera changes first
+        PrimaryView ResolvePrimaryView(World &world)
+        {
+            World &source = mSourceWorld != nullptr ? *mSourceWorld : world;
+            const std::optional<ViewCamera> view = ResolveViewportCamera(mViewports.front(), 0, source,
+                ResolvePlayCamera(source), mRenderer.SwapchainExtent());
+            return view ? MakePrimaryView(*view) : PrimaryView{};
+        }
+
         std::optional<WorldPosition> PrimaryCameraPosition() const
         {
             return mRenderViews.empty() ? std::nullopt : std::optional{mRenderViews.front().cameraPosition};
@@ -602,7 +610,6 @@ namespace mir
         void BindQueries(World &world)
         {
             mMeshQuery = &world.GetOrCreateQuery<const WorldTransform, const MeshRenderer>();
-            mCameraQuery = &world.GetOrCreateQuery<const WorldTransform, const Camera>();
             mSkyQuery = &world.GetOrCreateQuery<const WorldTransform, const Sky>();
             mLightQuery = &world.GetOrCreateQuery<const WorldTransform, const Light>();
         }
@@ -610,7 +617,6 @@ namespace mir
         VulkanRenderer &mRenderer;
         World *mSourceWorld = nullptr;
         Query<const WorldTransform, const MeshRenderer> *mMeshQuery = nullptr;
-        Query<const WorldTransform, const Camera> *mCameraQuery = nullptr;
         Query<const WorldTransform, const Sky> *mSkyQuery = nullptr;
         Query<const WorldTransform, const Light> *mLightQuery = nullptr;
 

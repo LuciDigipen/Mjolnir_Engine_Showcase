@@ -109,5 +109,8 @@ namespace mir
                     camera.mActive = false;
                 mWasActive[PackEntity(entity)] = camera.mActive;
             });
+
+        if (mPicked)
+            mPicked(context.world);
     }
 }

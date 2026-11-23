@@ -12,5 +12,6 @@
     UITextures.tests.cpp
     UITransform.tests.cpp
     UIWidgets.tests.cpp
+    UIWorldProjection.tests.cpp
 )
 

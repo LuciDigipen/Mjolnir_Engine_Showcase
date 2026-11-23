@@ -134,6 +134,8 @@ Every call is a method, `ui:name(...)`. A widget call returns a result table
 | `arc(x, y, radius, from, to[, options])` | nothing | Part of a circle's outline, from `from` to `to` degrees |
 | `pie(x, y, radius, from, to[, options])` | nothing | A filled slice, as for a cooldown |
 | `rect(rect[, options])` | nothing | A filled rect, or its outline with `width` or `dash` |
+| `world_to_screen(target)` | table or `nil` | `target`, an entity or `{ x, y, z }`, in UI units through the camera the frame renders: `{ x, y, depth, in_front, on_screen }`, `depth` in meters along the view; `nil` with no camera, or for an entity with no position |
+| `with_world_anchor(target[, options], fn)` | nothing | Runs `fn(on_screen, degrees)` with the origin on `target`, or not at all while it is off screen; with `offscreen = "edge"`, on the safe area's border toward it, moved in by `inset`. `degrees` point from the centre toward it |
 | `hold_input()` | nothing | Gameplay reads every action at rest this frame, as an open menu wants |
 | `hide_cursor()` | nothing | The mouse cursor is hidden this frame |
 | `cancel_pressed()`, `pause_pressed()`, `focus_visible()` | bool | `UICancel` or `UIPause` this frame; whether the focus highlight shows |
@@ -200,6 +202,23 @@ Angles are degrees, 0 to the right and clockwise, the way y grows down, for the
 shapes and `with_rotation` alike. A shape takes no pointer and has no name.
 Points are a flat list, at most 4096 to a call.
 
+A target in the world is an entity, at its `WorldTransform`, or a position
+`{ x, y, z }`. `world_to_screen` gives the point in the UI's own units, before
+any `with_*` transform, so it can be sorted or measured; a point behind the
+camera stays on its own side of the centre. `with_world_anchor` draws there:
+its origin lands on the target whatever transform it is inside, and the
+transforms around it still turn and scale what it draws.
+
+```lua
+ui:with_world_anchor(enemy, { offscreen = "edge", inset = 24 }, function(on_screen, degrees)
+    if on_screen then
+        ui:rect({ x = -12, y = -12, w = 24, h = 24 }, { width = 2 })
+    else
+        ui:with_rotation(degrees, function() ui:polygon({ 14, 0, -6, -8, -6, 8 }) end)
+    end
+end)
+```
+
 ## Rules
 
 **A HUD's widgets are `pointer_only`.** In play the stick, the arrow keys and
@@ -211,7 +230,8 @@ and calls it later gets an error, not a crash.
 
 **Opacity, clip, transform and style are scoped.** There is no push or pop in
 Lua, only `with_opacity`, `with_clip`, `with_offset`, `with_rotation`,
-`with_transform` and `with_style`, which pop whether `fn` returns or fails. After
+`with_transform`, `with_world_anchor` and `with_style`, which pop whether `fn`
+returns or fails. After
 each `OnUI` the bridge also pops anything left pushed, so a broken script never
 trips `EndFrame`'s balance asserts.
 
@@ -242,7 +262,7 @@ there is an order field.
 
 ## State
 
-*As of 2026-11-21.* Widgets, layout, sprites, scoped opacity, clip, transform and style, input
+*As of 2026-11-22.* Widgets, layout, sprites, scoped opacity, clip, transform and style, points in the world, input
 holding, focus, prompts and text measurement work. `tests/UIBindings.tests.cpp`
 drives `DrawScriptScreens` through a real `UIContext` with no backend: a click
 on a Lua button, only after `OnStart` and only in Play (paused included), two
@@ -264,8 +284,16 @@ outer's keys, `ui:style()` reading the current values and going back into
 `with_style`, and an unknown key, a negative number, a bad alignment, a path
 for a sprite, `true` for a font, a string for the style and a missing function
 each failing the `OnUI`, with an error inside nested `with_style` leaving the
-stack balanced.
-`HelloWorld`'s default scene has the sample.
+stack balanced. Points in the world: `world_to_screen` for an entity and a
+position, in front and behind, `nil` for an entity with no position and with no
+view; `with_world_anchor` drawing on a target, hiding one off screen, putting
+one on the edge with its angle and one dead behind at the bottom, and landing
+on the target inside `with_offset`, with nothing drawn without a view; a bad
+target, a missing function, an unknown `offscreen`, a negative inset and an
+unknown option each failing the `OnUI`, and an error inside an anchor leaving
+the transforms balanced.
+`HelloWorld`'s default scene has the sample, with a marker and its distance on
+the duck that turns into an arrow on the edge while the duck is off screen.
 
 ## Backlog
 
@@ -278,6 +306,11 @@ stack balanced.
    through `audio_script` and `input_script`.
 
 ## Changed
+
+*2026-11-22* — **`world_to_screen` and `with_world_anchor`.** Was: a script
+could read an entity's world position but not where it is on screen. Now: both
+calls, through the view the frame renders. Because: target markers on a HUD.
+See [gameui.md](gameui.md).
 
 *2026-11-22* — **`OnUI` runs after `LateUpdate`.** Was: before the frame's
 systems, so it read the previous frame's positions and camera. Now: after them

@@ -19,6 +19,7 @@
 #include "UIState.h"
 #include "UITextures.h"
 #include "UITypes.h"
+#include "UIWorldProjection.h"
 
 #include <input/InputMap.h>
 #include <input/InputState.h>
@@ -93,6 +94,22 @@ namespace mir
         const UIEdges &SafeAreaInsets() const { return mSafeAreaInsets; }
 
         InputState *Input() const { return mInput; }
+
+        // the view the frame's 3D image is drawn through; GameUIModule sets it each frame, invalid without one
+        void SetView(const PrimaryView &view) { mView = view; }
+        const PrimaryView &View() const { return mView; }
+
+        // in UI units, none without a view
+        std::optional<UIWorldPoint> ProjectToUI(WorldPosition point) const
+        {
+            return mir::ProjectToUI(mView, point, Bounds());
+        }
+
+        // on the safe area's border, moved in by @p inset
+        UIEdgePoint EdgePoint(const UIWorldPoint &point, float inset) const
+        {
+            return mir::EdgePoint(point, Bounds(), Inset(SafeArea(), inset));
+        }
 
         const UINavInput &Nav() const { return mNav; }
 
@@ -177,6 +194,7 @@ namespace mir
         float mDesignHeight = 480.0f;
         float mReferenceHeight = 720.0f;
         UIEdges mSafeAreaInsets;
+        PrimaryView mView;
         InputState *mInput = nullptr;
         const InputMap *mInputMap = nullptr;
         UINavInput mNav;

@@ -11,6 +11,7 @@
 #include <gameui/GameUIModule.h>
 #include <gameui/UIWidgets.h>
 
+#include <core/ecs/PrimaryView.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <input/InputMap.h>
@@ -48,6 +49,29 @@ TEST_CASE("A game UI runs its screens each frame", "[gameui][module]")
     ui.RunFrame(UIRect{ 0, 0, 100, 100 }, UIPointer{ 5, 5, true });
     ui.RunFrame(UIRect{ 0, 0, 100, 100 }, UIPointer{ 5, 5, true });
     CHECK(runs == 2);
+}
+
+TEST_CASE("A game UI frame projects through the view its world renders, and has none without one", "[gameui][module]")
+{
+    Rig rig;
+    GameUIModule ui(ModuleContext{ rig.world, rig.scheduler });
+    bool valid = true;
+    WorldPosition camera;
+    const Registration screen = ui.AddScreen(UIScreenLayer::Game, [&](UIContext &context, float)
+        {
+            valid = context.View().mValid;
+            camera = context.View().mCameraPosition;
+        });
+
+    ui.RunFrame(UIRect{ 0, 0, 100, 100 }, UIPointer{});
+    CHECK_FALSE(valid);
+
+    PrimaryView &view = rig.world.EmplaceResource<PrimaryView>();
+    view.mCameraPosition = *WorldPosition::FromMeters(WorldVec3(1, 2, 3));
+    view.mValid = true;
+    ui.RunFrame(UIRect{ 0, 0, 100, 100 }, UIPointer{});
+    CHECK(valid);
+    CHECK(camera.Meters() == WorldVec3(1, 2, 3));
 }
 
 TEST_CASE("A suspended game UI runs no screen, so nothing it draws can be clicked", "[gameui][module]")
