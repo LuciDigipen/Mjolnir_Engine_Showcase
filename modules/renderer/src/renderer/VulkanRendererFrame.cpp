@@ -26,6 +26,7 @@
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/RasterSurfaces.h"
+#include "vulkan/RenderTargets.h"
 #include "vulkan/SsgiTrace.h"
 #if MIR_WITH_RTXGI
 #include "vulkan/Ddgi.h"
@@ -50,11 +51,122 @@
 namespace mir
 {
     static_assert(kFxMaxViews == vk::kMaxViewsPerFrame);
+    static_assert(kMaxRenderTargets < vk::kMaxViewsPerFrame);
+
+    size_t SplitFrameViews(std::span<const RenderView> views, size_t slots, std::vector<RenderView> &screen,
+        std::vector<RenderView> &targets)
+    {
+        screen.clear();
+        targets.clear();
+        for (const RenderView &view : views)
+            if (view.target.IsNull())
+                screen.push_back(view);
+
+        const size_t left = slots - std::min(screen.size(), slots);
+        size_t dropped = 0;
+        for (const RenderView &view : views)
+        {
+            if (view.target.IsNull())
+                continue;
+            if (targets.size() < left)
+                targets.push_back(view);
+            else
+                ++dropped;
+        }
+        return dropped;
+    }
+
+    void VulkanRenderer::SplitViews(std::span<const RenderView> views)
+    {
+        const size_t dropped = SplitFrameViews(views, vk::kMaxViewsPerFrame, mScreenViews, mTargetViews);
+        if (dropped > 0 && !std::exchange(mWarnedTargetSlots, true))
+            MIR_LOG_WARN("DrawFrame: {} render target views found no view slot left and are not drawn", dropped);
+    }
+
+    VkRect2D VulkanRenderer::ViewRect(const RenderView &view) const
+    {
+        if (view.target.IsNull())
+            return vk::ResolveViewRect(view.rect, mSwapchain->Extent());
+        const vk::GpuRenderTarget *const target = mRenderTargets->Find(view.target);
+        return VkRect2D{ .offset{ 0, 0 }, .extent = target ? target->extent : VkExtent2D{} };
+    }
+
+    void VulkanRenderer::RecordRenderTargets(VkCommandBuffer cmd, uint32_t firstSlot)
+    {
+        const VkClearColorValue clear{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } };
+        mRenderTargets->RecordFresh(cmd, clear);
+
+        uint32_t slot = firstSlot;
+        for (const RenderView &view : mTargetViews)
+        {
+            const vk::GpuRenderTarget *const target = mRenderTargets->Find(view.target);
+            if (target == nullptr)
+            {
+                if (!std::exchange(mWarnedStaleTarget, true))
+                    MIR_LOG_ERROR("DrawFrame: a view draws into a released render target, it is skipped");
+                continue;
+            }
+            if (slot >= vk::kMaxViewsPerFrame)
+                break;
+            mDevice->BeginLabel(cmd, "Render Target", { 0.2f, 0.6f, 1.0f, 1.0f });
+
+            // the last frame read color in its tonemap and wrote depth
+            vk::ImageBarrier(cmd, target->color.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            vk::ImageBarrier(cmd, target->depth.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+
+            const VkRenderingAttachmentInfo colorAttachment{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView = target->color.view,
+                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                .clearValue{ .color = clear } };
+            const VkRenderingAttachmentInfo depthAttachment{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView = target->depth.view,
+                .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                .clearValue{ .depthStencil{ .depth = 0.0f } } };
+            const VkRenderingInfo renderingInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+                .renderArea{ .offset{ 0, 0 }, .extent = target->extent },
+                .layerCount = 1,
+                .colorAttachmentCount = 1,
+                .pColorAttachments = &colorAttachment,
+                .pDepthAttachment = &depthAttachment };
+            vkCmdBeginRendering(cmd, &renderingInfo);
+            RecordView(cmd, view, slot++, RasterPass::Scene);
+            vkCmdEndRendering(cmd);
+            vk::ShaderReadOnlyBarrier(cmd, target->color.image);
+
+            // the UI read the last frame's output
+            vk::ImageBarrier(cmd, target->output.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            vk::BeginFullscreenPass(cmd, target->output.view, target->extent);
+            mPostProcessing->Tonemap().RecordTarget(cmd, target->tonemapSet, view.exposure, target->extent);
+            vkCmdEndRendering(cmd);
+            vk::ShaderReadOnlyBarrier(cmd, target->output.image);
+
+            mDevice->EndLabel(cmd);
+        }
+    }
+
     uint32_t VulkanRenderer::RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
         RasterPass pass, uint32_t cameraOffset)
     {
         const bool surfaces = pass == RasterPass::Opaque;
-        const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
+        const VkRect2D rect = ViewRect(view);
 
         const VkViewport viewport{
             .x = static_cast<float>(rect.offset.x),
@@ -198,6 +310,8 @@ namespace mir
     {
         const uint32_t frame = mFrameSync->Index();
         const VkExtent2D extent = mSwapchain->Extent();
+
+        RecordRenderTargets(cmd, static_cast<uint32_t>(std::min<size_t>(views.size(), vk::kMaxViewsPerFrame)));
 
         vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
@@ -418,6 +532,7 @@ namespace mir
             mRayTracer->ResetDeformations(mFrameSync->Index(), mResources.get());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mImGuiOverlay->Collect(mFrameSync->CompletedValue());
+            mRenderTargets->Collect(mFrameSync->CompletedValue());
             CollectReleasedResources(mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
             mMaterialStore->RefreshTextures(*mResources, mFrameSync->CompletedValue(), frame->signalValue);
@@ -431,8 +546,10 @@ namespace mir
         return frame;
     }
 
-    void VulkanRenderer::DrawFrame(std::span<const RenderView> views)
+    void VulkanRenderer::DrawFrame(std::span<const RenderView> allViews)
     {
+        SplitViews(allViews);
+        const std::span<const RenderView> views = mScreenViews;
         const bool hadSurfaces = mRasterSurfaces->Active();
         bool captureSurfaces = mSsgiSettings.enabled && mSsgiSettings.ValidationError() == nullptr && mSsgiSettings.intensity > 0;
         if (captureSurfaces)
@@ -476,6 +593,11 @@ namespace mir
 
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
         const uint32_t frame = mFrameSync->Index();
+
+        // Targets draw raster, so they get the shadow maps a raster frame would
+        if (!mTargetViews.empty())
+            mShadowMaps->RecordPasses(cmd, frame, *mResources);
+        RecordRenderTargets(cmd, 1);
 
         const AntiAliasingMode effectiveAaMode = mPostProcessing->RtAntiAliasingMode();
         const bool applyJitter = effectiveAaMode == AntiAliasingMode::Dlss;
@@ -573,8 +695,10 @@ namespace mir
             captured ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     }
 
-    void VulkanRenderer::TraceFrame(std::span<const RenderView> views)
+    void VulkanRenderer::TraceFrame(std::span<const RenderView> allViews)
     {
+        SplitViews(allViews);
+        const std::span<const RenderView> views = mScreenViews;
         const bool hadSurfaces = mRasterSurfaces->Active();
         mRasterSurfaces->Configure(false, mSwapchain->Extent());
         mSsgiTrace->Configure(false, mSwapchain->Extent(), {}, mSsgiSettings.halfResolution);
@@ -673,7 +797,7 @@ namespace mir
         glm::vec2 *outJitter)
     {
         const uint32_t frame = mFrameSync->Index();
-        const VkExtent2D viewExtent = vk::ResolveViewRect(view.rect, mSwapchain->Extent()).extent;
+        const VkExtent2D viewExtent = ViewRect(view).extent;
         const vk::ViewShadowInfo shadow = mShadowMaps->WriteView(frame, view, viewIndex);
         return mCameraBuffer->WriteView(frame, view, viewIndex, shadow, viewExtent, applyJitter, outJitter);
     }

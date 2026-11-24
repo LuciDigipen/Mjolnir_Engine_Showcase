@@ -21,6 +21,7 @@
 #include <renderer/FxSystem.h>
 #include <core/Registration.h>
 #include <renderer/RenderSettings.h>
+#include <renderer/RenderTarget.h>
 #include <renderer/RtxgiConfig.h>
 #include <renderer/ShaderLibrary.h>
 #include <renderer/ShaderGeneration.h>
@@ -75,6 +76,7 @@ namespace mir::vk
     class ImGuiOverlay;
     class MeshUploader;
     class DebugDraw;
+    class RenderTargets;
 }
 
 namespace mir
@@ -226,7 +228,16 @@ namespace mir
         std::span<const DebugLinePoint> debugLines;
         // The lens FOV that produced viewProj, for rotation-invariant ray-cone math.
         float fovYDegrees = 0.0f;
+        // Set: drawn into this target instead of the screen, over all of it, with rect ignored. Raster even
+        // in a traced frame, tonemapped with exposure and none of the screen's other effects
+        RenderTargetHandle target;
+        float exposure = 1.0f;
     };
+
+    // A frame's views in its view slots: screen views first, in order, then target views in the slots left.
+    // Returns how many target views found none
+    size_t SplitFrameViews(std::span<const RenderView> views, size_t slots, std::vector<RenderView> &screen,
+        std::vector<RenderView> &targets);
 
     class VulkanRenderer : public IMeshResolveHost, public ITextureUploader
     {
@@ -244,6 +255,18 @@ namespace mir
         void SetImGuiDrawData(ImDrawData *drawData);
         // Returns zero unless the texture is ready. Retirement also releases its UI binding.
         uint64_t ImGuiTexture(TextureHandle handle);
+        // The target's tonemapped image, zero for a stale handle. A resize or release changes it
+        uint64_t ImGuiTexture(RenderTargetHandle handle);
+
+        // An image a RenderView can draw into instead of the screen, cleared until one does. Null for a size
+        // outside 1 to kMaxRenderTargetSize, or past kMaxRenderTargets
+        RenderTargetHandle CreateRenderTarget(uint32_t width, uint32_t height);
+        // Keeps the handle; the old images go once the frames that may use them complete
+        bool ResizeRenderTarget(RenderTargetHandle handle, uint32_t width, uint32_t height);
+        // The next frame may still show it, so it goes once that frame completes
+        bool ReleaseRenderTarget(RenderTargetHandle handle);
+        // {0, 0} for a stale handle
+        VkExtent2D RenderTargetSize(RenderTargetHandle handle) const;
         MeshHandle CreateMesh(std::span<const Vertex> vertices, std::span<const uint32_t> indices) override;
 
         bool DestroyMesh(MeshHandle handle);
@@ -346,6 +369,7 @@ namespace mir
 
         void RequestSwapchainRecreate();
 
+        // Views with a target draw into it first, raster, whichever of these runs
         void DrawFrame(std::span<const RenderView> views);
 
         void TraceFrame(std::span<const RenderView> views);
@@ -440,6 +464,12 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
+        // mTargetViews, from view slot firstSlot on, each into its target and then tonemapped for the UI
+        void RecordRenderTargets(VkCommandBuffer cmd, uint32_t firstSlot);
+        // Splits views into mScreenViews and mTargetViews
+        void SplitViews(std::span<const RenderView> views);
+        // the pixels a view draws: its rect on the swapchain, or all of its target
+        VkRect2D ViewRect(const RenderView &view) const;
         // Called inside the composite pass, after the composite and before ImGui: when a view has a
         // debug view on, ends that pass, draws the wireframe and debug lines, and begins the ImGui pass
         // again. sceneDepth is the raster path's depth image, null on the ray-traced path.
@@ -514,6 +544,13 @@ namespace mir
         std::unique_ptr<vk::DebugDraw> mDebugDraw;
 
         std::unique_ptr<vk::MeshUploader> mMeshUploads;
+
+        std::unique_ptr<vk::RenderTargets> mRenderTargets;
+        // this frame's views, split by SplitViews
+        std::vector<RenderView> mScreenViews;
+        std::vector<RenderView> mTargetViews;
+        bool mWarnedTargetSlots = false;
+        bool mWarnedStaleTarget = false;
 
         uint64_t mSkippedDraws = 0;
 

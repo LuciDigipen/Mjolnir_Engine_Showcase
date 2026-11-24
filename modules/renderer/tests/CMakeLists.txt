@@ -38,6 +38,7 @@ engine_add_module_tests(renderer
     RayFacing.tests.cpp
     RenderSettings.tests.cpp
     RenderSystem.tests.cpp
+    RenderTarget.tests.cpp
     RtInstanceLayout.tests.cpp
     ShaderLibrary.tests.cpp
     ShaderCompiler.tests.cpp

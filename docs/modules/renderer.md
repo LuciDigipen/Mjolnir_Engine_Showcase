@@ -83,7 +83,13 @@ draws, and for the sun, spot and point shadow passes adds
 volume at the primary view's detail (#125).
 
 `VulkanRenderer` draws every `RenderView` inside one render pass, swapping only the viewport/scissor rect between them (`RecordView`). This is split-screen-style clipping
-within the one swapchain image, not separate offscreen render targets.
+within the one swapchain image.
+
+A `RenderView` with a `target` draws into that render target instead, before
+the screen's pass: its own HDR color and depth at the target's size, then a
+tonemap into an image ImGui samples (`ImGuiTexture(RenderTargetHandle)`), all in
+the frame's command buffer, so the UI shows this frame's picture. See the rule
+on render targets.
 
 Each view's opaque items are followed by one fullscreen-triangle sky draw,
 depth-tested (not written) against the far clear value so it only shows
@@ -314,6 +320,13 @@ bool RetireMesh(MeshHandle handle);                          // stale at once, f
 uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount, const MeshUploadOptions &options) const;
 MeshStreamingStats MeshStreaming() const;                    // queue, uploads, retirement, idle waits, skipped draws
 
+// Render targets: images a RenderView with `target` set draws into instead of the screen
+RenderTargetHandle CreateRenderTarget(uint32_t width, uint32_t height); // null outside 1..kMaxRenderTargetSize or past kMaxRenderTargets
+bool ResizeRenderTarget(RenderTargetHandle handle, uint32_t width, uint32_t height); // keeps the handle, changes its ImGui texture
+bool ReleaseRenderTarget(RenderTargetHandle handle);  // freed once the next frame completes
+VkExtent2D RenderTargetSize(RenderTargetHandle handle) const; // {0, 0} when stale
+uint64_t ImGuiTexture(RenderTargetHandle handle);     // its tonemapped image for ImGui; 0 when stale
+
 void DrawFrame(std::span<const RenderView> views);
 void TraceFrame(std::span<const RenderView> views);  // opt-in RT path alongside DrawFrame - see Rules
 bool RayTracingSupported() const;                     // detected once at device selection, never a rejection reason
@@ -355,7 +368,9 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `RendererCapabilities`, `RendererFeatureSupport` | `renderer/RendererCapabilities.h` | Raw descriptor-indexing, ray-tracing and anisotropy bits resolved into the optional paths |
 | `DescriptorLimits`, `DescriptorUsage`, `DescriptorLayoutFits` | `renderer/DescriptorLayoutLimits.h` | Physical descriptor limits against the exact shared raster/RT layout budgets |
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
-| `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
+| `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads. With `target` set it draws into that render target instead, over all of it, tonemapped with its own `exposure` |
+| `RenderTargetHandle`, `kMaxRenderTargetSize`, `kMaxRenderTargets` | `renderer/RenderTarget.h` | A generation-checked render target; the largest side (4096); how many may be live (15) |
+| `SplitFrameViews` | `renderer/VulkanRenderer.h` | A frame's views in its view slots: screen views first in order, then target views in the slots left; returns how many target views got none |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
 | `ResolveViewportCamera`, `MakePrimaryView`, `RenderSystem::ResolvePrimaryView` | `renderer/RenderSystem.h` | The camera a viewport draws through and its view-projection at the viewport's aspect, as `RenderSystem` draws it; that view as core's `PrimaryView`; viewport 0's, which `ActiveCameraSystem` publishes |
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
@@ -1072,6 +1087,25 @@ can share one command buffer without colliding. Only `DrawItem::model` (the
 world transform) and the normal matrix still travel per-item, in the push
 constant.
 
+**Render targets draw first, raster, in the view slots the screen leaves.**
+`DrawFrame` and `TraceFrame` split their views with `SplitFrameViews`: screen
+views keep slots 0 on, exactly as before, and target views take the slots
+after them, so the screen's effects, which index views by slot, never see a
+target. A traced frame draws only `views[0]`, so its targets start at slot 1;
+they still rasterize, and the traced frame records the shadow passes for them,
+which only draw what `RenderSystem` set as casters. Each target owns one HDR
+color, one depth and one output image, not one per frame in flight: the next
+frame's barriers wait on this one's reads, so the images stay as they are. Its
+tonemap set is written once at creation, never per frame, because `PostProcess::Record`
+rewrites the frame's set while recording and a second call in the same frame
+would change what the first draw reads. It gets the tonemap, contrast and
+saturation, and its view's `exposure` while HDR is on; no bloom, grain,
+vignette, anti-aliasing, SSGI, depth of field, motion blur, particles or debug
+views. A new or resized target is cleared at the start of its first frame and
+left readable, so the UI can show it before a camera draws into it. A release
+or resize keeps the old images until the next frame completes, because the UI
+built for that frame may still show them.
+
 Set 1's binding `stageFlags` gained `VK_SHADER_STAGE_RAYGEN_BIT_KHR` and
 `VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR` (`mRayTracingSupported`-gated, same
 as everything else RT) alongside the existing vertex/fragment flags —
@@ -1432,6 +1466,18 @@ shutdown. Run it through `ctest -R smoke.texture-gpu`, it is built only with
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-11-23* — **Render targets.** Was: every view drew into the one swapchain
+image, and the doc said there were no offscreen targets. Now:
+`CreateRenderTarget`, `ResizeRenderTarget` and `ReleaseRenderTarget`, a
+`RenderView::target` that draws into one before the screen's pass, raster in
+both frame paths, and `ImGuiTexture(RenderTargetHandle)` for its tonemapped
+image. `CreateImage2D` takes the view's aspect, for the target's depth.
+`RenderTarget.tests.cpp` covers the view slots, and `smoke.render-target-gpu`
+draws into a target, shows it through ImGui raster and traced, resizes and
+releases it, and makes the most targets allowed, under validation. Because: a
+second camera's picture in the game UI, such as a minimap. `RenderSystem` does
+not make targets yet.
 
 *2026-11-22* — **`PrimaryView` is published.** Was: only `RenderSystem` knew
 the view it drew, inside `Render`. Now: `ResolveViewportCamera` resolves a
