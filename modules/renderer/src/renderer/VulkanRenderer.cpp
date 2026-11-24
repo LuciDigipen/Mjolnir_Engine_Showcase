@@ -1095,6 +1095,11 @@ namespace mir
         return target ? target->extent : VkExtent2D{};
     }
 
+    uint32_t VulkanRenderer::RenderTargetCount() const
+    {
+        return mRenderTargets->LiveCount();
+    }
+
     void VulkanRenderer::SetImGuiDrawData(ImDrawData *drawData)
     {
         mImGuiOverlay->SetDrawData(drawData);

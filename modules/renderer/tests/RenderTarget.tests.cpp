@@ -98,6 +98,7 @@ namespace
     struct FakeHost
     {
         uint32_t next = 0;
+        uint32_t live = 0;
         bool refuse = false;
         std::vector<VkExtent2D> created;
         std::vector<std::pair<uint32_t, VkExtent2D>> resized;
@@ -109,14 +110,22 @@ namespace
                 .mCreate = [this](VkExtent2D extent)
                     {
                         created.push_back(extent);
-                        return refuse ? mir::kNullRenderTarget : mir::RenderTargetHandle{ .mIndex = next++ };
+                        if (refuse)
+                            return mir::kNullRenderTarget;
+                        ++live;
+                        return mir::RenderTargetHandle{ .mIndex = next++ };
                     },
                 .mResize = [this](mir::RenderTargetHandle target, VkExtent2D extent)
                     {
                         resized.emplace_back(target.mIndex, extent);
                         return !refuse;
                     },
-                .mRelease = [this](mir::RenderTargetHandle target) { released.push_back(target.mIndex); } };
+                .mRelease = [this](mir::RenderTargetHandle target)
+                    {
+                        released.push_back(target.mIndex);
+                        --live;
+                    },
+                .mLiveCount = [this] { return live; } };
         }
     };
 
@@ -205,7 +214,35 @@ TEST_CASE("A RenderTexture camera's target is released once the camera, or its R
     CHECK(fake.released == std::vector<uint32_t>{ 1 });
 }
 
-TEST_CASE("A RenderTexture camera the renderer refuses a target is asked for again only once its size changes",
+TEST_CASE("A RenderTexture camera the renderer refuses a target gets one once a camera gone frees a slot",
+    "[renderer][rendertarget]")
+{
+    mir::World world;
+    const mir::Entity first = MakeTargetCamera(world, 16, 16);
+    FakeHost fake;
+    std::vector<mir::TargetCamera> cameras = mir::SyncTargetCameras(world, {}, fake.Host());
+
+    // the renderer is full
+    fake.refuse = true;
+    const mir::Entity waiting = MakeTargetCamera(world, 16, 16);
+    cameras = mir::SyncTargetCameras(world, cameras, fake.Host());
+    REQUIRE(cameras.size() == 2);
+    CHECK(cameras[1].mTarget.IsNull());
+    cameras = mir::SyncTargetCameras(world, cameras, fake.Host());
+    CHECK(fake.created.size() == 2);
+
+    // released before the retry, in the same sync
+    fake.refuse = false;
+    world.DestroyEntity(first);
+    cameras = mir::SyncTargetCameras(world, cameras, fake.Host());
+    REQUIRE(cameras.size() == 1);
+    CHECK(cameras[0].mCamera == waiting);
+    CHECK_FALSE(cameras[0].mTarget.IsNull());
+    CHECK(fake.released == std::vector<uint32_t>{ 0 });
+    CHECK(fake.created.size() == 3);
+}
+
+TEST_CASE("A RenderTexture camera the renderer refuses a target is not asked for again until its size changes",
     "[renderer][rendertarget]")
 {
     mir::World world;

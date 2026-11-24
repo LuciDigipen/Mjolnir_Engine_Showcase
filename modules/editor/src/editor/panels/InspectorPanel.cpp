@@ -10,6 +10,7 @@
 
 #include <editor/panels/InspectorPanel.h>
 
+#include <core/ecs/CameraImages.h>
 #include <core/ecs/ComponentFields.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/components/Name.h>
@@ -631,7 +632,8 @@ namespace mir
                         if (overridden)
                             fieldLabel += "  " ICON_FA_PEN;
 
-                        const bool readOnly = field.ReadOnly();
+                        const bool locked = CameraActiveLocked(world, entity, ops, index);
+                        const bool readOnly = field.ReadOnly() || locked;
                         ImGui::BeginDisabled(readOnly);
                         widgets::PropertyRow(fieldLabel.c_str());
                         bool edited = false;
@@ -659,6 +661,8 @@ namespace mir
                             break;
                         }
                         ImGui::EndDisabled();
+                        if (locked)
+                            ImGui::SetItemTooltip("A camera that renders into a RenderTexture is never the active one");
 
                         if (!fieldKeys.empty() && ImGui::BeginPopupContextItem("##authored-field"))
                         {
@@ -768,6 +772,28 @@ namespace mir
                 ImGui::PopID();
             }
         }
+
+        // what a RenderTexture camera draws, at its image's aspect and no larger than the panel is wide
+        void DrawCameraPreview(World &world, Entity entity)
+        {
+            const CameraImages *images = world.TryResource<CameraImages>();
+            const CameraImage *image = images != nullptr ? images->Find(entity) : nullptr;
+            if (image == nullptr || image->mUITexture == 0 || image->mWidth == 0 || image->mHeight == 0)
+                return;
+            if (!widgets::CategoryHeader("Camera Preview"))
+                return;
+
+            const float available = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
+            float width = std::min(available, static_cast<float>(image->mWidth));
+            float height = width * static_cast<float>(image->mHeight) / static_cast<float>(image->mWidth);
+            if (height > available)
+            {
+                width *= available / height;
+                height = available;
+            }
+            ImGui::Image(ImTextureRef(static_cast<ImTextureID>(image->mUITexture)), ImVec2(width, height));
+            ImGui::TextDisabled("%u x %u", image->mWidth, image->mHeight);
+        }
     } // namespace
 
     bool InspectorPanel::Draw(World &world, const AssetImportView &assets, History &history,
@@ -818,6 +844,7 @@ namespace mir
         }
 
         DrawRemovedComponents(entity, edits);
+        DrawCameraPreview(world, entity);
 
         mEditing |= edits.mSubmitted;
         EndEditIfReleased(history);

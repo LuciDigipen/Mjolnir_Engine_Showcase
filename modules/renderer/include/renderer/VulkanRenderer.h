@@ -267,6 +267,8 @@ namespace mir
         bool ReleaseRenderTarget(RenderTargetHandle handle);
         // {0, 0} for a stale handle
         VkExtent2D RenderTargetSize(RenderTargetHandle handle) const;
+        // Targets made and not yet released, at most kMaxRenderTargets
+        uint32_t RenderTargetCount() const;
         MeshHandle CreateMesh(std::span<const Vertex> vertices, std::span<const uint32_t> indices) override;
 
         bool DestroyMesh(MeshHandle handle);

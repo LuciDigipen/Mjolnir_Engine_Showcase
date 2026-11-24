@@ -181,6 +181,28 @@ int main(int argc, char **argv)
         for (int i = 0; i < 4; ++i)
             frame(false);
 
+        // shown, then resized or released before any frame drew it: the UI built still samples the old image
+        for (const bool release : { false, true })
+        {
+            const auto early = renderer.CreateRenderTarget(32, 32);
+            Require(!early.IsNull(), "Render target creation failed");
+            window->PollEvents();
+            ImGui::NewFrame();
+            ImGui::GetBackgroundDrawList()->AddImage(
+                ImTextureRef(static_cast<ImTextureID>(renderer.ImGuiTexture(early))), ImVec2(0, 0), io.DisplaySize);
+            ImGui::Render();
+            renderer.SetImGuiDrawData(ImGui::GetDrawData());
+            if (release)
+                Require(renderer.ReleaseRenderTarget(early), "Releasing a target never drawn failed");
+            else
+                Require(renderer.ResizeRenderTarget(early, 48, 48), "Resizing a target never drawn failed");
+            renderer.DrawFrame(views);
+            if (!release)
+                Require(renderer.ReleaseRenderTarget(early), "Render target release failed");
+            for (int i = 0; i < 3; ++i)
+                frame(false);
+        }
+
         std::vector<mir::RenderTargetHandle> many;
         for (uint32_t i = 0; i < mir::kMaxRenderTargets; ++i)
         {

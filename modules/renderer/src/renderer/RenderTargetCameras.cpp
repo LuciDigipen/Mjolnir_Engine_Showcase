@@ -28,40 +28,48 @@ namespace mir
     std::vector<TargetCamera> SyncTargetCameras(World &world, const std::vector<TargetCamera> &current,
         const RenderTargetHost &host)
     {
-        std::vector<TargetCamera> kept;
-        std::vector<bool> claimed(current.size(), false);
+        std::vector<TargetCamera> wanted;
         world.GetOrCreateQuery<const WorldTransform, const Camera, const RenderTexture>().ForEach(
             [&](Entity entity, const WorldTransform &, const Camera &, const RenderTexture &texture)
-            {
-                const VkExtent2D extent = RenderTextureExtent(texture);
-                const auto found = std::find_if(current.begin(), current.end(),
-                    [&](const TargetCamera &camera) { return camera.mCamera == entity; });
-                if (found == current.end())
-                {
-                    kept.push_back({ entity, host.mCreate(extent), extent });
-                    return;
-                }
-                claimed[size_t(found - current.begin())] = true;
-                TargetCamera camera = *found;
-                if (camera.mExtent.width == extent.width && camera.mExtent.height == extent.height)
-                {
-                    kept.push_back(camera);
-                    return;
-                }
-                if (camera.mTarget.IsNull())
-                {
-                    camera.mTarget = host.mCreate(extent);
-                    camera.mExtent = extent;
-                }
-                else if (host.mResize(camera.mTarget, extent))
-                    camera.mExtent = extent;
-                kept.push_back(camera);
-            });
+            { wanted.push_back({ .mCamera = entity, .mExtent = RenderTextureExtent(texture) }); });
 
-        for (size_t i = 0; i < current.size(); ++i)
-            if (!claimed[i] && !current[i].mTarget.IsNull())
-                host.mRelease(current[i].mTarget);
-        return kept;
+        const auto find = [](const std::vector<TargetCamera> &cameras, Entity entity)
+        {
+            return std::find_if(cameras.begin(), cameras.end(),
+                [&](const TargetCamera &camera) { return camera.mCamera == entity; });
+        };
+        for (const TargetCamera &camera : current)
+            if (!camera.mTarget.IsNull() && find(wanted, camera.mCamera) == wanted.end())
+                host.mRelease(camera.mTarget);
+
+        const auto create = [&](TargetCamera &camera)
+        {
+            camera.mTarget = host.mCreate(camera.mExtent);
+            camera.mLiveWhenRefused = camera.mTarget.IsNull() ? host.mLiveCount() : 0;
+        };
+        for (TargetCamera &want : wanted)
+        {
+            const auto found = find(current, want.mCamera);
+            if (found == current.end())
+            {
+                create(want);
+                continue;
+            }
+            const bool resized = found->mExtent.width != want.mExtent.width ||
+                found->mExtent.height != want.mExtent.height;
+            if (found->mTarget.IsNull())
+            {
+                if (resized || host.mLiveCount() < found->mLiveWhenRefused)
+                    create(want);
+                else
+                    want = *found;
+                continue;
+            }
+            want.mTarget = found->mTarget;
+            if (resized && !host.mResize(want.mTarget, want.mExtent))
+                want.mExtent = found->mExtent;
+        }
+        return wanted;
     }
 
     std::optional<ViewCamera> ResolveTargetCamera(World &world, const TargetCamera &camera)

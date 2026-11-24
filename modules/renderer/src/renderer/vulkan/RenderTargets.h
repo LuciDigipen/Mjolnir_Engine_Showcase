@@ -55,13 +55,16 @@ namespace mir::vk
         uint32_t LiveCount() const;
 
         // Clears each target made since the last call and leaves its output readable, so the UI can show it
-        // before a camera draws into it
+        // before a camera draws into it. Also the outputs a resize or release retired before that, which
+        // the UI built for this frame may still show
         void RecordFresh(VkCommandBuffer cmd, VkClearColorValue clear);
         void Collect(uint64_t completed);
 
     private:
         bool Make(VkExtent2D extent, GpuRenderTarget &out);
         void Destroy(GpuRenderTarget &target);
+        void Retire(uint64_t lastUse, const GpuRenderTarget &target);
+        void RecordClear(VkCommandBuffer cmd, const Image2D &output, VkExtent2D extent, VkClearColorValue clear);
 
         struct Slot
         {
@@ -77,5 +80,7 @@ namespace mir::vk
         VkDescriptorPool mPool = VK_NULL_HANDLE;
         std::vector<Slot> mSlots;
         FrameRetireList<GpuRenderTarget> mRetired;
+        // retired while still fresh, they stay alive until the next frame's RecordFresh is done with them
+        std::vector<GpuRenderTarget> mFreshRetired;
     };
 }

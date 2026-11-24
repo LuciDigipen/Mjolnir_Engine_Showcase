@@ -325,6 +325,7 @@ RenderTargetHandle CreateRenderTarget(uint32_t width, uint32_t height); // null 
 bool ResizeRenderTarget(RenderTargetHandle handle, uint32_t width, uint32_t height); // keeps the handle, changes its ImGui texture
 bool ReleaseRenderTarget(RenderTargetHandle handle);  // freed once the next frame completes
 VkExtent2D RenderTargetSize(RenderTargetHandle handle) const; // {0, 0} when stale
+uint32_t RenderTargetCount() const;                   // live targets, at most kMaxRenderTargets
 uint64_t ImGuiTexture(RenderTargetHandle handle);     // its tonemapped image for ImGui; 0 when stale
 
 void DrawFrame(std::span<const RenderView> views);
@@ -1090,11 +1091,14 @@ can share one command buffer without colliding. Only `DrawItem::model` (the
 world transform) and the normal matrix still travel per-item, in the push
 constant.
 
-**Render targets draw first, raster, in the view slots the screen leaves.**
-`DrawFrame` and `TraceFrame` split their views with `SplitFrameViews`: screen
-views keep slots 0 on, exactly as before, and target views take the slots
-after them, so the screen's effects, which index views by slot, never see a
-target. A traced frame draws only `views[0]`, so its targets start at slot 1;
+**Render targets draw raster, after the screen's scene pass, in the view slots
+the screen leaves.** `DrawFrame` and `TraceFrame` split their views with
+`SplitFrameViews`: screen views keep slots 0 on, exactly as before, and target
+views take the slots after them, so the screen's effects, which index views by
+slot, never see a target. A raster frame records the targets after the screen's
+opaque and blended passes, because both share the frame's model sets
+(`kMaxModelDrawsPerFrame`) and draw records: when a frame runs out, a target
+loses draws, never the screen. A traced frame draws only `views[0]`, so its targets start at slot 1;
 they still rasterize, and the traced frame records the shadow passes for them,
 which only draw what `RenderSystem` set as casters. Each target owns one HDR
 color, one depth and one output image, not one per frame in flight: the next
@@ -1107,7 +1111,8 @@ vignette, anti-aliasing, SSGI, depth of field, motion blur, particles or debug
 views. A new or resized target is cleared at the start of its first frame and
 left readable, so the UI can show it before a camera draws into it. A release
 or resize keeps the old images until the next frame completes, because the UI
-built for that frame may still show them.
+built for that frame may still show them; old images no frame drew into yet
+are cleared in that frame too, so the UI never samples an undefined image.
 
 Set 1's binding `stageFlags` gained `VK_SHADER_STAGE_RAYGEN_BIT_KHR` and
 `VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR` (`mRayTracingSupported`-gated, same
@@ -1339,16 +1344,19 @@ between them, such as a script's `OnUI`, which shows next frame anyway. See
 published with the view.** `RenderSystem` keeps one target per `Camera` with a
 `RenderTexture` and a `WorldTransform` in the World it draws (`SyncTargetCameras`):
 a new camera gets one, a changed size resizes it, and the targets of cameras
-gone, or of a World no longer drawn, are released. Both the `ActiveCameraSystem`
+gone, or of a World no longer drawn, are released, before any camera asks for
+one. Both the `ActiveCameraSystem`
 callback, last in `LateUpdate`, and `Render` sync, so the game UI in between
 sees this frame's images and the frame draws the cameras as they are then. A
 target the renderer refuses, past `kMaxRenderTargets`, is asked for again only
-once the size changes, so the error is not logged every frame. The cameras
+once the size changes or the renderer has fewer live targets than when it
+refused, so the error is not logged every frame. The cameras
 follow the screen's in the list given to view draw sources, each under viewport
 id `kFirstTargetViewport` plus its target's index, which stays the same while
 the target lives, so terrain keeps its detail state for it. Such a camera is
 never Play's: `FindActiveCamera`, `ResolvePlayCamera`, `SetActiveCamera` and
-`ActiveCameraSystem` skip it and leave its flag alone. A binding releases its
+`ActiveCameraSystem` skip it and leave its flag alone, and the editor's
+Inspector disables its `active` field. A binding releases its
 targets when it goes; the renderer is shared and outlives the World. Each
 binding that runs keeps its own, so an Edit World left running beside Play
 keeps its targets too.
@@ -1495,16 +1503,23 @@ lives, draws into it after the screen's views, and is listed in core's
 `CameraImages` last in `LateUpdate`. The active-camera functions and
 `ActiveCameraSystem` skip such cameras and leave their flag alone. A traced
 frame with targets sets the shadow casters a raster frame would.
-`RenderTarget.tests.cpp` covers keeping, resizing, refusing and releasing
-targets and the target camera's view, `ActiveCamera.tests.cpp` the skipped
-camera, and `smoke.render-target-gpu` a World's minimap drawn by `RenderSystem`
-and shown through its published image. Because: a game shows a second camera's
-picture in its UI without touching the renderer.
+A raster frame records its targets after the screen's scene pass, so the
+screen's draws come first for the frame's model sets and draw records. A camera
+refused a target asks again once a target is released, and the targets of
+cameras gone are released before the others ask. A target resized or released
+before any frame drew into it still has its old image cleared, for the UI built
+with it. `VulkanRenderer::RenderTargetCount` gives the live count.
+`RenderTarget.tests.cpp` covers keeping, resizing, refusing, retrying and
+releasing targets and the target camera's view, `ActiveCamera.tests.cpp` the
+skipped camera, and `smoke.render-target-gpu` a World's minimap drawn by
+`RenderSystem` and shown through its published image, and a target shown and
+then resized or released before its first frame. Because: a game shows a second
+camera's picture in its UI without touching the renderer.
 
 *2026-11-23* — **Render targets.** Was: every view drew into the one swapchain
 image, and the doc said there were no offscreen targets. Now:
 `CreateRenderTarget`, `ResizeRenderTarget` and `ReleaseRenderTarget`, a
-`RenderView::target` that draws into one before the screen's pass, raster in
+`RenderView::target` that draws into one, raster in
 both frame paths, and `ImGuiTexture(RenderTargetHandle)` for its tonemapped
 image. `CreateImage2D` takes the view's aspect, for the target's depth.
 `RenderTarget.tests.cpp` covers the view slots, and `smoke.render-target-gpu`

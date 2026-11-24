@@ -61,6 +61,7 @@ namespace mir::vk
     {
         if (mDevice == nullptr)
             return;
+        mFreshRetired.clear();
         mRetired.ReleaseAll([this](GpuRenderTarget &target) { Destroy(target); });
         for (Slot &slot : mSlots)
             if (slot.live)
@@ -126,7 +127,7 @@ namespace mir::vk
             Destroy(resized);
             return false;
         }
-        mRetired.Push(lastUse, Bytes(current->extent), *current);
+        Retire(lastUse, *current);
         *current = resized;
         return true;
     }
@@ -137,7 +138,7 @@ namespace mir::vk
         if (target == nullptr)
             return false;
         Slot &slot = mSlots[handle.mIndex];
-        mRetired.Push(lastUse, Bytes(target->extent), slot.target);
+        Retire(lastUse, slot.target);
         slot.target = {};
         slot.live = false;
         ++slot.generation;
@@ -171,12 +172,29 @@ namespace mir::vk
         {
             if (!slot.live || !slot.target.fresh)
                 continue;
-            ColorAttachmentBarrier(cmd, slot.target.output.image);
-            BeginFullscreenPass(cmd, slot.target.output.view, slot.target.extent, VK_ATTACHMENT_LOAD_OP_CLEAR, clear);
-            vkCmdEndRendering(cmd);
-            ShaderReadOnlyBarrier(cmd, slot.target.output.image);
+            RecordClear(cmd, slot.target.output, slot.target.extent, clear);
             slot.target.fresh = false;
         }
+        for (const GpuRenderTarget &target : mFreshRetired)
+            RecordClear(cmd, target.output, target.extent, clear);
+        mFreshRetired.clear();
+    }
+
+    void RenderTargets::RecordClear(VkCommandBuffer cmd, const Image2D &output, VkExtent2D extent,
+        VkClearColorValue clear)
+    {
+        ColorAttachmentBarrier(cmd, output.image);
+        BeginFullscreenPass(cmd, output.view, extent, VK_ATTACHMENT_LOAD_OP_CLEAR, clear);
+        vkCmdEndRendering(cmd);
+        ShaderReadOnlyBarrier(cmd, output.image);
+    }
+
+    void RenderTargets::Retire(uint64_t lastUse, const GpuRenderTarget &target)
+    {
+        // the frame lastUse names records the next RecordFresh, so the images outlive it
+        if (target.fresh)
+            mFreshRetired.push_back(target);
+        mRetired.Push(lastUse, Bytes(target.extent), target);
     }
 
     void RenderTargets::Collect(uint64_t completed)

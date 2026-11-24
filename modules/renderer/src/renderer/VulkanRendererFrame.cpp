@@ -311,8 +311,6 @@ namespace mir
         const uint32_t frame = mFrameSync->Index();
         const VkExtent2D extent = mSwapchain->Extent();
 
-        RecordRenderTargets(cmd, static_cast<uint32_t>(std::min<size_t>(views.size(), vk::kMaxViewsPerFrame)));
-
         vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -416,6 +414,9 @@ namespace mir
             mDevice->EndLabel(cmd);
             vkCmdEndRendering(cmd);
         }
+
+        // after the screen's draws, which then come first for the frame's model sets and draw records
+        RecordRenderTargets(cmd, static_cast<uint32_t>(viewCount));
 
         vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,

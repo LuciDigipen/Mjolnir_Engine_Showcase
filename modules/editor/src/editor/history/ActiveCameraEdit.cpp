@@ -14,7 +14,9 @@
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/World.h>
 #include <renderer/components/Camera.h>
+#include <renderer/components/RenderTexture.h>
 
+#include <algorithm>
 #include <cstring>
 #include <optional>
 #include <utility>
@@ -23,40 +25,53 @@ namespace mir
 {
     namespace
     {
-        
-        std::optional<uint32_t> ActivatedField(const ComponentOps &ops, const std::vector<FieldValue> &values)
+        std::optional<uint32_t> ActiveField(const ComponentOps &ops)
         {
             if (ops.mType != TypeIdOf<Camera>())
                 return std::nullopt;
             const FieldDesc *field = ops.FindField("active");
             if (field == nullptr)
                 return std::nullopt;
-
-            const auto index = static_cast<uint32_t>(field - ops.mFields.data());
-            for (const FieldValue &value : values)
-            {
-                bool on = false;
-                std::memcpy(&on, value.mBytes, sizeof(bool));
-                if (value.mField == index && on)
-                    return index;
-            }
-            return std::nullopt;
+            return static_cast<uint32_t>(field - ops.mFields.data());
         }
+
+        bool TurnsOn(const FieldValue &value, uint32_t field)
+        {
+            bool on = false;
+            std::memcpy(&on, value.mBytes, sizeof(bool));
+            return value.mField == field && on;
+        }
+    }
+
+    bool CameraActiveLocked(const World &world, Entity entity, const ComponentOps &ops, uint32_t field)
+    {
+        const std::optional<uint32_t> active = ActiveField(ops);
+        return active && *active == field && world.Has<RenderTexture>(entity);
     }
 
     std::unique_ptr<ICommand> MakeFieldEditCommand(World &world, Entity entity, const ComponentOps &ops,
         std::vector<FieldValue> values, std::string name, IAuthoredEntities *authored)
     {
-        const std::optional<uint32_t> activeField = ActivatedField(ops, values);
+        const std::optional<uint32_t> activeField = ActiveField(ops);
+        if (activeField && world.Has<RenderTexture>(entity))
+        {
+            std::erase_if(values, [&](const FieldValue &value) { return TurnsOn(value, *activeField); });
+            if (values.empty())
+                return nullptr;
+        }
+        const bool activates = activeField &&
+            std::any_of(values.begin(), values.end(),
+                [&](const FieldValue &value) { return TurnsOn(value, *activeField); });
+
         std::unique_ptr<ICommand> edit = MakeSetFieldsEditCommand(entity, ops, std::move(values), name, authored);
-        if (!activeField || edit == nullptr)
+        if (!activates || edit == nullptr)
             return edit;
 
         std::vector<std::unique_ptr<ICommand>> commands;
         commands.push_back(std::move(edit));
         world.GetOrCreateQuery<const Camera>().ForEach([&](Entity other, const Camera &camera)
             {
-                if (other == entity || !camera.mActive)
+                if (other == entity || !camera.mActive || world.Has<RenderTexture>(other))
                     return;
                 FieldValue off;
                 off.mField = *activeField;

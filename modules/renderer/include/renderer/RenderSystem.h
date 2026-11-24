@@ -677,7 +677,8 @@ namespace mir
                     { return mRenderer.CreateRenderTarget(extent.width, extent.height); },
                 .mResize = [this](RenderTargetHandle target, VkExtent2D extent)
                     { return mRenderer.ResizeRenderTarget(target, extent.width, extent.height); },
-                .mRelease = [this](RenderTargetHandle target) { mRenderer.ReleaseRenderTarget(target); } };
+                .mRelease = [this](RenderTargetHandle target) { mRenderer.ReleaseRenderTarget(target); },
+                .mLiveCount = [this] { return mRenderer.RenderTargetCount(); } };
             mTargetCameras = SyncTargetCameras(source, mTargetCameras, host);
         }
 
