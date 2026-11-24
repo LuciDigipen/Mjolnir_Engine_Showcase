@@ -105,7 +105,7 @@ namespace mir::vk
     }
 
     bool CreateImage2D(const Device &device, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
-        const char *debugName, Image2D &out)
+        const char *debugName, Image2D &out, VkImageAspectFlags aspect)
     {
         const VkImageCreateInfo imageInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -135,7 +135,7 @@ namespace mir::vk
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format = format,
             .subresourceRange{
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .aspectMask = aspect,
                 .baseMipLevel = 0,
                 .levelCount = 1,
                 .baseArrayLayer = 0,

@@ -23,6 +23,7 @@
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/RasterSurfaces.h"
+#include "vulkan/RenderTargets.h"
 #include "vulkan/SsgiTrace.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
@@ -64,7 +65,8 @@ namespace mir
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
         mDebugDraw(std::make_unique<vk::DebugDraw>()),
-        mMeshUploads(std::make_unique<vk::MeshUploader>())
+        mMeshUploads(std::make_unique<vk::MeshUploader>()),
+        mRenderTargets(std::make_unique<vk::RenderTargets>())
     {}
     VulkanRenderer::~VulkanRenderer() = default;
 
@@ -185,6 +187,10 @@ namespace mir
 
         if (!mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
             mCameraBuffer->SetLayout(), desc.enableDlss))
+            return false;
+
+        const vk::PostProcess &tonemap = mPostProcessing->Tonemap();
+        if (!mRenderTargets->Initialize(*mDevice, tonemap.mSwapchainFormat, tonemap.SetLayout(), tonemap.Sampler()))
             return false;
 
         if (!mDebugDraw->Initialize(*mDevice, mSwapchain->Format()))
@@ -599,6 +605,7 @@ namespace mir
             mDevice->WaitIdle();
 
             CollectReleasedResources(UINT64_MAX);
+            mRenderTargets->Shutdown();
             mFrameSync->Shutdown();
 
             mMeshUploads->Shutdown(*mRayTracer);
@@ -1036,6 +1043,61 @@ namespace mir
         const auto *texture = mResources->FindTexture(handle);
         return texture ? mImGuiOverlay->BindTexture((uint64_t(handle.mGeneration) << 32) | handle.mIndex,
             texture->mView) : 0;
+    }
+
+    namespace
+    {
+        // apart from every texture's key
+        uint64_t ImGuiKey(RenderTargetHandle handle)
+        {
+            return (uint64_t(1) << 63) | (uint64_t(handle.mGeneration & 0x7fffffffu) << 32) | handle.mIndex;
+        }
+    }
+
+    uint64_t VulkanRenderer::ImGuiTexture(RenderTargetHandle handle)
+    {
+        const vk::GpuRenderTarget *const target = mRenderTargets->Find(handle);
+        return target ? mImGuiOverlay->BindTexture(ImGuiKey(handle), target->output.view) : 0;
+    }
+
+    RenderTargetHandle VulkanRenderer::CreateRenderTarget(uint32_t width, uint32_t height)
+    {
+        return mRenderTargets->Create(VkExtent2D{ width, height });
+    }
+
+    bool VulkanRenderer::ResizeRenderTarget(RenderTargetHandle handle, uint32_t width, uint32_t height)
+    {
+        const vk::GpuRenderTarget *const target = mRenderTargets->Find(handle);
+        if (target == nullptr)
+            return false;
+        if (target->extent.width == width && target->extent.height == height)
+            return true;
+        // the UI built for the next frame may still show the old image
+        const uint64_t lastUse = mFrameSync->LastIssuedValue() + 1;
+        if (!mRenderTargets->Resize(handle, VkExtent2D{ width, height }, lastUse))
+            return false;
+        mImGuiOverlay->RetireTexture(ImGuiKey(handle), lastUse);
+        return true;
+    }
+
+    bool VulkanRenderer::ReleaseRenderTarget(RenderTargetHandle handle)
+    {
+        const uint64_t lastUse = mFrameSync->LastIssuedValue() + 1;
+        if (!mRenderTargets->Release(handle, lastUse))
+            return false;
+        mImGuiOverlay->RetireTexture(ImGuiKey(handle), lastUse);
+        return true;
+    }
+
+    VkExtent2D VulkanRenderer::RenderTargetSize(RenderTargetHandle handle) const
+    {
+        const vk::GpuRenderTarget *const target = mRenderTargets->Find(handle);
+        return target ? target->extent : VkExtent2D{};
+    }
+
+    uint32_t VulkanRenderer::RenderTargetCount() const
+    {
+        return mRenderTargets->LiveCount();
     }
 
     void VulkanRenderer::SetImGuiDrawData(ImDrawData *drawData)

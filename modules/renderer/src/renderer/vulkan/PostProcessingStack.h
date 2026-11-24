@@ -109,6 +109,9 @@ namespace mir::vk
         void RecordComposite(VkCommandBuffer cmd, uint32_t frame, VkImageView color, bool fxaa,
             VkExtent2D extent);
 
+        // the tonemap alone, which render targets run with their own sets
+        const PostProcess &Tonemap() const { return mPostProcess; }
+
     private:
         Device *mDevice = nullptr;
 

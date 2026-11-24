@@ -11,6 +11,7 @@
 
 #include <core/ecs/World.h>
 #include <core/ecs/components/WorldTransform.h>
+#include <renderer/components/RenderTexture.h>
 
 namespace mir
 {
@@ -34,6 +35,8 @@ namespace mir
                 (priority(entity) == priority(slot) && entity.mIndex < slot.mIndex))
                 slot = entity;
         }
+
+        bool RendersToTexture(const World &world, Entity camera) { return world.Has<RenderTexture>(camera); }
     }
 
     Entity FindActiveCamera(World &world)
@@ -41,7 +44,7 @@ namespace mir
         Entity active = kNullEntity;
         world.GetOrCreateQuery<const Camera>().ForEach([&](Entity entity, const Camera &camera)
             {
-                if (camera.mActive)
+                if (camera.mActive && !RendersToTexture(world, entity))
                     KeepPreferred(world, active, entity);
             });
         return active;
@@ -49,11 +52,13 @@ namespace mir
 
     bool SetActiveCamera(World &world, Entity camera)
     {
-        if (world.GetComponent<Camera>(camera) == nullptr)
+        if (world.GetComponent<Camera>(camera) == nullptr || RendersToTexture(world, camera))
             return false;
 
         world.GetOrCreateQuery<Camera>().ForEach([&](Entity entity, Camera &other)
             {
+                if (RendersToTexture(world, entity))
+                    return;
                 if (world.EntityScene(entity) == world.EntityScene(camera)) other.mActive = entity == camera;
             });
         return true;
@@ -66,6 +71,8 @@ namespace mir
         world.GetOrCreateQuery<const WorldTransform, const Camera>().ForEach(
             [&](Entity entity, const WorldTransform &, const Camera &camera)
             {
+                if (RendersToTexture(world, entity))
+                    return;
                 KeepPreferred(world, lowest, entity);
                 if (camera.mActive)
                     KeepPreferred(world, active, entity);
@@ -87,7 +94,7 @@ namespace mir
         std::unordered_map<SceneInstanceId, Candidates> candidates;
         mQuery->ForEach([&](Entity entity, const Camera &camera)
             {
-                if (!camera.mActive)
+                if (!camera.mActive || RendersToTexture(context.world, entity))
                     return;
                 auto &scene = candidates[context.world.EntityScene(entity)];
                 const auto it = mWasActive.find(PackEntity(entity));
@@ -102,6 +109,8 @@ namespace mir
         mWasActive.clear();
         mQuery->ForEach([&](Entity entity, Camera &camera)
             {
+                if (RendersToTexture(context.world, entity))
+                    return;
                 const auto &scene = candidates[context.world.EntityScene(entity)];
                 const Entity active = !scene.switched.IsNull() ? scene.switched :
                     !scene.kept.IsNull() ? scene.kept : scene.arrived;

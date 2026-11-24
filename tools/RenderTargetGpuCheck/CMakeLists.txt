@@ -1,0 +1,6 @@
+add_executable(RenderTargetGpuCheck main.cpp)
+target_link_libraries(RenderTargetGpuCheck PRIVATE mir::renderer mir::window imgui::imgui)
+set_target_properties(RenderTargetGpuCheck PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_dependencies(RenderTargetGpuCheck MjolnirEngine)
+add_test(NAME smoke.render-target-gpu COMMAND RenderTargetGpuCheck "${CMAKE_BINARY_DIR}/render-target-gpu")
+set_tests_properties(smoke.render-target-gpu PROPERTIES LABELS smoke RUN_SERIAL TRUE TIMEOUT 180)

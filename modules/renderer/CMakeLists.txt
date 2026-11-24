@@ -90,6 +90,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/RendererCapabilities.cpp
     src/renderer/RendererModule.cpp
     src/renderer/RenderSettings.cpp
+    src/renderer/RenderTargetCameras.cpp
     src/renderer/ShaderCompiler.cpp
     src/renderer/ShaderGeneration.cpp
     src/renderer/ShaderLibrary.cpp
@@ -119,6 +120,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/RayTracer.cpp
     src/renderer/vulkan/RayTracerDeformation.cpp
     src/renderer/vulkan/RasterSurfaces.cpp
+    src/renderer/vulkan/RenderTargets.cpp
     src/renderer/vulkan/SsgiTrace.cpp
     src/renderer/vulkan/ResourceStore.cpp
     src/renderer/vulkan/ShadowMaps.cpp

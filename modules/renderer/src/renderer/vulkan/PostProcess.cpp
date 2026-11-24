@@ -16,6 +16,8 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 
+#include <algorithm>
+
 namespace mir::vk
 {
     bool PostProcess::Initialize(Device &device, VkFormat swapchainFormat)
@@ -202,6 +204,21 @@ namespace mir::vk
             glm::vec2(1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height)),
             bloomIntensity, grain.amount, mContrast, mSaturation, mVignetteStrength, mVignetteRadius,
             grain.seed };
+        vkCmdPushConstants(cmd, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConstants), &pushConstants);
+
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
+    void PostProcess::RecordTarget(VkCommandBuffer cmd, VkDescriptorSet set, float exposure, VkExtent2D extent) const
+    {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &set, 0, nullptr);
+
+        // with HDR off the frame's exposure is already the neutral one
+        const float applied = mTonemapOperator == 0 ? mExposure : (std::max)(exposure, 0.0f);
+        const TonemapPushConstants pushConstants{ applied, static_cast<uint32_t>(mTonemapOperator),
+            glm::vec2(1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height)),
+            0.0f, 0.0f, mContrast, mSaturation, 0.0f, mVignetteRadius, 0.0f };
         vkCmdPushConstants(cmd, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConstants), &pushConstants);
 
         vkCmdDraw(cmd, 3, 1, 0, 0);

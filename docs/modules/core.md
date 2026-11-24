@@ -170,6 +170,7 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `WriteBytesAtomic`, `WriteTextAtomic` | `fs/FileIO.h` | The same, through a temp file and a rename |
 | `InitLog`, `FlushLog`, `ShutdownLog` | `log/Log.h` | Logger lifetime; `ShutdownLog` releases the log file for another process |
 | `EngineMode`, `PlayState`, `EngineModeState` | `ecs/EngineMode.h` | Edit/Play and Play's Running/Paused sub-state, as a `World` resource |
+| `CameraImages`, `CameraImage` | `ecs/CameraImages.h` | World resource: each camera rendering into its own image this frame, with the image's UI backend texture, pixel size and the camera's view at that size, written by `renderer` last in `LateUpdate` beside `PrimaryView`; `Find(camera)` |
 | `PrimaryView` | `ecs/PrimaryView.h` | World resource: the camera position, camera-relative view-projection and pixel size viewport 0 renders this frame, written by `renderer` last in `LateUpdate` and read by `gameui`, which cannot link it |
 
 `TypeIdOf<T>()` returns three things. `seq` is process-local and is used directly
@@ -541,6 +542,11 @@ system has started.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-11-23* — **A `CameraImages` resource.** Was: nothing outside `renderer`
+knew of an image a camera renders into. Now: `renderer` lists them here, each
+with its texture and view. Because: the game UI shows them, such as a minimap,
+and does not depend on `renderer`.
 
 *2026-11-22* — **A `PrimaryView` resource.** Was: the view a frame renders
 lived inside `renderer`. Now: `renderer` writes it here. Because: `gameui`

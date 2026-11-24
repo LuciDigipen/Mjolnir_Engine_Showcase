@@ -13,6 +13,7 @@
 #include <core/ecs/TypeId.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/components/Camera.h>
+#include <renderer/components/RenderTexture.h>
 
 #include <cstring>
 #include <string_view>
@@ -90,4 +91,38 @@ TEST_CASE("ActiveCameraEdit: other Camera edits touch only their own camera", "[
     e.Undo();
     CHECK(Active(e, a));
     CHECK(Active(e, b));
+}
+
+TEST_CASE("ActiveCameraEdit: a RenderTexture camera is never turned active, and leaves the others' flags",
+    "[editor][history]")
+{
+    Editing e;
+    const Entity a = e.Add("a");
+    const Entity minimap = e.Add("minimap");
+    const Entity b = e.Add("b");
+    e.mWorld.AddComponent<Camera>(a, Camera{ .mActive = true });
+    e.mWorld.AddComponent<Camera>(minimap, Camera{});
+    e.mWorld.AddComponent<mir::RenderTexture>(minimap, mir::RenderTexture{});
+    e.mWorld.AddComponent<Camera>(b, Camera{});
+
+    const uint32_t activeField = ValueOf("active", true).mField;
+    CHECK(mir::CameraActiveLocked(e.mWorld, minimap, CameraOps(), activeField));
+    CHECK_FALSE(mir::CameraActiveLocked(e.mWorld, a, CameraOps(), activeField));
+    CHECK_FALSE(mir::CameraActiveLocked(e.mWorld, minimap, CameraOps(), ValueOf("fovYDegrees", 0.0f).mField));
+
+    CHECK(Edit(e, minimap, ValueOf("active", true)) == nullptr);
+
+    // a paste keeps its other values
+    e.Run(mir::MakeFieldEditCommand(e.mWorld, minimap, CameraOps(),
+        { ValueOf("active", true), ValueOf("fovYDegrees", 30.0f) }, "", nullptr));
+    CHECK(Active(e, a));
+    CHECK_FALSE(Active(e, minimap));
+    CHECK(e.mWorld.GetComponent<Camera>(minimap)->mFovYDegrees == 30.0f);
+
+    // a flag a scene left on stays, as Play skips the camera anyway
+    e.mWorld.GetComponent<Camera>(minimap)->mActive = true;
+    e.Run(Edit(e, b, ValueOf("active", true)));
+    CHECK_FALSE(Active(e, a));
+    CHECK(Active(e, b));
+    CHECK(Active(e, minimap));
 }

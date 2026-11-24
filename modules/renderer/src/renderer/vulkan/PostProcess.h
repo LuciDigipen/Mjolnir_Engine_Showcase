@@ -62,6 +62,12 @@ namespace mir::vk
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
             float bloomIntensity, FilmGrain grain, VkExtent2D extent);
 
+        // A render target's own set, written once, so its pass never rewrites the frame's
+        VkDescriptorSetLayout SetLayout() const { return mSetLayout; }
+        VkSampler Sampler() const { return mSampler; }
+        // Into a render target: no bloom, grain or vignette, and the camera's exposure while HDR is on
+        void RecordTarget(VkCommandBuffer cmd, VkDescriptorSet set, float exposure, VkExtent2D extent) const;
+
         VkPipeline mReloadPipeline = VK_NULL_HANDLE;
         bool mReloadPrepared = false;
         VkFormat mSwapchainFormat = VK_FORMAT_UNDEFINED;

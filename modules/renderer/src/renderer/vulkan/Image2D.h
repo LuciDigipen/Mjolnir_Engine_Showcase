@@ -27,7 +27,7 @@ namespace mir::vk
 
     // Logs on failure; a partially created `out` is still safe to pass to DestroyImage2D.
     bool CreateImage2D(const Device &device, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
-        const char *debugName, Image2D &out);
+        const char *debugName, Image2D &out, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
     // No-op on an empty image; leaves it empty.
     void DestroyImage2D(const Device &device, Image2D &image);

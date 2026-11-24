@@ -692,6 +692,19 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
+*2026-11-23* — **The Inspector previews a `RenderTexture` camera and keeps it
+from being made active.** Was: nothing in the editor showed what such a camera
+draws, and checking its `active` box cleared every other camera's flag although
+Play skips it, so Play could fall back to another camera. Now: the Inspector
+draws the selected camera's image from core's `CameraImages` under a "Camera
+Preview" header, at its aspect and no wider than the panel, and disables the
+camera's `active` field; `MakeFieldEditCommand` drops turning one active,
+leaves its flag alone when another camera turns active, and
+`CameraActiveLocked` says which field is locked. `ActiveCameraEdit.tests.cpp`
+covers the edits. Because: a user checks a minimap camera in Edit, and the
+camera Play draws through should not change behind them. See
+[renderer.md](renderer.md).
+
 *2026-11-20* — **Viewport picking leaves game UI widgets alone.** Was: a click on a game button in Edit also selected the entity behind it. Now: picking holds a click until the game UI's frame and drops it when a game widget took it, and the drawer reports the gizmo, the view pie and a viewport-owning extension in `GameUIArea::mToolsHavePointer` so the game UI stays out of their way. Because: one click did two things. See [gameui.md](gameui.md).
 
 *2026-11-05*, **The settings panels edit the project's values.** Was: `ProjectSettingsPanel`, `PostProcessingPanel` and `InputSettingsPanel` copied the live value into a whole-settings draft, assigned it back on Save, and so hid a script's later write and overwrote it. Now: the widgets edit the shared value, Save only writes it, SSGI, DDGI and a layer name edit a buffer until valid, the audio defaults edit through `SetDefaults`, Save no longer sets the live levels, and "Revert" became "Reload Saved Audio Defaults" and "Reload Saved Physics Layers". Because: a draft is a second owner of project configuration, and an invalid value in the renderer or the physics table would otherwise be applied or logged for every keystroke.

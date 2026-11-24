@@ -9,6 +9,7 @@
  *
  */
 #include <renderer/ActiveCamera.h>
+#include <renderer/components/RenderTexture.h>
 
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/SystemScheduler.h>
@@ -103,6 +104,29 @@ TEST_CASE("Additive cameras retain their flags and follow primary scene selectio
     CHECK(IsActive(fixture.world, a));
     fixture.world.DestroyEntity(b);
     CHECK(mir::ResolvePlayCamera(fixture.world).mEntity == a);
+}
+
+TEST_CASE("A camera that renders into a RenderTexture is never the one Play renders through, and keeps its flag",
+    "[renderer][camera][rendertarget]")
+{
+    SystemFixture fixture;
+    World &world = fixture.world;
+    const Entity minimap = MakeCamera(world, true);
+    world.AddComponent<mir::RenderTexture>(minimap, mir::RenderTexture{});
+    const Entity main = MakeCamera(world, false);
+
+    CHECK(mir::FindActiveCamera(world).IsNull());
+    CHECK(mir::ResolvePlayCamera(world).mEntity == main);
+    CHECK_FALSE(mir::ResolvePlayCamera(world).mActive);
+    CHECK_FALSE(mir::SetActiveCamera(world, minimap));
+
+    REQUIRE(mir::SetActiveCamera(world, main));
+    CHECK(IsActive(world, minimap));
+    fixture.Update();
+    CHECK(IsActive(world, main));
+    CHECK(IsActive(world, minimap));
+    CHECK(mir::FindActiveCamera(world) == main);
+    CHECK(mir::ResolvePlayCamera(world).mEntity == main);
 }
 
 TEST_CASE("SetActiveCamera flags one camera and clears the rest", "[renderer][camera]")

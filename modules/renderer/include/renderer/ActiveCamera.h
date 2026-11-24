@@ -23,10 +23,13 @@ namespace mir
 {
     class World;
 
+    // A Camera with a RenderTexture draws into its image, never to the screen: none of these pick it, and its
+    // active flag is left as it is
+
     // Lowest index if more than one is flagged or null if none is.
     Entity FindActiveCamera(World &world);
 
-    // False, if camera has no Camera.
+    // False, if camera has no Camera or renders into a RenderTexture.
     bool SetActiveCamera(World &world, Entity camera);
 
     struct PlayCamera
