@@ -370,11 +370,14 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads. With `target` set it draws into that render target instead, over all of it, tonemapped with its own `exposure` |
 | `RenderTargetHandle`, `kMaxRenderTargetSize`, `kMaxRenderTargets` | `renderer/RenderTarget.h` | A generation-checked render target; the largest side (4096); how many may be live (15) |
+| `RenderTexture` | `renderer/components/RenderTexture.h` | `{width, height}` in pixels on a `Camera`, which then renders into its own image instead of the screen; each side kept within 1 to `kMaxRenderTargetSize` |
+| `TargetCamera`, `RenderTargetHost`, `SyncTargetCameras`, `ResolveTargetCamera`, `RenderTextureExtent`, `kFirstTargetViewport` | `renderer/RenderTargetCameras.h` | A `RenderTexture` camera with its target and size; the create/resize/release calls the sync makes; one frame's sync of a World's cameras against the last; a camera's view at its image's aspect; the clamped size; the base of their viewport ids |
+| `RenderSystem::PublishCameraImages`, `RenderSystem::ReleaseRenderTargets` | `renderer/RenderSystem.h` | Syncs the targets and fills core's `CameraImages`, which the binding calls beside `ResolvePrimaryView`; releases every target, which the binding calls when it goes |
 | `SplitFrameViews` | `renderer/VulkanRenderer.h` | A frame's views in its view slots: screen views first in order, then target views in the slots left; returns how many target views got none |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
 | `ResolveViewportCamera`, `MakePrimaryView`, `RenderSystem::ResolvePrimaryView` | `renderer/RenderSystem.h` | The camera a viewport draws through and its view-projection at the viewport's aspect, as `RenderSystem` draws it; that view as core's `PrimaryView`; viewport 0's, which `ActiveCameraSystem` publishes |
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
-| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the system last in `SystemPhase::LateUpdate`, before the game UI and `RenderSystem`, that keeps one flagged and then calls back, for the binding to publish `PrimaryView` |
+| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the system last in `SystemPhase::LateUpdate`, before the game UI and `RenderSystem`, that keeps one flagged and then calls back, for the binding to publish `PrimaryView` and `CameraImages`. All of them skip a `RenderTexture` camera |
 | `CameraCuts`, `CutCamera`, `IsCameraCut`, `ClearCameraCuts` | `renderer/CameraCut.h` | The World resource of cameras cut since the last frame (made by the first `CutCamera`); mark one (false without a `Camera`); ask; `RenderSystem` clears them after the views - see Rules |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
@@ -1332,6 +1335,24 @@ renders, and the two cannot disagree unless something changes the camera
 between them, such as a script's `OnUI`, which shows next frame anyway. See
 [gameui.md](gameui.md).
 
+**A `RenderTexture` camera has a target while it lives, and its image is
+published with the view.** `RenderSystem` keeps one target per `Camera` with a
+`RenderTexture` and a `WorldTransform` in the World it draws (`SyncTargetCameras`):
+a new camera gets one, a changed size resizes it, and the targets of cameras
+gone, or of a World no longer drawn, are released. Both the `ActiveCameraSystem`
+callback, last in `LateUpdate`, and `Render` sync, so the game UI in between
+sees this frame's images and the frame draws the cameras as they are then. A
+target the renderer refuses, past `kMaxRenderTargets`, is asked for again only
+once the size changes, so the error is not logged every frame. The cameras
+follow the screen's in the list given to view draw sources, each under viewport
+id `kFirstTargetViewport` plus its target's index, which stays the same while
+the target lives, so terrain keeps its detail state for it. Such a camera is
+never Play's: `FindActiveCamera`, `ResolvePlayCamera`, `SetActiveCamera` and
+`ActiveCameraSystem` skip it and leave its flag alone. A binding releases its
+targets when it goes; the renderer is shared and outlives the World. Each
+binding that runs keeps its own, so an Edit World left running beside Play
+keeps its targets too.
+
 **Whoever causes a camera cut signals it; `RenderSystem` does not guess one
 from camera motion.** Switching the camera a view draws through changes its `historyId`,
 which is already a cut. A camera that jumps without changing (a teleport, a
@@ -1467,6 +1488,19 @@ shutdown. Run it through `ctest -R smoke.texture-gpu`, it is built only with
 
 ## Changed
 
+*2026-11-23* — **A `RenderTexture` camera renders into its own image.** Was:
+only the renderer could make a target, and nothing did. Now: a `Camera` with a
+`RenderTexture` gets one from `RenderSystem`, at its size and kept while it
+lives, draws into it after the screen's views, and is listed in core's
+`CameraImages` last in `LateUpdate`. The active-camera functions and
+`ActiveCameraSystem` skip such cameras and leave their flag alone. A traced
+frame with targets sets the shadow casters a raster frame would.
+`RenderTarget.tests.cpp` covers keeping, resizing, refusing and releasing
+targets and the target camera's view, `ActiveCamera.tests.cpp` the skipped
+camera, and `smoke.render-target-gpu` a World's minimap drawn by `RenderSystem`
+and shown through its published image. Because: a game shows a second camera's
+picture in its UI without touching the renderer.
+
 *2026-11-23* — **Render targets.** Was: every view drew into the one swapchain
 image, and the doc said there were no offscreen targets. Now:
 `CreateRenderTarget`, `ResizeRenderTarget` and `ReleaseRenderTarget`, a
@@ -1476,8 +1510,7 @@ image. `CreateImage2D` takes the view's aspect, for the target's depth.
 `RenderTarget.tests.cpp` covers the view slots, and `smoke.render-target-gpu`
 draws into a target, shows it through ImGui raster and traced, resizes and
 releases it, and makes the most targets allowed, under validation. Because: a
-second camera's picture in the game UI, such as a minimap. `RenderSystem` does
-not make targets yet.
+second camera's picture in the game UI, such as a minimap.
 
 *2026-11-22* — **`PrimaryView` is published.** Was: only `RenderSystem` knew
 the view it drew, inside `Render`. Now: `ResolveViewportCamera` resolves a

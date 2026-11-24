@@ -10,11 +10,13 @@
 #include "renderer/ActiveCamera.h"
 #include "renderer/CameraCut.h"
 #include "renderer/CameraMath.h"
+#include "renderer/RenderTargetCameras.h"
 #include "renderer/ViewDrawSource.h"
 #include "renderer/ViewSubmission.h"
 #include "renderer/VulkanRenderer.h"
 
 #include <core/debug/DebugLines.h>
+#include <core/ecs/CameraImages.h>
 #include <core/ecs/PrimaryView.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
@@ -292,6 +294,17 @@ namespace mir
                 mViewCameras.push_back(*view);
             }
 
+            // Then each RenderTexture camera's, so view draw sources pick detail for it too
+            const size_t screenCameras = mViewCameras.size();
+            SyncRenderTargets(source);
+            mViewTargets.clear();
+            for (const TargetCamera &camera : mTargetCameras)
+                if (const std::optional<ViewCamera> view = ResolveTargetCamera(source, camera))
+                {
+                    mViewCameras.push_back(*view);
+                    mViewTargets.push_back(camera);
+                }
+
             // Post effects read viewport 0's lens: the editor camera's in Edit, the active Camera's in Play.
             const bool havePrimaryView = !mViewCameras.empty() && mViewCameras.front().viewport == 0;
             mRenderer.SetPostProcessing(ResolvePostProcessing(context.world.Resource<PostProcessingSettings>(),
@@ -372,13 +385,15 @@ namespace mir
 
             // A traced frame shadows by ray, so it records no shadow maps.
             const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
-            const bool wireframeOnly = mViewCameras.size() == 1 && mRenderer.WireframeAvailable() &&
+            const bool wireframeOnly = screenCameras == 1 && mRenderer.WireframeAvailable() &&
                 mViewports[mViewCameras.front().viewport].mDebugView.shading == ViewportShading::Wireframe;
-            const bool traceFrame = traceable && mViewCameras.size() == 1 && !wireframeOnly;
+            const bool traceFrame = traceable && screenCameras == 1 && !wireframeOnly;
+            // targets rasterize even in a traced frame
+            const bool shadowMaps = !traceFrame || !mViewTargets.empty();
 
             const bool haveDirectionalLight = haveSunLight || haveSky;
             mSunShadowItems.clear();
-            if (haveDirectionalLight && haveShadowCamera && !traceFrame)
+            if (haveDirectionalLight && haveShadowCamera && shadowMaps)
             {
                 const glm::mat4 sunShadowViewProj = MakeOrthographicViewProjection(
                     -sunDirWS, VulkanRenderer::kSunShadowHalfExtent, VulkanRenderer::kSunShadowNearZ);
@@ -404,7 +419,7 @@ namespace mir
 
                 for (LightItem &item : mLightItems)
                 {
-                    if (item.shadowSlot < 0 || traceFrame)
+                    if (item.shadowSlot < 0 || !shadowMaps)
                         continue;
                     const uint32_t slot = static_cast<uint32_t>(item.shadowSlot);
 
@@ -473,9 +488,12 @@ namespace mir
             for (size_t v = 0; v < mViewCameras.size(); ++v)
             {
                 const ViewCamera &view = mViewCameras[v];
-                const auto &viewport = mViewports[view.viewport];
-                const Entity viewCamera = viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity;
-                const bool cut = viewport.mCut || (!viewport.mUseExternalCamera && IsCameraCut(source, viewCamera));
+                const TargetCamera *const target = v >= screenCameras ? &mViewTargets[v - screenCameras] : nullptr;
+                const Viewport *const viewport = target == nullptr ? &mViewports[view.viewport] : nullptr;
+                const Entity viewCamera = target != nullptr ? target->mCamera
+                    : viewport->mCameraEntity.IsNull() ? playCamera.mEntity : viewport->mCameraEntity;
+                const bool external = viewport != nullptr && viewport->mUseExternalCamera;
+                const bool cut = (viewport != nullptr && viewport->mCut) || (!external && IsCameraCut(source, viewCamera));
                 std::span<const WorldDrawItem> worldItems = mDrawItems;
                 if (viewSources && !viewSources->sources.empty())
                 {
@@ -490,16 +508,24 @@ namespace mir
                 std::vector<DrawItem> &items = mDrawItemsPerViewport[v];
                 skippedItems += BuildViewDrawItems(worldItems, view.pose.position, view.viewProj, items, cut);
 
-                mRenderViews.push_back(RenderView{ viewport.mRect, items, view.viewProj,
-                                                  view.pose.position, view.lens.mNearZ,
+                mRenderViews.push_back(RenderView{ viewport != nullptr ? viewport->mRect : VkRect2D{}, items,
+                                                  view.viewProj, view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
                 mRenderViews.back().fovYDegrees = view.lens.mFovYDegrees;
-                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX : PackEntity(viewCamera);
+                mRenderViews.back().historyId = external ? UINT64_MAX : PackEntity(viewCamera);
                 mRenderViews.back().cut = cut;
-                mRenderViews.back().debugView = viewport.mDebugView;
+                if (target != nullptr)
+                {
+                    mRenderViews.back().target = target->mTarget;
+                    mRenderViews.back().exposure = view.lens.mExposure;
+                }
 
                 mDebugLinesPerViewport[v].clear();
-                if (viewport.mDebugView.colliders)
+                // debug drawing is the editor's, on its viewports
+                if (viewport == nullptr)
+                    continue;
+                mRenderViews.back().debugView = viewport->mDebugView;
+                if (viewport->mDebugView.colliders)
                 {
                     collidersWanted = true;
                     if (debugLines != nullptr)
@@ -582,10 +608,10 @@ namespace mir
                         "doesn't support it; falling back to raster");
                     mWarnedNoRayTracing = true;
                 }
-                if (traceable && mRenderViews.size() > 1 && !mWarnedMultiViewRayTracing)
+                if (traceable && screenCameras > 1 && !mWarnedMultiViewRayTracing)
                 {
                     MIR_LOG_WARN("RenderSystem: Ray Tracing draws a single viewport; {} viewports are "
-                        "falling back to raster", mRenderViews.size());
+                        "falling back to raster", screenCameras);
                     mWarnedMultiViewRayTracing = true;
                 }
                 mRenderer.DrawFrame(mRenderViews);
@@ -601,6 +627,30 @@ namespace mir
             return view ? MakePrimaryView(*view) : PrimaryView{};
         }
 
+        // Makes, resizes and releases a render target for each RenderTexture camera, and lists their images with
+        // their views. The binding calls it last in LateUpdate, so the game UI can show this frame's images
+        void PublishCameraImages(World &world, CameraImages &images)
+        {
+            World &source = mSourceWorld != nullptr ? *mSourceWorld : world;
+            SyncRenderTargets(source);
+            images.mImages.clear();
+            for (const TargetCamera &camera : mTargetCameras)
+                if (const std::optional<ViewCamera> view = ResolveTargetCamera(source, camera))
+                    images.mImages.push_back(CameraImage{ camera.mCamera, mRenderer.ImGuiTexture(camera.mTarget),
+                        camera.mExtent.width, camera.mExtent.height, MakePrimaryView(*view) });
+        }
+
+        // While the renderer still lives, its Shutdown frees whatever is left
+        void ReleaseRenderTargets()
+        {
+            for (const TargetCamera &camera : mTargetCameras)
+                if (!camera.mTarget.IsNull())
+                    mRenderer.ReleaseRenderTarget(camera.mTarget);
+            mTargetCameras.clear();
+            mViewTargets.clear();
+            mTargetWorld = nullptr;
+        }
+
         std::optional<WorldPosition> PrimaryCameraPosition() const
         {
             return mRenderViews.empty() ? std::nullopt : std::optional{mRenderViews.front().cameraPosition};
@@ -612,6 +662,23 @@ namespace mir
             mMeshQuery = &world.GetOrCreateQuery<const WorldTransform, const MeshRenderer>();
             mSkyQuery = &world.GetOrCreateQuery<const WorldTransform, const Sky>();
             mLightQuery = &world.GetOrCreateQuery<const WorldTransform, const Light>();
+        }
+
+        void SyncRenderTargets(World &source)
+        {
+            // another World's entities are not these
+            if (&source != mTargetWorld)
+            {
+                ReleaseRenderTargets();
+                mTargetWorld = &source;
+            }
+            const RenderTargetHost host{
+                .mCreate = [this](VkExtent2D extent)
+                    { return mRenderer.CreateRenderTarget(extent.width, extent.height); },
+                .mResize = [this](RenderTargetHandle target, VkExtent2D extent)
+                    { return mRenderer.ResizeRenderTarget(target, extent.width, extent.height); },
+                .mRelease = [this](RenderTargetHandle target) { mRenderer.ReleaseRenderTarget(target); } };
+            mTargetCameras = SyncTargetCameras(source, mTargetCameras, host);
         }
 
         VulkanRenderer &mRenderer;
@@ -642,6 +709,12 @@ namespace mir
         std::vector<DrawItem> mSunShadowItems;
         std::array<std::vector<DrawItem>, VulkanRenderer::kMaxSpotShadows> mSpotShadowItems;
         std::array<std::array<std::vector<DrawItem>, 6>, VulkanRenderer::kMaxPointShadows> mPointShadowItems;
+
+        // the RenderTexture cameras of mTargetWorld, and this frame's that have a view, parallel to the cameras
+        // after the screen's in mViewCameras
+        std::vector<TargetCamera> mTargetCameras;
+        std::vector<TargetCamera> mViewTargets;
+        World *mTargetWorld = nullptr;
 
         bool mWarnedNoCamera = false;
         bool mWarnedNoActiveCamera = false;

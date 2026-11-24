@@ -78,6 +78,7 @@ namespace mir
     {
         context.world.EmplaceResource<ViewDrawSources>();
         context.world.EmplaceResource<PrimaryView>();
+        context.world.EmplaceResource<CameraImages>();
         // physics fills it while a view shows colliders
         context.world.EmplaceResource<DebugLines>();
         // The renderer is shared, so only the main binding applies the budgets.
@@ -99,7 +100,11 @@ namespace mir
         // last in LateUpdate, so the game UI in BeforeRender sees the camera and view this frame renders through
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::LateUpdate,
             SystemOrder{ SystemOrder::kMax },
-            [this](World &world) { world.Resource<PrimaryView>() = mRenderSystem->ResolvePrimaryView(world); });
+            [this](World &world)
+            {
+                world.Resource<PrimaryView>() = mRenderSystem->ResolvePrimaryView(world);
+                mRenderSystem->PublishCameraImages(world, world.Resource<CameraImages>());
+            });
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
             SystemOrder{ SystemOrder::kNormal }, mRenderer);
 
@@ -178,6 +183,9 @@ namespace mir
         // reaching the library before the library object goes away.
         if (mMeshes != nullptr)
             mMeshes->DetachSurfaceMaterials();
+        // the renderer is shared and outlives this World
+        if (mRenderSystem != nullptr)
+            mRenderSystem->ReleaseRenderTargets();
     }
 
     RendererModule::~RendererModule()

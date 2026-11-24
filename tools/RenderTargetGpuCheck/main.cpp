@@ -2,15 +2,21 @@
  * @file main.cpp
  * @author Quy Dong Ta
  * @brief Device regression for render targets: a view drawn into one reaches the screen through ImGui, raster
- *        and traced, and resizing or releasing one under validation leaves no errors.
+ *        and traced, resizing or releasing one under validation leaves no errors, and RenderSystem draws a
+ *        RenderTexture camera's picture into the image it publishes.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <core/ecs/CommandBuffer.h>
+#include <core/ecs/TransformHierarchy.h>
+#include <core/ecs/World.h>
 #include <core/fs/FileIO.h>
 #include <core/log/Log.h>
+#include <renderer/RenderSystem.h>
 #include <renderer/Shapes.h>
 #include <renderer/VulkanRenderer.h>
+#include <renderer/components/RenderTexture.h>
 #include <window/Window.h>
 
 #include <imgui.h>
@@ -186,6 +192,79 @@ int main(int argc, char **argv)
             Require(renderer.ReleaseRenderTarget(handle), "Releasing one of many targets failed");
         for (int i = 0; i < 3; ++i)
             frame(false);
+
+        // RenderSystem: a RenderTexture camera's image, published as the binding does, drawn by the system
+        {
+            mir::World world;
+            world.EmplaceResource<mir::RenderSettings>();
+            world.EmplaceResource<mir::PostProcessingSettings>();
+            mir::CommandBuffer commands;
+            mir::SystemContext context{world, commands, 1.0f / 60.0f, 0.0, 0};
+            const auto place = [&](mir::Entity entity, mir::WorldVec3 position) {
+                mir::AddTransform(world, entity, mir::Transform(position));
+                mir::ResolveWorld(world, entity);
+            };
+            const auto cube = mir::MakeCube();
+            const auto cubeMesh = renderer.CreateMesh(cube.vertices, cube.indices);
+            Require(!cubeMesh.IsNull(), "Cube mesh creation failed");
+            const mir::Entity box = world.CreateEntity();
+            place(box, mir::WorldVec3(0, 0, -3));
+            world.AddComponent<mir::MeshRenderer>(box, mir::MeshRenderer{.mesh = cubeMesh, .material = renderer.ErrorMaterial()});
+            // the screen's camera looks away from the cube, the minimap's at it
+            const mir::Entity screenCamera = world.CreateEntity();
+            place(screenCamera, mir::WorldVec3(0, 0, -6));
+            world.AddComponent<mir::Camera>(screenCamera, mir::Camera{.mActive = true});
+            const mir::Entity minimap = world.CreateEntity();
+            place(minimap, mir::WorldVec3(0, 0, 0));
+            world.AddComponent<mir::Camera>(minimap, mir::Camera{});
+            world.AddComponent<mir::RenderTexture>(minimap, mir::RenderTexture{96, 48});
+
+            mir::RenderSystem system(renderer);
+            system.OnStart(context);
+            mir::CameraImages images;
+            const auto systemFrame = [&] {
+                window->PollEvents();
+                system.PublishCameraImages(world, images);
+                ImGui::NewFrame();
+                if (!images.mImages.empty())
+                    ImGui::GetBackgroundDrawList()->AddImage(
+                        ImTextureRef(static_cast<ImTextureID>(images.mImages[0].mUITexture)), ImVec2(0, 0),
+                        io.DisplaySize);
+                ImGui::Render();
+                renderer.SetImGuiDrawData(ImGui::GetDrawData());
+                system.OnUpdate(context);
+            };
+            const auto systemCapture = [&](const std::string &name) {
+                for (int i = 0; i < 3; ++i)
+                    systemFrame();
+                const std::string path = prefix + "-" + name + ".png";
+                renderer.CaptureNextFrame(path);
+                systemFrame();
+                const auto bytes = mir::ReadBytes(path);
+                Require(bytes.has_value(), "Frame capture missing");
+                return *bytes;
+            };
+
+            const auto withImage = systemCapture("system-minimap");
+            Require(images.mImages.size() == 1 && images.mImages[0].mCamera == minimap, "The minimap was not published");
+            Require(images.mImages[0].mUITexture != 0 && images.mImages[0].mWidth == 96 &&
+                        images.mImages[0].mHeight == 48 && images.mImages[0].mView.mValid,
+                "The minimap's image is not as its RenderTexture says");
+            Require(mir::ResolvePlayCamera(world).mEntity == screenCamera, "The minimap became the Play camera");
+
+            world.RemoveComponent<mir::RenderTexture>(minimap);
+            const auto withoutImage = systemCapture("system-none");
+            Require(images.mImages.empty(), "A camera without a RenderTexture was published");
+            Require(withImage != withoutImage, "The minimap's picture did not reach the screen");
+
+            world.AddComponent<mir::RenderTexture>(minimap, mir::RenderTexture{64, 64});
+            systemFrame();
+            Require(images.mImages.size() == 1 && images.mImages[0].mWidth == 64, "A new RenderTexture got no image");
+            // as the binding does when its World goes
+            system.ReleaseRenderTargets();
+            for (int i = 0; i < 3; ++i)
+                frame(false);
+        }
 
         Require(mir::ErrorCount() == expectedErrors, "GPU validation or renderer errors were logged");
         const bool traced = renderer.RayTracingSupported();
